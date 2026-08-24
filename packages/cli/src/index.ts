@@ -8,11 +8,14 @@ import process from "node:process";
 import { Aex, AexError, type SessionSummary } from "@aexhq/sdk";
 import * as z from "zod";
 
+import { buildTools, watchTools } from "./tools-build.js";
+
 const HELP = `Aex — the session backend for AI apps
 
 Usage:
   aex login
   aex doctor
+  aex tools build [--watch]
   aex session list
   aex session get <session-id>
   aex session send <session-id> <message>
@@ -35,6 +38,19 @@ async function main(argv: string[]): Promise<void> {
   }
   if (command === "login") {
     await login();
+    return;
+  }
+  if (command === "tools" && rest[0] === "build") {
+    if (rest.length > 2 || (rest.length === 2 && rest[1] !== "--watch")) {
+      usage("tools build accepts only --watch");
+    }
+    const report = (built: Awaited<ReturnType<typeof buildTools>>): void => {
+      for (const artifact of built) {
+        process.stdout.write(`${artifact.name} -> ${artifact.digest} (${artifact.bytes} bytes)\n`);
+      }
+    };
+    if (rest[1] === "--watch") await watchTools(process.cwd(), report);
+    else report(await buildTools());
     return;
   }
 

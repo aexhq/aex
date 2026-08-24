@@ -1,11 +1,11 @@
-import type { ApiError, Event } from "@aexhq/brain/session";
-import type { JsonRequestOptions, TransferTicket } from "@aexhq/brain";
+import type { ApiError, Event } from "@aexhq/session-protocol/session";
+import type { JsonRequestOptions, TransferTicket } from "@aexhq/session-protocol";
 import {
   MAX_CREATE_SESSION_REQUEST_BYTES,
   MAX_CUSTOMER_OBSERVATION_BYTES,
   MAX_MESSAGE_REQUEST_BYTES,
   MAX_PUBLIC_EVENT_BYTES,
-} from "@aexhq/brain";
+} from "@aexhq/session-protocol";
 
 import { AbortError, AexError, SessionError, abortError, errorFromApi } from "./errors.js";
 
@@ -23,7 +23,7 @@ interface ErrorEnvelope {
 
 const MAX_ORDINARY_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
-const CUSTOMER_HAND_OBSERVATION_TIMEOUT_MS = 15_000;
+const CUSTOMER_ENVIRONMENT_OBSERVATION_TIMEOUT_MS = 15_000;
 
 export class Transport {
   readonly baseUrl: string;
@@ -38,7 +38,7 @@ export class Transport {
     this.#fetch = fetchImplementation;
   }
 
-  async customerHandGrant(clientId: string, signal?: AbortSignal): Promise<{
+  async customerEnvironmentGrant(clientId: string, signal?: AbortSignal): Promise<{
     url: string;
     protocol: string;
     expiresAt: string;
@@ -54,10 +54,10 @@ export class Transport {
       observation_token: string;
     }>(
       "POST",
-      "/v1/customer-hand/grants",
+      "/v1/customer-environment/grants",
       { body: { client_id: clientId }, signal },
     );
-    const observationUrl = validateCustomerHandGrant(this.baseUrl, grant);
+    const observationUrl = validateCustomerEnvironmentGrant(this.baseUrl, grant);
     return {
       url: grant.url,
       protocol: grant.protocol,
@@ -67,7 +67,7 @@ export class Transport {
     };
   }
 
-  async customerHandObserve(
+  async customerEnvironmentObserve(
     url: string,
     token: string,
     observation: unknown,
@@ -75,7 +75,7 @@ export class Transport {
     const body = encodeJsonOnce(
       observation,
       MAX_CUSTOMER_OBSERVATION_BYTES,
-      "Customer Hand observation",
+      "Customer Environment observation",
     );
     const response = await this.#fetch(url, {
       method: "POST",
@@ -86,13 +86,13 @@ export class Transport {
         "Content-Type": "application/json",
       },
       body,
-      signal: AbortSignal.timeout(CUSTOMER_HAND_OBSERVATION_TIMEOUT_MS),
+      signal: AbortSignal.timeout(CUSTOMER_ENVIRONMENT_OBSERVATION_TIMEOUT_MS),
     });
     if (response.ok) return;
     const preview = await readResponseText(response, 4096)
       .catch(() => "<response too large or unreadable>");
     throw new SessionError(
-      `Customer Hand observation ingress returned HTTP ${response.status}: ${preview}`,
+      `Customer Environment observation ingress returned HTTP ${response.status}: ${preview}`,
       { status: response.status, requestId: response.headers.get("x-request-id") ?? undefined },
     );
   }
@@ -201,6 +201,42 @@ export class Transport {
         status: response.status,
       });
     }
+  }
+
+  async ensureArtifactLayer(
+    digest: string,
+    mediaType: string,
+    content: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const path = `/v1/artifacts/${encodeURIComponent(digest)}`;
+    const authorization = `Bearer ${this.#apiKey}`;
+    const existing = await this.#fetch(`${this.baseUrl}${path}`, {
+      method: "HEAD",
+      redirect: "error",
+      headers: { Authorization: authorization },
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (existing.ok) {
+      const bytes = Number(existing.headers.get("content-length"));
+      const storedMediaType = existing.headers.get("content-type");
+      if (bytes !== content.byteLength || storedMediaType !== mediaType) {
+        throw new SessionError(`Uploaded Tool artifact ${digest} has conflicting metadata`);
+      }
+      return;
+    }
+    if (existing.status !== 404) throw await this.responseError(existing);
+    const uploaded = await this.#fetch(`${this.baseUrl}${path}`, {
+      method: "PUT",
+      redirect: "error",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": mediaType,
+      },
+      body: arrayBufferBody(content),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!uploaded.ok) throw await this.responseError(uploaded);
   }
 
   async json<T>(
@@ -490,7 +526,7 @@ function assertTransferTicket(ticket: TransferTicket, method: "GET" | "PUT"): vo
   }
 }
 
-function validateCustomerHandGrant(
+function validateCustomerEnvironmentGrant(
   baseUrl: string,
   grant: {
     url: string;
@@ -518,7 +554,7 @@ function validateCustomerHandGrant(
     socket = new URL(grant.url);
     observation = new URL(grant.observation_url);
     expectedObservation = new URL(
-      `${baseUrl}/v1/customer-hand/observations/${encodeURIComponent(grant.grant_id)}`,
+      `${baseUrl}/v1/customer-environment/observations/${encodeURIComponent(grant.grant_id)}`,
     );
   } catch (cause) {
     throw new SessionError("Aex returned an invalid customer Hand URL", { cause });
@@ -534,7 +570,7 @@ function validateCustomerHandGrant(
     );
   }
   if (observation.href !== expectedObservation.href) {
-    throw new SessionError("Aex returned an unsafe customer Hand observation URL");
+    throw new SessionError("Aex returned an unsafe customer Environment observation URL");
   }
   if (observation.href.includes(grant.observation_token)) {
     throw new SessionError("Aex returned an observation URL containing its bearer token");

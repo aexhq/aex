@@ -1,7 +1,7 @@
 import { Sessions } from "./session.js";
 import type { Fetch } from "./transport.js";
 import { Transport } from "./transport.js";
-import type { WebSocketFactory } from "@aexhq/brain";
+import type { WebSocketFactory } from "@aexhq/session-protocol";
 
 export {
   AbortError,
@@ -17,9 +17,9 @@ export {
   Sessions,
 } from "./session.js";
 export type {
-  AgentloopBundle,
   CreateSessionOptions,
   ListSessionsOptions,
+  Loop,
   ModelSummary,
   ModelOptions,
   OutputOptions,
@@ -29,42 +29,39 @@ export type {
   SessionSummary,
 } from "./session.js";
 export {
-  SandboxFiles,
   SessionChild,
   SessionChildren,
-  SessionSandbox,
   SessionStorage,
 } from "./resources.js";
 export type {
   BinarySource,
   ChildSummary,
+  EnvironmentFile,
   IdempotentOperationOptions,
   OperationOptions,
   PageOptions,
-  SandboxFile,
-  SandboxFileOptions,
-  SandboxFilePage,
-  SandboxFilePageOptions,
-  SandboxStatus,
   StorageObject,
   StoragePage,
   StreamingUploadSource,
   UploadSource,
 } from "./resources.js";
 export type { EventOptions } from "./transport.js";
-export { tool } from "@aexhq/brain";
+export { tool } from "./tools.js";
 export type {
-  ClientToolOptions,
+  BoundTool,
+  EnvironmentMap,
+  EnvironmentValue,
+  PreparedArtifact,
   Tool,
-  ToolBuilder,
   ToolContract,
   ToolContext,
   ToolHandler,
-  ServerToolOptions,
-  NetworkDestination,
-  NetworkPolicy,
-  WebSocketFactory,
-} from "@aexhq/brain";
+  ToolRequirements,
+  ToolSelection,
+  ToolSetupHandler,
+} from "./tools.js";
+export type { NetworkPolicy, WebSocketFactory } from "@aexhq/session-protocol";
+export type { EnvironmentRef, HandleOf } from "@aexhq/environment";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
 
@@ -73,8 +70,6 @@ export interface AexOptions {
   baseUrl?: string;
   fetch?: Fetch;
   webSocketFactory?: WebSocketFactory;
-  /** Stable tenant-scoped identity for this exact customer-application runner. */
-  client?: { id: string };
 }
 
 export class Aex {
@@ -86,20 +81,12 @@ export class Aex {
     if (fetchImplementation === undefined) {
       throw new TypeError("This runtime does not provide fetch; pass a fetch implementation to Aex");
     }
-    if (
-      options.client !== undefined &&
-      !/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.client.id)
-    ) {
-      throw new TypeError(
-        "Aex client.id must contain 1 through 128 letters, digits, dots, colons, underscores, or hyphens",
-      );
-    }
     const transport = new Transport(options.apiKey, options.baseUrl ?? DEFAULT_API_URL, fetchImplementation);
     const webSocketFactory = options.webSocketFactory ??
       (globalThis.WebSocket === undefined
         ? undefined
         : (request) => new globalThis.WebSocket(request.url, request.protocol));
-    this.sessions = new Sessions(transport, webSocketFactory, options.client?.id);
+    this.sessions = new Sessions(transport, webSocketFactory);
   }
 
   /** Stop customer-app execution permanently; this Aex instance cannot create another session. */

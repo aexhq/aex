@@ -59,16 +59,17 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aws-config",
+ "aws-microvm-controller",
  "aws-sdk-apigatewaymanagement",
  "axum",
  "base64",
  "brain",
  "brain-aws",
+ "brain-loophost",
  "brain-protocol",
  "brain-providers",
  "brain-server",
  "brain-standalone",
- "hand-brain-aws",
  "hex",
  "reqwest",
  "serde_jcs",
@@ -99,6 +100,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64",
  "brain-protocol",
  "bytes",
  "chrono",
@@ -346,6 +348,43 @@ dependencies = [
  "dunce",
  "fs_extra",
  "pkg-config",
+]
+
+[[package]]
+name = "aws-microvm-controller"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-kms",
+ "aws-sdk-lambdamicrovms",
+ "base64",
+ "brain",
+ "brain-protocol",
+ "environment-core",
+ "environment-egress-gateway",
+ "environment-lambda",
+ "environment-policy",
+ "environment-wire",
+ "futures-util",
+ "hex",
+ "ipnet",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -990,7 +1029,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 [[package]]
 name = "brain"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1019,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1044,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "brain-loophost"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1065,7 +1104,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "chrono",
  "hex",
@@ -1079,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "brain-providers"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1096,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "brain-server"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1121,7 +1160,7 @@ dependencies = [
 [[package]]
 name = "brain-standalone"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1842,6 +1881,94 @@ dependencies = [
 ]
 
 [[package]]
+name = "environment-core"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "async-trait",
+ "cap-std",
+ "environment-policy",
+ "globset",
+ "hex",
+ "regex",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "environment-egress-gateway"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "base64",
+ "brain-protocol",
+ "hickory-resolver",
+ "idna",
+ "ipnet",
+ "p256",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "environment-lambda"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-sdk-lambdamicrovms",
+ "aws-sdk-s3",
+ "brain-protocol",
+ "clap",
+ "environment-core",
+ "environment-wire",
+ "futures-util",
+ "hex",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
+name = "environment-policy"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "brain-protocol",
+ "serde",
+ "serde_jcs",
+ "thiserror 2.0.20",
+ "zeroize",
+]
+
+[[package]]
+name = "environment-wire"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
+dependencies = [
+ "brain",
+ "brain-protocol",
+ "environment-policy",
+ "serde",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2168,131 +2295,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "hand-brain-aws"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "anyhow",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-kms",
- "aws-sdk-lambdamicrovms",
- "base64",
- "brain",
- "brain-protocol",
- "futures-util",
- "hand-core",
- "hand-egress-gateway",
- "hand-lambda",
- "hand-policy",
- "hand-wire",
- "hex",
- "ipnet",
- "rand 0.9.5",
- "reqwest",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tracing",
- "zeroize",
-]
-
-[[package]]
-name = "hand-core"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "async-trait",
- "cap-std",
- "globset",
- "hand-policy",
- "hex",
- "regex",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "hand-egress-gateway"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "base64",
- "brain-protocol",
- "hickory-resolver",
- "idna",
- "ipnet",
- "p256",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "hand-lambda"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "anyhow",
- "aws-config",
- "aws-sdk-lambdamicrovms",
- "aws-sdk-s3",
- "brain-protocol",
- "clap",
- "futures-util",
- "hand-core",
- "hand-wire",
- "hex",
- "rand 0.9.5",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tracing",
- "tracing-subscriber",
- "zip",
-]
-
-[[package]]
-name = "hand-policy"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "brain-protocol",
- "serde",
- "serde_jcs",
- "thiserror 2.0.20",
- "zeroize",
-]
-
-[[package]]
-name = "hand-wire"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec#2db80cb40ffb0cec2a54bb5373c2f93f4f0daaec"
-dependencies = [
- "brain",
- "brain-protocol",
- "hand-policy",
- "serde",
 ]
 
 [[package]]

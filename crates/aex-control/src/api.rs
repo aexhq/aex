@@ -17,6 +17,7 @@ use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
+use base64::Engine as _;
 use brain_protocol::session::ExternalToolCallRequest;
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -27,28 +28,29 @@ use crate::admission::{
     Admission, AdmissionDecision, SessionCreateDecision, SessionCreateReservation,
 };
 use crate::brain::BrainClient;
-use crate::customer_hand::{CustomerHandGateway, GatewayRoute};
+use crate::customer_environment::{CustomerEnvironmentGateway, GatewayRoute};
 use crate::identity::{self, bearer};
 use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{
     AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
-    TopupRow, WaitlistRow,
+    ToolArtifactLayerRow, TopupRow, WaitlistRow,
 };
-use crate::subagents_tool;
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
 use crate::web::{self, WebRuntime};
 use crate::{Error, Result, StorageLimits, now_ms, rfc3339, usd_display};
 
 // The neutral ceiling is the JSON data payload; a small separate allowance covers SSE fields.
 const MAX_PUBLIC_SSE_FRAME_BYTES: usize = brain_protocol::MAX_PUBLIC_EVENT_BYTES + 4 * 1024;
-const MAX_CUSTOMER_HAND_GRANT_BYTES: usize = 16 * 1024;
-const MAX_CUSTOMER_HAND_FRAME_BYTES: usize = brain_protocol::MAX_CUSTOMER_WS_FRAME_BYTES;
-const MAX_CUSTOMER_HAND_OBSERVATION_BYTES: usize = brain_protocol::MAX_CUSTOMER_OBSERVATION_BYTES;
+const MAX_CUSTOMER_ENVIRONMENT_GRANT_BYTES: usize = 16 * 1024;
+const MAX_CUSTOMER_ENVIRONMENT_FRAME_BYTES: usize = brain_protocol::MAX_CUSTOMER_WS_FRAME_BYTES;
+const MAX_CUSTOMER_ENVIRONMENT_OBSERVATION_BYTES: usize =
+    brain_protocol::MAX_CUSTOMER_OBSERVATION_BYTES;
 // Ordinary inline session operations never carry compiled Tool bundles. A 1 MiB file expands to
 // ~1.34 MiB in base64; 2 MiB leaves JSON overhead without giving every route create-sized memory.
 const MAX_INLINE_SESSION_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TOOL_ARTIFACT_LAYER_BYTES: usize = 64 * 1024 * 1024;
 
 fn message_too_large() -> Error {
     Error::PayloadTooLarge(format!(
@@ -74,6 +76,95 @@ async fn bounded_create_body(body: Body) -> Result<Bytes> {
         })
 }
 
+async fn bounded_artifact_layer_body(body: Body) -> Result<Bytes> {
+    axum::body::to_bytes(body, MAX_TOOL_ARTIFACT_LAYER_BYTES)
+        .await
+        .map_err(|_| {
+            Error::PayloadTooLarge(format!(
+                "Tool artifact layer exceeds {MAX_TOOL_ARTIFACT_LAYER_BYTES} bytes"
+            ))
+        })
+}
+
+async fn inject_uploaded_artifact_layers(db: &Db, account_id: &str, body: Bytes) -> Result<Bytes> {
+    let mut document: Value = serde_json::from_slice(&body)
+        .map_err(|error| Error::Invalid(format!("create-session JSON: {error}")))?;
+    let Some(root) = document.as_object_mut() else {
+        return Ok(body);
+    };
+    let mut referenced = std::collections::BTreeMap::<String, (u64, String)>::new();
+    if let Some(bundles) = root.get("tool_bundles").and_then(Value::as_array) {
+        for bundle in bundles {
+            let Some(layers) = bundle.get("layers").and_then(Value::as_array) else {
+                continue;
+            };
+            for layer in layers {
+                let (Some(digest), Some(bytes), Some(media_type)) = (
+                    layer.get("checksum").and_then(Value::as_str),
+                    layer.get("bytes").and_then(Value::as_u64),
+                    layer.get("media_type").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                if let Some(previous) =
+                    referenced.insert(digest.to_owned(), (bytes, media_type.to_owned()))
+                    && previous != (bytes, media_type.to_owned())
+                {
+                    return Err(Error::Invalid(format!(
+                        "Tool artifact layer {digest} has conflicting manifests"
+                    )));
+                }
+            }
+        }
+    }
+    let supplied = root
+        .get("tool_artifact_layers")
+        .and_then(Value::as_array)
+        .map(|layers| {
+            layers
+                .iter()
+                .filter_map(|layer| layer.get("checksum").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    if referenced.keys().all(|digest| supplied.contains(digest)) {
+        return Ok(body);
+    }
+    let mut layers = root
+        .remove("tool_artifact_layers")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    for (digest, (bytes, media_type)) in referenced {
+        if supplied.contains(&digest) {
+            continue;
+        }
+        let stored = db
+            .tool_artifact_layer(account_id.to_owned(), digest.clone())
+            .await?
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "Tool artifact layer {digest} has not been uploaded for this account"
+                ))
+            })?;
+        if stored.bytes as u64 != bytes || stored.media_type != media_type {
+            return Err(Error::Invalid(format!(
+                "Tool artifact layer {digest} metadata does not match its uploaded bytes"
+            )));
+        }
+        layers.push(json!({
+            "checksum": digest,
+            "bytes": bytes,
+            "media_type": media_type,
+            "content_base64": base64::engine::general_purpose::STANDARD.encode(stored.content),
+        }));
+    }
+    root.insert("tool_artifact_layers".into(), Value::Array(layers));
+    serde_json::to_vec(&document)
+        .map(Bytes::from)
+        .map_err(|error| Error::Internal(format!("create-session JSON: {error}")))
+}
+
 async fn bounded_inline_session_body(body: Body) -> Result<Bytes> {
     axum::body::to_bytes(body, MAX_INLINE_SESSION_REQUEST_BYTES)
         .await
@@ -84,10 +175,10 @@ async fn bounded_inline_session_body(body: Body) -> Result<Bytes> {
         })
 }
 
-async fn bounded_customer_hand_body(body: Body, limit: usize, label: &str) -> Result<Bytes> {
+async fn bounded_customer_environment_body(body: Body, limit: usize, label: &str) -> Result<Bytes> {
     axum::body::to_bytes(body, limit).await.map_err(|_| {
         Error::PayloadTooLarge(format!(
-            "customer-Hand {label} exceeds the {limit}-byte ceiling"
+            "customer-environment {label} exceeds the {limit}-byte ceiling"
         ))
     })
 }
@@ -121,15 +212,19 @@ pub struct AppState {
     pub operator_token_hash: Option<String>,
     /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
     pub external_executor_token_hash: Option<String>,
-    /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Hands.
-    pub customer_hand_gateway: Option<CustomerHandGateway>,
+    /// Mints and verifies credentials that grant tools access only to one tenant's session API.
+    pub tenant_tool_token_key: Option<identity::TenantToolTokenKey>,
+    /// Public origin injected for official environment Tools that call Aex session APIs.
+    pub public_api_url: String,
+    /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Environments.
+    pub customer_environment_gateway: Option<CustomerEnvironmentGateway>,
     /// Trusted host implementation for Aex-managed server Tools.
     pub web: WebRuntime,
     /// Fast prepaid admission and bounded in-memory unbilled reservations.
     pub admission: Admission,
     /// Bounds simultaneous create-sized buffers after authentication (24 MiB each).
     pub create_body_slots: Arc<tokio::sync::Semaphore>,
-    /// Bounds simultaneous prompt/message and customer-Hand buffers after authentication
+    /// Bounds simultaneous prompt/message and customer-environment buffers after authentication
     /// (at most 192 KiB each).
     pub message_body_slots: Arc<tokio::sync::Semaphore>,
     /// Bounds other buffered session requests after authentication (2 MiB each).
@@ -164,12 +259,19 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
-        .route("/v1/customer-hand/grants", post(create_customer_hand_grant))
-        .route("/v1/customer-hand/gateway", post(customer_hand_gateway))
         .route(
-            "/v1/customer-hand/observations/{grant_id}",
-            post(customer_hand_observation),
+            "/v1/customer-environment/grants",
+            post(create_customer_environment_grant),
         )
+        .route(
+            "/v1/customer-environment/gateway",
+            post(customer_environment_gateway),
+        )
+        .route(
+            "/v1/customer-environment/observations/{grant_id}",
+            post(customer_environment_observation),
+        )
+        .route("/v1/artifacts/{digest}", any(tool_artifact_layer))
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .with_state(state)
@@ -283,6 +385,40 @@ async fn auth_key(state: &AppState, headers: &HeaderMap) -> Result<(KeyRow, Acco
         .ok_or(Error::Unauthorized)
 }
 
+struct SessionPrincipal {
+    account: AccountRow,
+    key_id: String,
+}
+
+async fn auth_session(state: &AppState, headers: &HeaderMap) -> Result<SessionPrincipal> {
+    let token = bearer(headers).ok_or(Error::Unauthorized)?;
+    if token.starts_with("aex_sk_") {
+        let (key, account) = state
+            .db
+            .key_auth(identity::hash_secret(token), now_ms())
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        return Ok(SessionPrincipal {
+            account,
+            key_id: key.id,
+        });
+    }
+    let account_id = state
+        .tenant_tool_token_key
+        .as_ref()
+        .and_then(|key| key.authenticate(token))
+        .ok_or(Error::Unauthorized)?;
+    let account = state
+        .db
+        .account(account_id)
+        .await?
+        .ok_or(Error::Unauthorized)?;
+    Ok(SessionPrincipal {
+        account,
+        key_id: "tenant-tool".into(),
+    })
+}
+
 async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
     let expected = state.operator_token_hash.as_ref().ok_or(Error::NotFound)?;
     let token = bearer(headers).ok_or(Error::Unauthorized)?;
@@ -359,8 +495,6 @@ async fn execute_external_tool(
                         Error::Internal(format!("stored hosted Tool response: {error}"))
                     })?
                 }
-            } else if capability == Some(subagents_tool::SUBAGENTS_CAPABILITY) {
-                subagents_tool::execute(&state.db, &state.brain, request).await?
             } else {
                 return Err(Error::Invalid(format!(
                     "unknown hosted server capability {capability:?}"
@@ -1188,9 +1322,9 @@ async fn get_rates(State(state): State<AppState>) -> Response {
     json_response(200, &state.card.to_json())
 }
 
-// ---- hosted customer Hand ----
+// ---- hosted customer Environment ----
 
-async fn create_customer_hand_grant(
+async fn create_customer_environment_grant(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Body,
@@ -1199,15 +1333,18 @@ async fn create_customer_hand_grant(
         async {
             let (_key, account) = auth_key(&state, &headers).await?;
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body =
-                bounded_customer_hand_body(body, MAX_CUSTOMER_HAND_GRANT_BYTES, "grant request")
-                    .await?;
+            let body = bounded_customer_environment_body(
+                body,
+                MAX_CUSTOMER_ENVIRONMENT_GRANT_BYTES,
+                "grant request",
+            )
+            .await?;
             let content_type = headers
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_grant(&account.id, content_type, body)
+                .customer_environment_grant(&account.id, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -1215,7 +1352,7 @@ async fn create_customer_hand_grant(
     )
 }
 
-async fn customer_hand_gateway(
+async fn customer_environment_gateway(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1224,7 +1361,7 @@ async fn customer_hand_gateway(
     unwrap_response(
         async {
             let gateway = state
-                .customer_hand_gateway
+                .customer_environment_gateway
                 .as_ref()
                 .ok_or(Error::NotFound)?;
             let metadata = gateway.authenticate(&headers, peer)?;
@@ -1238,14 +1375,18 @@ async fn customer_hand_gateway(
                     .expect("static disconnect response"));
             }
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body =
-                bounded_customer_hand_body(body, MAX_CUSTOMER_HAND_FRAME_BYTES, "frame").await?;
+            let body = bounded_customer_environment_body(
+                body,
+                MAX_CUSTOMER_ENVIRONMENT_FRAME_BYTES,
+                "frame",
+            )
+            .await?;
             let content_type = headers
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_gateway(&metadata, content_type, body)
+                .customer_environment_gateway(&metadata, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -1253,7 +1394,7 @@ async fn customer_hand_gateway(
     )
 }
 
-async fn customer_hand_observation(
+async fn customer_environment_observation(
     State(state): State<AppState>,
     Path(grant_id): Path<String>,
     headers: HeaderMap,
@@ -1268,7 +1409,7 @@ async fn customer_hand_observation(
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
             {
                 return Err(Error::Invalid(
-                    "invalid customer-Hand observation grant id".into(),
+                    "invalid customer-environment observation grant id".into(),
                 ));
             }
             let grant = bearer(&headers).ok_or(Error::Unauthorized)?;
@@ -1279,9 +1420,9 @@ async fn customer_hand_observation(
                 return Err(Error::Unauthorized);
             }
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body = bounded_customer_hand_body(
+            let body = bounded_customer_environment_body(
                 body,
-                MAX_CUSTOMER_HAND_OBSERVATION_BYTES,
+                MAX_CUSTOMER_ENVIRONMENT_OBSERVATION_BYTES,
                 "observation",
             )
             .await?;
@@ -1290,7 +1431,7 @@ async fn customer_hand_observation(
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_observation(&grant_id, grant, content_type, body)
+                .customer_environment_observation(&grant_id, grant, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -1838,7 +1979,7 @@ fn validate_storage_upload(
 
 async fn owned_session_row(
     state: &AppState,
-    key: &KeyRow,
+    key_id: &str,
     account: &AccountRow,
     session_id: &str,
 ) -> Result<SessionRow> {
@@ -1860,7 +2001,7 @@ async fn owned_session_row(
             "session HEAD identity does not match the requested resource".into(),
         ));
     }
-    let row = session_row_from_snapshot(snapshot, &account.id, &key.id);
+    let row = session_row_from_snapshot(snapshot, &account.id, key_id);
     state.db.insert_session(row.clone()).await?;
     Ok(row)
 }
@@ -1902,7 +2043,7 @@ fn session_row_from_snapshot(
 async fn hydrate_delete_parent_chain(
     state: &AppState,
     account: &AccountRow,
-    key: &KeyRow,
+    key_id: &str,
     selected: &SessionRow,
 ) -> Result<Vec<SessionRow>> {
     const MAX_PARENT_HOPS: i64 = 8;
@@ -1980,7 +2121,7 @@ async fn hydrate_delete_parent_chain(
         }
         child_depth = snapshot.depth;
         expected_parent = snapshot.parent_id.clone();
-        chain.push(session_row_from_snapshot(snapshot, &account.id, &key.id));
+        chain.push(session_row_from_snapshot(snapshot, &account.id, key_id));
     }
     if child_depth != 0 || expected_parent.is_some() {
         return Err(Error::Upstream(format!(
@@ -1989,6 +2130,91 @@ async fn hydrate_delete_parent_chain(
         )));
     }
     Ok(chain)
+}
+
+async fn tool_artifact_layer(
+    State(state): State<AppState>,
+    method: Method,
+    Path(digest): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    unwrap_response(
+        async {
+            let (_, account) = auth_key(&state, &headers).await?;
+            if digest.len() != 64
+                || !digest
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+            {
+                return Err(Error::Invalid(
+                    "Tool artifact digest must be lower-case SHA-256 hex".into(),
+                ));
+            }
+            match method {
+                Method::HEAD => {
+                    let layer = state
+                        .db
+                        .tool_artifact_layer(account.id, digest)
+                        .await?
+                        .ok_or(Error::NotFound)?;
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_LENGTH, layer.bytes.to_string())
+                        .header(header::CONTENT_TYPE, layer.media_type)
+                        .body(Body::empty())
+                        .map_err(|error| Error::Internal(format!("artifact response: {error}")))
+                }
+                Method::PUT => {
+                    let media_type = headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok())
+                        .filter(|value| !value.is_empty() && value.len() <= 128)
+                        .ok_or_else(|| {
+                            Error::Invalid(
+                                "Tool artifact upload requires a bounded Content-Type".into(),
+                            )
+                        })?
+                        .to_owned();
+                    let content = bounded_artifact_layer_body(body).await?;
+                    if content.is_empty() {
+                        return Err(Error::Invalid("Tool artifact layer cannot be empty".into()));
+                    }
+                    if hex::encode(Sha256::digest(&content)) != digest {
+                        return Err(Error::Invalid(
+                            "Tool artifact bytes do not match the URL digest".into(),
+                        ));
+                    }
+                    let inserted = state
+                        .db
+                        .store_tool_artifact_layer(
+                            account.id,
+                            ToolArtifactLayerRow {
+                                digest,
+                                bytes: content.len() as i64,
+                                media_type,
+                                content: content.to_vec(),
+                            },
+                            now_ms(),
+                        )
+                        .await?;
+                    Ok(Response::builder()
+                        .status(if inserted {
+                            StatusCode::CREATED
+                        } else {
+                            StatusCode::NO_CONTENT
+                        })
+                        .body(Body::empty())
+                        .map_err(|error| Error::Internal(format!("artifact response: {error}")))?)
+                }
+                _ => Err(Error::Invalid(format!(
+                    "{method} not supported on /v1/artifacts/{{digest}}"
+                ))),
+            }
+        }
+        .await,
+    )
 }
 
 /// `POST /v1/sessions` (create, with admission) and `GET /v1/sessions` (this account's list).
@@ -2023,6 +2249,18 @@ async fn proxy_sessions_root(
                         .await?;
                     let idempotency = create_idempotency(&headers, &account.id)?;
                     let body = output::inject_output_tool(body)?;
+                    let body = output::inject_tool_credentials(
+                        body,
+                        &account.id,
+                        &state.public_api_url,
+                        state.tenant_tool_token_key.as_ref(),
+                    )?;
+                    let body = inject_uploaded_artifact_layers(
+                        &state.db,
+                        &account.id,
+                        body.into(),
+                    )
+                    .await?;
                     if body.len() > brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES {
                         return Err(Error::PayloadTooLarge(format!(
                             "create-session request exceeds {} bytes after official Tool sealing",
@@ -2261,14 +2499,15 @@ async fn proxy_session(
 ) -> Response {
     unwrap_response(
         async {
-            let (key, account) = auth_key(&state, &headers).await?;
+            let principal = auth_session(&state, &headers).await?;
+            let account = principal.account;
             if rejects_declared_get_body(&method, &headers) {
                 return Err(Error::Invalid("session GET requires an empty body".into()));
             }
             let session_id = rest.split('/').next().unwrap_or("").to_string();
             let sub = rest.strip_prefix(&session_id).unwrap_or("");
             // Unknown or foreign sessions are 404, never 403: existence is not revealed.
-            let row = owned_session_row(&state, &key, &account, &session_id).await?;
+            let row = owned_session_row(&state, &principal.key_id, &account, &session_id).await?;
             let is_message = method == Method::POST && sub == "/messages";
             let is_child_message = is_child_message_request(&method, sub);
             if requires_idempotency_key(&method, sub) {
@@ -2309,7 +2548,8 @@ async fn proxy_session(
                 // The retry worker performs the recursive end fence, strong billing settlement,
                 // and Brain/S3/Hand purge. A strict SDK caller observes `/deletion`; it never
                 // keeps this HTTP request open across external cleanup.
-                let chain = hydrate_delete_parent_chain(&state, &account, &key, &row).await?;
+                let chain =
+                    hydrate_delete_parent_chain(&state, &account, &principal.key_id, &row).await?;
                 state
                     .db
                     .begin_subtree_deletion_with_chain(
@@ -2483,7 +2723,7 @@ mod event_filter_tests {
             "name": "web_search",
             "input": {"query": "aex"},
             "context": {
-                "brain.capability": "aex.web.search",
+                "brain.capability": "brain.web.search",
                 "padding": "x".repeat(padding)
             }
         }))
@@ -2533,7 +2773,9 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: Some(identity::hash_secret("executor-secret")),
-            customer_hand_gateway: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -2852,7 +3094,9 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -2915,26 +3159,26 @@ mod event_filter_tests {
     }
 
     #[tokio::test]
-    async fn customer_hand_auth_and_capacity_precede_every_body_poll() {
+    async fn customer_environment_auth_and_capacity_precede_every_body_poll() {
         let db = Db::open_memory().unwrap();
-        let api_key = "aex_sk_customer_hand_body_test";
+        let api_key = "aex_sk_customer_environment_body_test";
         db.create_account(
             AccountRow {
-                id: "acc_customer_hand_body".into(),
-                email: "customer-hand-body@example.com".into(),
+                id: "acc_customer_environment_body".into(),
+                email: "customer-environment-body@example.com".into(),
                 created_ms: 1,
                 max_concurrent_sessions: 10,
                 session_creates_per_hour: 30,
             },
-            "customer-hand-body@example.com".into(),
+            "customer-environment-body@example.com".into(),
             identity::hash_secret("aex_at_unused"),
         )
         .await
         .unwrap();
         db.create_key(
             KeyRow {
-                id: "key_customer_hand_body".into(),
-                account_id: "acc_customer_hand_body".into(),
+                id: "key_customer_environment_body".into(),
+                account_id: "acc_customer_environment_body".into(),
                 name: "test".into(),
                 prefix: "aex_sk_customer".into(),
                 created_ms: 1,
@@ -2955,8 +3199,10 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: Some(
-                CustomerHandGateway::new(
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
+            customer_environment_gateway: Some(
+                CustomerEnvironmentGateway::new(
                     gateway_token,
                     vec!["127.0.0.0/8".parse().unwrap()],
                     vec!["198.51.100.0/24".parse().unwrap()],
@@ -2987,7 +3233,7 @@ mod event_filter_tests {
 
         let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         assert_eq!(
-            create_customer_hand_grant(
+            create_customer_environment_grant(
                 State(state.clone()),
                 HeaderMap::new(),
                 counted_body(polls.clone()),
@@ -2999,7 +3245,7 @@ mod event_filter_tests {
         let mut gateway_without_token = gateway_headers.clone();
         gateway_without_token.remove("x-aex-apigateway-token");
         assert_eq!(
-            customer_hand_gateway(
+            customer_environment_gateway(
                 ConnectInfo("127.0.0.1:1234".parse().unwrap()),
                 State(state.clone()),
                 gateway_without_token,
@@ -3010,7 +3256,7 @@ mod event_filter_tests {
             StatusCode::UNAUTHORIZED,
         );
         assert_eq!(
-            customer_hand_observation(
+            customer_environment_observation(
                 State(state.clone()),
                 Path("chg_test".into()),
                 HeaderMap::new(),
@@ -3029,7 +3275,7 @@ mod event_filter_tests {
             format!("Bearer {api_key}").parse().unwrap(),
         );
         assert_eq!(
-            create_customer_hand_grant(
+            create_customer_environment_grant(
                 State(state.clone()),
                 api_headers,
                 counted_body(polls.clone()),
@@ -3039,7 +3285,7 @@ mod event_filter_tests {
             StatusCode::TOO_MANY_REQUESTS,
         );
         assert_eq!(
-            customer_hand_gateway(
+            customer_environment_gateway(
                 ConnectInfo("127.0.0.1:1234".parse().unwrap()),
                 State(state.clone()),
                 gateway_headers,
@@ -3055,7 +3301,7 @@ mod event_filter_tests {
             "Bearer observation-grant".parse().unwrap(),
         );
         assert_eq!(
-            customer_hand_observation(
+            customer_environment_observation(
                 State(state),
                 Path("chg_test".into()),
                 observation_headers,
@@ -3068,7 +3314,7 @@ mod event_filter_tests {
         assert_eq!(
             polls.load(std::sync::atomic::Ordering::SeqCst),
             0,
-            "customer-Hand auth failures and saturated requests must not poll their bodies",
+            "customer-environment auth failures and saturated requests must not poll their bodies",
         );
         drop(held);
     }
@@ -3077,7 +3323,7 @@ mod event_filter_tests {
     async fn public_authentication_precedes_body_polling_and_create_uses_brains_exact_ceiling() {
         assert_eq!(
             brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES,
-            24 * 1024 * 1024
+            144 * 1024 * 1024
         );
         let exact = bounded_create_body(Body::from(vec![
             b'x';
@@ -3148,7 +3394,9 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: create_body_slots.clone(),

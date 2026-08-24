@@ -1,7 +1,7 @@
 [package]
 name = "aex-brain"
 version = "0.1.0"
-description = "Aex-hosted composition of Brain and the selected AWS Hand adapter"
+description = "Aex-hosted composition of Brain and official extensions"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,8 @@ brain-protocol.workspace = true
 brain-providers.workspace = true
 brain-server.workspace = true
 brain-standalone.workspace = true
-hand-brain-aws.workspace = true
+brain-loophost.workspace = true
+aws-microvm-controller.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -1,38 +1,34 @@
 //! Aex's downstream Brain composition.
 //!
-//! Brain owns the engine and protocols, Hands implements the selected isolation adapter, and this
-//! binary supplies Aex's fixed capability set and outer configuration mapping. Production is the
-//! default; `BRAIN_MODE=local` explicitly selects durable local adapters and unsafe host execution.
+//! Brain owns the engine and protocols; this binary composes Aex's selected extensions and outer
+//! configuration. Production is the default; `BRAIN_MODE=local` explicitly selects durable local
+//! adapters and unsafe host execution.
 
 mod customer_delivery;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aws_microvm_controller::AwsMicrovmEnvironment;
 use brain::adapter::ToolExecutor;
 use brain::config::ServerToolPolicy;
 use brain::customer::CustomerTransportConfig;
+use brain::environment::{EnvironmentAdapter, EnvironmentRegistry};
 use brain::session::{Brain, BrainConfig, BrainServices, ProviderFactory};
 use brain_aws::{AwsPersistenceConfig, AwsRuntimePorts};
 use brain_protocol::session::{ExternalToolCompletion, ExternalToolEffect, ExternalToolScope};
 use brain_providers::external::HttpExternalToolExecutor;
 use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
-use hand_brain_aws::AwsHand;
 
-const CAPABILITIES: [&str; 4] = [
-    "aex.output",
-    "aex.web.search",
-    "aex.web.fetch",
-    "aex.subagents",
-];
+const CAPABILITIES: [&str; 3] = ["brain.output", "brain.web.search", "brain.web.fetch"];
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "brain=info,brain_aws=info,hand_brain_aws=info,aex_brain=info".into()
+                "brain=info,brain_aws=info,aws_microvm_controller=info,aex_brain=info".into()
             }),
         )
         .init();
@@ -52,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         "local" => {
             let data_dir =
                 std::env::var("BRAIN_DATA_DIR").unwrap_or_else(|_| "./brain-data".into());
-            let brain = compose_local(config, external, customer_transport, data_dir, None)?;
+            let brain = compose_local(config, external, customer_transport, data_dir, None, None)?;
             tracing::warn!(
                 capabilities = ?CAPABILITIES,
                 "LOCAL MODE: durable SQLite/custody/storage with unsandboxed host Tool execution; session network policy is not enforced"
@@ -113,33 +109,39 @@ async fn compose_production(
 ) -> anyhow::Result<Arc<Brain>> {
     let persistence = AwsPersistenceConfig::from_env().map_err(anyhow::Error::msg)?;
     validate_production_region(&persistence.region)?;
-    let hands = AwsHand::from_env().await?;
+    let environment = AwsMicrovmEnvironment::from_env().await?;
+    let adapter = EnvironmentAdapter {
+        execution: environment.clone(),
+        preparation: environment.clone(),
+        files: Some(environment.clone()),
+    };
+    let environments = EnvironmentRegistry::new([("@aexhq/env-aws-microvm".to_owned(), adapter)])?;
     let customer_delivery =
         Arc::new(customer_delivery::ApiGatewayCustomerDelivery::from_env().await?);
+    let loop_registry = configured_loop_registry(required("BRAIN_LOOP_STORE_DIR")?.into())?;
     let brain = brain_aws::compose(
         config,
         persistence,
         AwsRuntimePorts {
-            hand: hands.clone(),
-            session_preparation: hands.clone(),
-            sandbox_files: hands.clone(),
-            sandbox_control: hands.clone(),
+            environments,
             external_executor: Some(external),
             customer_delivery: Some(customer_delivery),
             customer_transport: Some(customer_transport),
-            // The hosted composition runs the kernel's builtin aex loop; loop-host wiring
-            // (custom uploads, seeded officials) is the recorded next composition step.
-            agentloop: None,
-            agentloop_registry: None,
+            agentloop_registry: Some(loop_registry),
             // The hosted default: guarded live transport with private addresses denied.
             provider_factory: None,
         },
     )
     .await
     .map_err(anyhow::Error::msg)?;
-    hands
+    environment
         .attach_secret_delivery(brain.clone())
-        .map_err(|error| anyhow::anyhow!("AWS Hand secret delivery: {}", error.message.as_str()))?;
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "AWS MicroVM Environment secret delivery: {}",
+                error.message.as_str()
+            )
+        })?;
     tracing::info!(capabilities = ?CAPABILITIES, "Aex hosted Brain composition ready");
     Ok(brain)
 }
@@ -157,10 +159,24 @@ fn compose_local(
     customer_transport: CustomerTransportConfig,
     data_dir: impl Into<std::path::PathBuf>,
     provider_factory: Option<ProviderFactory>,
+    agentloop_registry: Option<Arc<dyn brain::agentloop::AgentloopRegistry>>,
 ) -> anyhow::Result<Arc<Brain>> {
     let allow_private = config.outbound_allow_private;
-    let parts = durable_local_parts(data_dir).map_err(anyhow::Error::msg)?;
-    let local_hand = parts.local_hand.clone();
+    let data_dir = data_dir.into();
+    let parts = durable_local_parts(&data_dir).map_err(anyhow::Error::msg)?;
+    let local_environment = parts.local_environment.clone();
+    let loop_registry = match agentloop_registry {
+        Some(registry) => registry,
+        None => configured_loop_registry(data_dir.join("loops"))?,
+    };
+    let environments = EnvironmentRegistry::new([(
+        "brain.local".to_owned(),
+        EnvironmentAdapter {
+            execution: parts.environment.clone(),
+            preparation: parts.session_preparation.clone(),
+            files: Some(parts.sandbox_files.clone()),
+        },
+    )])?;
     let brain = Brain::with_parts_and_services(
         config,
         parts.journal,
@@ -169,26 +185,33 @@ fn compose_local(
         BrainServices {
             session_storage: Some(parts.session_storage),
             bundle_storage: Some(parts.bundle_storage),
-            hand: Some(parts.hand),
-            session_preparation: Some(parts.session_preparation),
-            sandbox_files: Some(parts.sandbox_files),
-            sandbox_control: Some(parts.sandbox_control),
+            environments,
             customer_delivery: None,
             customer_transport: Some(customer_transport),
             compactor: None,
-            // The hosted composition runs the kernel's builtin aex loop; loop-host wiring
-            // (custom uploads, seeded officials) is the recorded next composition step.
-            agentloop: None,
-            agentloop_registry: None,
+            agentloop_registry: Some(loop_registry),
         },
         provider_factory.unwrap_or_else(|| brain_providers::default_factory(allow_private)),
     );
-    local_hand
+    local_environment
         .attach_secret_delivery(brain.clone())
         .map_err(|error| {
-            anyhow::anyhow!("local Hand secret delivery: {}", error.message.as_str())
+            anyhow::anyhow!(
+                "local Environment secret delivery: {}",
+                error.message.as_str()
+            )
         })?;
     Ok(brain)
+}
+
+fn configured_loop_registry(
+    store_dir: std::path::PathBuf,
+) -> anyhow::Result<Arc<dyn brain::agentloop::AgentloopRegistry>> {
+    let toolchain_dir = required("BRAIN_LOOPHOST_TOOLCHAIN_DIR")?;
+    Ok(Arc::new(brain_loophost::registry::LoophostRegistry::new(
+        store_dir,
+        toolchain_dir,
+    )?))
 }
 
 fn configured_customer_transport(
@@ -202,20 +225,21 @@ fn configured_customer_transport(
             format!("127.0.0.1:{}", listen.port())
         };
         (
-            format!("ws://{host}/v1/customer-hand/socket"),
+            format!("ws://{host}/v1/customer-environment/socket"),
             format!("http://{host}"),
         )
     };
     let (websocket_default, observation_default) = local_origin();
-    let websocket_url = match std::env::var("AEX_CUSTOMER_HAND_WEBSOCKET_URL") {
+    let websocket_url = match std::env::var("AEX_CUSTOMER_ENVIRONMENT_WEBSOCKET_URL") {
         Ok(value) => value,
         Err(_) if mode == "local" => websocket_default,
-        Err(_) => anyhow::bail!("AEX_CUSTOMER_HAND_WEBSOCKET_URL is not set"),
+        Err(_) => anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_WEBSOCKET_URL is not set"),
     };
-    let observation_base_url = match std::env::var("AEX_CUSTOMER_HAND_OBSERVATION_BASE_URL") {
+    let observation_base_url = match std::env::var("AEX_CUSTOMER_ENVIRONMENT_OBSERVATION_BASE_URL")
+    {
         Ok(value) => value,
         Err(_) if mode == "local" => observation_default,
-        Err(_) => anyhow::bail!("AEX_CUSTOMER_HAND_OBSERVATION_BASE_URL is not set"),
+        Err(_) => anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_OBSERVATION_BASE_URL is not set"),
     };
     CustomerTransportConfig::new(websocket_url, observation_base_url).map_err(anyhow::Error::msg)
 }
@@ -223,9 +247,9 @@ fn configured_customer_transport(
 fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
     [
         (
-            "aex.output",
+            "brain.output",
             ServerToolPolicy {
-                capability: "aex.output".into(),
+                capability: "brain.output".into(),
                 scope: ExternalToolScope::Root,
                 completion: ExternalToolCompletion::ReturnDirect,
                 effect: ExternalToolEffect::ReplaySafe,
@@ -233,9 +257,9 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
             },
         ),
         (
-            "aex.web.search",
+            "brain.web.search",
             ServerToolPolicy {
-                capability: "aex.web.search".into(),
+                capability: "brain.web.search".into(),
                 scope: ExternalToolScope::All,
                 completion: ExternalToolCompletion::Continue,
                 effect: ExternalToolEffect::ReplaySafe,
@@ -243,25 +267,13 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
             },
         ),
         (
-            "aex.web.fetch",
+            "brain.web.fetch",
             ServerToolPolicy {
-                capability: "aex.web.fetch".into(),
+                capability: "brain.web.fetch".into(),
                 scope: ExternalToolScope::All,
                 completion: ExternalToolCompletion::Continue,
                 effect: ExternalToolEffect::ReplaySafe,
                 max_input_bytes: 8 * 1024,
-            },
-        ),
-        (
-            // The former brain.subagents intrinsic: the same child-session verbs, spoken over
-            // Brain's session-scoped children API by ordinary Aex service code.
-            "aex.subagents",
-            ServerToolPolicy {
-                capability: "aex.subagents".into(),
-                scope: ExternalToolScope::All,
-                completion: ExternalToolCompletion::Continue,
-                effect: ExternalToolEffect::ReplaySafe,
-                max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
             },
         ),
     ]
@@ -301,6 +313,8 @@ mod tests {
 
     use base64::Engine;
     use brain::Result;
+    use brain::agentloop::{Agentloop, AgentloopRegistry, SequentialAgentloop};
+    use brain::journal::AgentloopSelectorDoc;
     use brain::journal::Record;
     use brain::provider::fake::{FakeProvider, Scripted};
     use brain_protocol::session::{
@@ -312,6 +326,40 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio_util::sync::CancellationToken;
 
+    struct TestLoopRegistry;
+
+    impl AgentloopRegistry for TestLoopRegistry {
+        fn resolve(&self, _selector: &AgentloopSelectorDoc) -> Result<Arc<dyn Agentloop>> {
+            Ok(Arc::new(SequentialAgentloop))
+        }
+
+        fn admit_custom(
+            &self,
+            source_bundle_sha256: &str,
+            toolchain: &str,
+            bundle: &[u8],
+        ) -> Result<AgentloopSelectorDoc> {
+            Ok(AgentloopSelectorDoc {
+                source_bundle_sha256: source_bundle_sha256.into(),
+                source_bundle_bytes: bundle.len() as u64,
+                toolchain: toolchain.into(),
+            })
+        }
+    }
+
+    fn test_loop_registry() -> Arc<dyn AgentloopRegistry> {
+        Arc::new(TestLoopRegistry)
+    }
+
+    fn test_loop() -> serde_json::Value {
+        let bundle = b"integration test loop";
+        json!({
+            "source_bundle_sha256": hex::encode(Sha256::digest(bundle)),
+            "toolchain": "test-loop",
+            "bundle_base64": base64::engine::general_purpose::STANDARD.encode(bundle),
+        })
+    }
+
     const CUSTOMER_RUNNER: &str = r#"
 const base = process.env.SMOKE_BASE_URL;
 const token = process.env.SMOKE_BRAIN_TOKEN;
@@ -320,7 +368,7 @@ const clientId = process.env.SMOKE_CLIENT_ID;
 const registration = process.env.SMOKE_REGISTRATION;
 const toolName = process.env.SMOKE_TOOL_NAME;
 const contractDigest = process.env.SMOKE_CONTRACT_DIGEST;
-const grantResponse = await fetch(`${base}/internal/v1/customer-hand/grants`, {
+const grantResponse = await fetch(`${base}/internal/v1/customer-environment/grants`, {
   method: 'POST',
   headers: {
     authorization: `Bearer ${token}`,
@@ -333,7 +381,7 @@ if (!grantResponse.ok) throw new Error(`grant failed: ${grantResponse.status} ${
 const grant = await grantResponse.json();
 const proofBytes = await crypto.subtle.digest(
   'SHA-256',
-  new TextEncoder().encode(`aex.customer-hand.frame-proof\0${grant.protocol}`),
+  new TextEncoder().encode(`brain.customer-environment.frame-proof\0${grant.protocol}`),
 );
 const proof = [...new Uint8Array(proofBytes)]
   .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -413,7 +461,7 @@ socket.addEventListener('message', (event) => {
             request: ExternalToolCallRequest,
             _cancel: CancellationToken,
         ) -> Result<ExternalToolCallResponse> {
-            assert_eq!(capability, "aex.output");
+            assert_eq!(capability, "brain.output");
             let result = request.input.clone();
             self.requests.lock().expect("requests").push(request);
             Ok(serde_json::from_value(json!({
@@ -430,20 +478,15 @@ socket.addEventListener('message', (event) => {
     fn hosted_capability_set_is_exact_and_stable() {
         assert_eq!(
             CAPABILITIES,
-            [
-                "aex.output",
-                "aex.web.search",
-                "aex.web.fetch",
-                "aex.subagents"
-            ]
+            ["brain.output", "brain.web.search", "brain.web.fetch"]
         );
         let policies = official_capabilities();
         assert_eq!(policies.len(), CAPABILITIES.len());
         assert_eq!(
-            policies["aex.output"].completion,
+            policies["brain.output"].completion,
             ExternalToolCompletion::ReturnDirect
         );
-        assert_eq!(policies["aex.output"].scope, ExternalToolScope::Root);
+        assert_eq!(policies["brain.output"].scope, ExternalToolScope::Root);
         assert!(
             CAPABILITIES
                 .iter()
@@ -479,12 +522,13 @@ socket.addEventListener('message', (event) => {
             config,
             executor.clone(),
             CustomerTransportConfig::new(
-                "ws://127.0.0.1:8700/v1/customer-hand/socket",
+                "ws://127.0.0.1:8700/v1/customer-environment/socket",
                 "http://127.0.0.1:8700",
             )
             .expect("local customer transport"),
             temp.0.clone(),
             Some(provider_factory),
+            Some(test_loop_registry()),
         )
         .expect("compose local Aex Brain");
         let (output_definition, _) = seal_definition(json!({
@@ -505,9 +549,10 @@ socket.addEventListener('message', (event) => {
                 "name": "scripted",
                 "api_key": "sk-fake"
             },
+            "agentloop": test_loop(),
             "tools": {"items": [{
                 "definition": output_definition,
-                "executor": {"kind": "engine", "capability": "aex.output"}
+                "executor": {"kind": "engine", "capability": "brain.output"}
             }]}
         }))
         .expect("valid create request");
@@ -578,12 +623,13 @@ socket.addEventListener('message', (event) => {
             },
             executor,
             CustomerTransportConfig::new(
-                "ws://127.0.0.1:8700/v1/customer-hand/socket",
+                "ws://127.0.0.1:8700/v1/customer-environment/socket",
                 "http://127.0.0.1:8700",
             )
             .expect("local customer transport"),
             temp.0.clone(),
             None,
+            Some(test_loop_registry()),
         )
         .expect("reopen local Aex Brain");
         let (_, bytes) = reopened
@@ -669,7 +715,7 @@ socket.addEventListener('message', (event) => {
             Arc::new(move |_| provider.clone() as Arc<dyn brain::provider::Provider>);
         let executor = Arc::new(OutputExecutor::default());
         let customer_transport = CustomerTransportConfig::new(
-            format!("ws://{address}/v1/customer-hand/socket"),
+            format!("ws://{address}/v1/customer-environment/socket"),
             base.clone(),
         )
         .expect("local customer transport");
@@ -682,6 +728,7 @@ socket.addEventListener('message', (event) => {
             customer_transport,
             temp.0.clone(),
             Some(provider_factory),
+            Some(test_loop_registry()),
         )
         .expect("compose local Aex Brain");
         let server_brain = brain.clone();
@@ -704,25 +751,49 @@ socket.addEventListener('message', (event) => {
         let server_bundle = format!(
             r#"import {{ writeFile }} from 'node:fs/promises';
 export default Object.freeze({{
-  kind: 'brain.tool-runtime',
+  kind: 'tool-runtime/v1',
   name: 'server_tool',
   description: 'Run inside the explicit local host Hand.',
   contractDigest: '{server_contract}',
   requiredEnv: [],
   execute: async (input, context) => {{
     await writeFile(`${{context.workspace}}/server-smoke.txt`, String(input.value));
-    return {{ server_value: input.value * 2, runtime: 'local-host-hand' }};
+    return {{ server_value: input.value * 2, runtime: 'local-host-environment' }};
   }},
 }});
 "#
         );
-        let server_bundle_digest = hex::encode(Sha256::digest(server_bundle.as_bytes()));
-        let bundle_document = json!({
-            "checksum": server_bundle_digest,
+        let server_layer_digest = hex::encode(Sha256::digest(server_bundle.as_bytes()));
+        let layer_reference = json!({
+            "checksum": server_layer_digest,
+            "bytes": server_bundle.len(),
+            "media_type": "application/javascript+esm",
+            "mount_path": "/tool/runtime.mjs",
+            "unpack": "file"
+        });
+        let manifest_identity = json!({
+            "profile": "computer/v1",
+            "target": "linux-amd64",
+            "execute_path": "/tool/runtime.mjs",
+            "setup_path": null,
+            "layers": [layer_reference.clone()]
+        });
+        let server_artifact_digest = hex::encode(Sha256::digest(
+            serde_jcs::to_vec(&manifest_identity).expect("canonical artifact manifest"),
+        ));
+        let layer_document = json!({
+            "checksum": server_layer_digest,
             "content_base64": base64::engine::general_purpose::STANDARD
                 .encode(server_bundle.as_bytes()),
             "bytes": server_bundle.len(),
             "media_type": "application/javascript+esm"
+        });
+        let bundle_document = json!({
+            "checksum": server_artifact_digest,
+            "bytes": server_bundle.len(),
+            "target": "linux-amd64",
+            "execute_path": "/tool/runtime.mjs",
+            "layers": [layer_reference]
         });
         let (output_definition, _) = seal_definition(json!({
             "name": "output",
@@ -741,7 +812,8 @@ export default Object.freeze({{
             tenant,
             &json!({
                 "model": {"provider":"anthropic", "name":"scripted", "api_key":"sk-fake"},
-                "tool_bundles": [bundle_document.clone()]
+                "agentloop": test_loop(),
+                "tool_artifact_layers": [layer_document.clone()]
             }),
         )
         .await;
@@ -757,17 +829,27 @@ export default Object.freeze({{
             tenant,
             &json!({
                 "model": {"provider":"anthropic", "name":"scripted", "api_key":"sk-fake"},
+                "agentloop": test_loop(),
+                "environments": {"workspace": {
+                    "extension": "brain.local",
+                    "protocol": "environment/v1",
+                    "profile": {"kind":"computer", "platform":"linux-amd64",
+                                "network":"none", "recovery":"retained"},
+                    "configuration": {}
+                }},
                 "tools": {"items": [{
                     "definition": server_definition.clone(),
-                    "executor": {"kind":"aex_managed", "bundle_digest":mismatched_digest,
-                                 "required_env":[]}
+                    "executor": {"kind":"environment", "environment":"workspace",
+                                 "artifact_digest":mismatched_digest, "requirements":{}}
                 }]},
                 "tool_bundles": [{
                     "checksum": mismatched_digest,
-                    "content_base64": bundle_document["content_base64"],
                     "bytes": server_bundle.len(),
-                    "media_type": "application/javascript+esm"
-                }]
+                    "target": "linux-amd64",
+                    "execute_path": "/tool/runtime.mjs",
+                    "layers": bundle_document["layers"]
+                }],
+                "tool_artifact_layers": [layer_document.clone()]
             }),
         )
         .await;
@@ -796,7 +878,7 @@ export default Object.freeze({{
         let mut lines = BufReader::new(stdout).lines();
         let ready = tokio::time::timeout(Duration::from_secs(10), lines.next_line())
             .await
-            .expect("Node customer Hand readiness timeout")
+            .expect("Node customer Environment readiness timeout")
             .expect("read Node readiness");
         assert_eq!(ready.as_deref(), Some("READY"));
 
@@ -807,23 +889,44 @@ export default Object.freeze({{
             tenant,
             &json!({
                 "model": {"provider":"anthropic", "name":"scripted", "api_key":"sk-fake"},
+                "agentloop": test_loop(),
                 "client": {"id": client_id, "submit_retries": 1},
+                "environments": {
+                    "workspace": {
+                        "extension": "brain.local",
+                        "protocol": "environment/v1",
+                        "profile": {"kind":"computer", "platform":"linux-amd64",
+                                    "network":"none", "recovery":"retained"},
+                        "configuration": {}
+                    },
+                    "app": {
+                        "extension": "test.app",
+                        "protocol": "environment/v1",
+                        "profile": {"kind":"callbacks", "network":"unrestricted",
+                                    "recovery":"connection"},
+                        "configuration": {"id": client_id}
+                    }
+                },
                 "tools": {"items": [
                     {
                         "definition": server_definition,
-                        "executor": {"kind":"aex_managed", "bundle_digest":server_bundle_digest,
-                                     "required_env":[]}
+                        "executor": {"kind":"environment", "environment":"workspace",
+                                     "artifact_digest":server_artifact_digest,
+                                     "requirements":{}}
                     },
                     {
                         "definition": client_definition,
-                        "executor": {"kind":"customer_app", "registration":registration}
+                        "executor": {"kind":"environment", "environment":"app",
+                                     "callback_registration":registration,
+                                     "requirements":{}}
                     },
                     {
                         "definition": output_definition,
-                        "executor": {"kind":"engine", "capability":"aex.output"}
+                        "executor": {"kind":"engine", "capability":"brain.output"}
                     }
                 ]},
-                "tool_bundles": [bundle_document]
+                "tool_bundles": [bundle_document],
+                "tool_artifact_layers": [layer_document]
             }),
         )
         .await;
@@ -869,22 +972,23 @@ export default Object.freeze({{
             })
             .collect();
         assert!(results.iter().any(|(name, content, is_error)| {
-            *name == "server_tool" && !is_error && content.contains("local-host-hand")
+            *name == "server_tool" && !is_error && content.contains("local-host-environment")
         }));
         assert!(results.iter().any(|(name, content, is_error)| {
             *name == "client_tool" && !is_error && content.contains("node-app")
         }));
-        let sandbox = brain
-            .default_sandbox_status(session_id)
+        let environment = brain
+            .environment_status(session_id, "workspace")
             .await
-            .expect("read local default sandbox status");
-        let generation = sandbox
+            .expect("read local workspace environment status");
+        let generation = environment
             .generation
             .as_ref()
-            .expect("local default sandbox generation");
+            .expect("local workspace environment generation");
         let exported = brain
             .sandbox_file_stat(
                 session_id,
+                "workspace",
                 generation.as_str(),
                 "/workspace/server-smoke.txt",
             )

@@ -15,6 +15,7 @@ brain-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+base64 = "0.22"
 bytes.workspace = true
 chrono.workspace = true
 futures-util.workspace = true

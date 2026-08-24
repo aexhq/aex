@@ -10,9 +10,75 @@ import {
   tool,
 } from "../dist/index.js";
 import { parseEventStream, Transport } from "../dist/transport.js";
-import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/brain";
-import { officialTool } from "@aexhq/brain/internal";
+import { compileTools, withPreparedArtifact } from "../dist/tools.js";
+import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/session-protocol";
+import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
+
+const loopSource = "export async function activate() {}";
+const testLoop = Object.freeze({
+  source: loopSource,
+  sha256: createHash("sha256").update(loopSource).digest("hex"),
+  toolchain: "componentize-js@0.19.3+wasi-sdk-25.0",
+});
+
+function create(aex, options, request) {
+  return aex.sessions.create({ loop: testLoop, ...options }, request);
+}
+
+const application = defineEnvironment({
+  identity: "test/app",
+  protocol: "environment/v1",
+  profile: callbacks(),
+  serialize: ({ id }) => ({ id }),
+  handle: () => Object.freeze({ kind: "test-app" }),
+});
+
+const computerEnvironment = defineEnvironment({
+  identity: "test/computer",
+  protocol: "environment/v1",
+  profile: computer({ platform: linux.amd64, network: "allowlist", recovery: "retained" }),
+  serialize: () => ({}),
+  handle: (context) => Object.freeze({
+    status: () => context.request("GET", `/v1/sessions/${context.sessionId}/environments/${context.environment}`),
+  }),
+});
+
+function prepared(name) {
+  const code = Buffer.from(`export default ${JSON.stringify(name)}`);
+  const layerDigest = createHash("sha256").update(code).digest("hex");
+  const layers = [{
+    checksum: layerDigest,
+    bytes: code.byteLength,
+    media_type: "application/javascript+esm",
+    mount_path: "/tool/runtime.mjs",
+    unpack: "file",
+  }];
+  const digest = createHash("sha256").update(canonicalize({
+    profile: "computer/v1",
+    target: "linux-amd64",
+    execute_path: "/tool/runtime.mjs",
+    setup_path: null,
+    layers,
+  })).digest("hex");
+  return withPreparedArtifact(
+    tool(async function execute() {}).named(name),
+    {
+      digest,
+      target: "linux-amd64",
+      bytes: code.byteLength,
+      execute: "/tool/runtime.mjs",
+      layers: [{
+        digest: layerDigest,
+        bytes: code.byteLength,
+        mediaType: "application/javascript+esm",
+        mountPath: "/tool/runtime.mjs",
+        unpack: "file",
+        source: new URL(`data:application/javascript;base64,${code.toString("base64")}`),
+      }],
+    },
+  );
+}
 
 const snapshot = {
   id: "ses_01",
@@ -37,17 +103,9 @@ const snapshot = {
 
 test("errors use the Aex display name", () => {
   assert.throws(() => new Aex({ apiKey: "" }), /Aex apiKey cannot be empty/);
-  assert.throws(
-    () => new Aex({ apiKey: "aex_sk_test", client: { id: "" } }),
-    /client.id must contain/,
-  );
-  assert.throws(
-    () => new Aex({ apiKey: "aex_sk_test", client: { id: "two replicas" } }),
-    /client.id must contain/,
-  );
 });
 
-test("tool infers a named function and seals immutable client placement", () => {
+test("tool infers a named function and has no placement finalizer", () => {
   const lookup = tool(
     z.object({ id: z.string() }),
     async function lookup({ id }) {
@@ -55,14 +113,59 @@ test("tool infers a named function and seals immutable client placement", () => 
     },
   )
     .describe("Look up one record.")
-    .returns(z.object({ id: z.string() }))
-    .client();
+    .returns(z.object({ id: z.string() }));
 
   assert.equal(lookup.name, "lookup");
-  assert.equal(lookup.execution, "customer_app");
   assert.equal(lookup.description, "Look up one record.");
   assert.ok(Object.isFrozen(lookup));
-  assert.throws(() => tool(async () => undefined).client(), /must be named/);
+  assert.equal("client" in lookup, false);
+  assert.equal("server" in lookup, false);
+});
+
+test("environment binding is explicit on the wire and infers only one compatible ref", async () => {
+  const first = computerEnvironment();
+  const second = computerEnvironment();
+  const read = prepared("read").needs({ workspace: true, recovery: "retained" });
+  const automatic = await compileTools([read], { workspace: first });
+  const explicit = await compileTools([read.bind(first)], { workspace: first });
+  assert.deepEqual(automatic.items, explicit.items);
+  assert.equal(automatic.items[0].executor.environment, "workspace");
+
+  await assert.rejects(compileTools([read], undefined), /at least one declared environment/);
+  await assert.rejects(
+    compileTools([read], { first, second }),
+    /matches more than one environment.*Bind it explicitly/s,
+  );
+  await assert.rejects(
+    compileTools([read.bind(first)], { second }),
+    /bound to an environment absent/,
+  );
+  const app = application({ id: "app" });
+  await assert.rejects(
+    compileTools([read.bind(app)], { app, workspace: first }),
+    /missing workspace|cannot launch target/,
+  );
+  await assert.rejects(
+    compileTools([read], { workspace: first, duplicate: first }),
+    /same EnvironmentRef was declared/,
+  );
+  await assert.rejects(
+    compileTools([read], { "not valid": first }),
+    /Invalid environment name/,
+  );
+});
+
+test("session creation fails before transport without a loop", async () => {
+  let called = false;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async () => { called = true; return Response.json(snapshot); },
+  });
+  await assert.rejects(
+    aex.sessions.create({ model: { provider: "anthropic", name: "m", apiKey: "key" } }),
+    /requires an imported loop/,
+  );
+  assert.equal(called, false);
 });
 
 test("create uses the production origin and maps the small camelCase surface", async () => {
@@ -75,7 +178,7 @@ test("create uses the production origin and maps the small camelCase surface", a
     },
   });
 
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: {
       provider: "anthropic",
       name: "claude-sonnet-5",
@@ -95,6 +198,11 @@ test("create uses the production origin and maps the small camelCase surface", a
       context_window_tokens: 200_000,
     },
     tools: { items: [] },
+    agentloop: {
+      source_bundle_sha256: testLoop.sha256,
+      toolchain: testLoop.toolchain,
+      bundle_base64: Buffer.from(testLoop.source).toString("base64"),
+    },
   });
   assert.equal(request.init.headers.Authorization, "Bearer aex_sk_test");
   assert.ok(request.init.headers["Idempotency-Key"]);
@@ -134,7 +242,7 @@ test("create retries one server failure with the identical idempotency identity"
     },
   });
 
-  const session = await aex.sessions.create(
+  const session = await create(aex,
     createOptions,
     { idempotencyKey: "stable-create-request" },
   );
@@ -173,7 +281,7 @@ test("ordinary JSON responses are bounded before an advertised oversized body is
   });
 
   await assert.rejects(
-    aex.sessions.create({
+    create(aex, {
       model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     }),
     /Aex response exceeds 2097152 bytes/,
@@ -187,17 +295,21 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
   const aex = new Aex({
     apiKey: "aex_sk_test",
     fetch: async (_input, init) => {
+      if (init.method === "HEAD") return new Response(null, { status: 404 });
+      if (init.method === "PUT") return new Response(null, { status: 201 });
       bodies.push(JSON.parse(init.body));
       return Response.json(snapshot, { status: 201 });
     },
   });
 
-  const task = intrinsicTool("task");
-  const read = intrinsicTool("read");
-  const write = intrinsicTool("write");
-  await aex.sessions.create({
+  const workspace = computerEnvironment();
+  const task = prepared("task");
+  const read = prepared("read");
+  const write = prepared("write");
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [task, read, write],
+    environments: { workspace },
   });
 
   assert.deepEqual(
@@ -206,14 +318,15 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
   );
   assert.deepEqual(
     bodies[0].tools.items.map((item) => item.executor.kind),
-    ["engine", "engine", "engine"],
+    ["environment", "environment", "environment"],
   );
   await assert.rejects(
-    aex.sessions.create({
+    create(aex, {
       model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
       tools: [read, read],
+      environments: { workspace },
     }),
-    /selected more than once/,
+    /selected twice/,
   );
   assert.equal(bodies.length, 1, "invalid tool selections fail before creating a session");
 });
@@ -228,7 +341,7 @@ test("an explicit empty tool list is equivalent to omission", async () => {
     },
   });
 
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [],
   });
@@ -247,9 +360,9 @@ test("create seals an imported agentloop as digest, toolchain and bytes", async 
   });
 
   const source = 'export const activate = () => 1;' + String.fromCharCode(10);
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-    agentloop: {
+    loop: {
       source,
       sha256: "a".repeat(64),
       toolchain: "starlingmonkey-componentize-js-0.22.0",
@@ -268,14 +381,13 @@ test("create seals managed network and bounded recovery policy", async () => {
   let body;
   const aex = new Aex({
     apiKey: "aex_sk_test",
-    client: { id: "billing-worker" },
     fetch: async (_input, init) => {
       body = JSON.parse(init.body);
       return Response.json(snapshot, { status: 201 });
     },
   });
 
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     network: {
       outbound: "allowlist",
@@ -285,7 +397,6 @@ test("create seals managed network and bounded recovery policy", async () => {
       ],
     },
     providerRecoveryRetries: 0,
-    client: { submitRetries: 0 },
     secrets: { PROCESSOR_TOKEN: "write-only-secret" },
     children: { maxDepth: 2, maxDirectChildren: 8, maxDescendants: 32 },
   });
@@ -298,7 +409,7 @@ test("create seals managed network and bounded recovery policy", async () => {
     ],
   });
   assert.equal(body.provider_recovery_retries, 0);
-  assert.deepEqual(body.client, { id: "billing-worker", submit_retries: 0 });
+  assert.equal(body.client, undefined);
   assert.deepEqual(body.secrets, { PROCESSOR_TOKEN: "write-only-secret" });
   assert.deepEqual(body.children, {
     max_depth: 2,
@@ -346,13 +457,14 @@ test("send output hashes the Zod schema, follows events, and resolves inferred d
     throw new Error(`unexpected request: ${url}`);
   };
   // Construct through create to keep the public API under test.
-  const live = await new Aex({
+  const liveClient = new Aex({
     apiKey: "aex_sk_test",
     fetch: async (input, init) => {
       if (String(input).endsWith("/v1/sessions")) return Response.json(snapshot, { status: 201 });
       return fetch(input, init);
     },
-  }).sessions.create({
+  });
+  const live = await create(liveClient, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -397,7 +509,7 @@ test("send output maps terminal validation details to OutputValidationError", as
       });
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -445,7 +557,7 @@ test("send output distinguishes a refusal from a missing submission", async () =
       });
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -472,7 +584,7 @@ test("send output rejects process-local Zod refinements before an API call", asy
       return Response.json(snapshot, { status: 201 });
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   await assert.rejects(
@@ -523,7 +635,7 @@ test("send returns the final root assistant message", async () => {
       return sse(...events);
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   assert.equal(await session.send("Be concise."), "The concise answer.");
@@ -591,7 +703,7 @@ test("provisional retry frames never advance the durable reconnect cursor or con
       );
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -745,7 +857,7 @@ test("send output retries transport loss with one identity and reconnects event 
       });
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -760,7 +872,7 @@ test("send output retries transport loss with one identity and reconnects event 
   assert.equal(eventAttempts, 2);
 });
 
-test("one customer Hand socket registers client Tools before creating multiple sessions", async () => {
+test("one customer Environment socket registers client Tools before creating multiple sessions", async () => {
   const sockets = [];
   const calls = [];
   const lookup = tool(
@@ -768,16 +880,16 @@ test("one customer Hand socket registers client Tools before creating multiple s
     async function lookup({ id }) {
       return { id };
     },
-  ).client();
+  );
   const update = tool(
     z.object({ id: z.string() }),
     async function update({ id }) {
       return { id };
     },
-  ).client();
+  );
+  const app = application({ id: "customer-backend" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
-    client: { id: "customer-backend" },
     webSocketFactory(request) {
       const socket = new FakeWebSocket(request);
       sockets.push(socket);
@@ -786,14 +898,14 @@ test("one customer Hand socket registers client Tools before creating multiple s
     },
     fetch: async (input, init) => {
       calls.push({ url: String(input), body: init.body === undefined ? undefined : JSON.parse(init.body) });
-      if (String(input).endsWith("/v1/customer-hand/grants")) {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
         return Response.json({
-          url: "wss://customer-hand.example.test/connect",
+          url: "wss://customer-environment.example.test/connect",
           protocol: "aex.grant.short-lived",
           expires_at: "2026-08-20T12:05:00Z",
           grant_id: "grant-non-secret",
           observation_url:
-            "https://api.aex.dev/v1/customer-hand/observations/grant-non-secret",
+            "https://api.aex.dev/v1/customer-environment/observations/grant-non-secret",
           observation_token: "observation-grant",
         }, { status: 201 });
       }
@@ -801,21 +913,23 @@ test("one customer Hand socket registers client Tools before creating multiple s
     },
   });
 
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
+    environments: { app },
   });
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup, update],
+    environments: { app },
   });
 
   assert.equal(sockets.length, 1);
   assert.deepEqual(sockets[0].request, {
-    url: "wss://customer-hand.example.test/connect",
+    url: "wss://customer-environment.example.test/connect",
     protocol: "aex.grant.short-lived",
   });
-  assert.equal(calls.filter((call) => call.url.endsWith("/customer-hand/grants")).length, 1);
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
   assert.deepEqual(calls[0].body, { client_id: "customer-backend" });
   assert.equal(sockets[0].sent[0].type, "register");
   assert.equal(sockets[0].sent[0].client_id, "customer-backend");
@@ -825,19 +939,20 @@ test("one customer Hand socket registers client Tools before creating multiple s
   assert.deepEqual(sockets[0].sent[2].registrations.map((value) => value.name), ["update"]);
   const creates = calls.filter((call) => call.url.endsWith("/v1/sessions"));
   assert.deepEqual(creates[0].body.client, { id: "customer-backend" });
-  assert.equal(creates[0].body.tools.items[0].executor.kind, "customer_app");
+  assert.equal(creates[0].body.tools.items[0].executor.kind, "environment");
+  assert.equal(creates[0].body.tools.items[0].executor.environment, "app");
   aex.close();
   assert.equal(sockets[0].closed, true);
 });
 
-test("customer Hand grants keep credentials out of URLs and pin observations to Aex", async () => {
+test("customer Environment grants keep credentials out of URLs and pin observations to Aex", async () => {
   const canonical = {
-    url: "wss://customer-hand.example.test/connect",
+    url: "wss://customer-environment.example.test/connect",
     protocol: "aex.grant.short-lived",
     expires_at: "2026-08-20T12:05:00Z",
     grant_id: "grant-non-secret",
     observation_url:
-      "https://api.aex.dev/v1/customer-hand/observations/grant-non-secret",
+      "https://api.aex.dev/v1/customer-environment/observations/grant-non-secret",
     observation_token: "observation-secret",
   };
   const grantRequests = [];
@@ -848,31 +963,31 @@ test("customer Hand grants keep credentials out of URLs and pin observations to 
       grantRequests.push({ input: String(input), redirect: init.redirect });
       return Response.json({ ...canonical, ...override }, { status: 201 });
     },
-  ).customerHandGrant("customer-backend");
+  ).customerEnvironmentGrant("customer-backend");
 
   assert.equal((await grant({})).observationUrl, canonical.observation_url);
   assert.deepEqual(grantRequests[0], {
-    input: "https://api.aex.dev/v1/customer-hand/grants",
+    input: "https://api.aex.dev/v1/customer-environment/grants",
     redirect: "error",
   });
   await assert.rejects(
     grant({ observation_url: "https://attacker.example/collect" }),
-    /unsafe customer Hand observation URL/,
+    /unsafe customer Environment observation URL/,
   );
   await assert.rejects(
     grant({
       observation_url:
-        "https://api.aex.dev/v1/customer-hand/observations/observation-secret",
+        "https://api.aex.dev/v1/customer-environment/observations/observation-secret",
     }),
-    /unsafe customer Hand observation URL/,
+    /unsafe customer Environment observation URL/,
   );
   await assert.rejects(
-    grant({ url: "wss://customer-hand.example.test/connect?grant=secret" }),
+    grant({ url: "wss://customer-environment.example.test/connect?grant=secret" }),
     /credential-free WSS/,
   );
 });
 
-test("aborting one create stops waiting without poisoning the process customer Hand", async () => {
+test("aborting one create stops waiting without poisoning the process customer Environment", async () => {
   const sockets = [];
   const calls = [];
   const lookup = tool(
@@ -880,10 +995,10 @@ test("aborting one create stops waiting without poisoning the process customer H
     async function lookup({ id }) {
       return { id };
     },
-  ).client();
+  );
+  const app = application({ id: "abort-safe-runner" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
-    client: { id: "abort-safe-runner" },
     webSocketFactory(request) {
       const socket = new FakeWebSocket(request);
       sockets.push(socket);
@@ -891,14 +1006,14 @@ test("aborting one create stops waiting without poisoning the process customer H
     },
     fetch: async (input, init) => {
       calls.push({ url: String(input), body: init.body });
-      if (String(input).endsWith("/v1/customer-hand/grants")) {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
         return Response.json({
-          url: "wss://customer-hand.example.test/connect",
+          url: "wss://customer-environment.example.test/connect",
           protocol: "aex.grant.abort-safe",
           expires_at: "2026-08-20T12:05:00Z",
           grant_id: "grant-abort-safe",
           observation_url:
-            "https://api.aex.dev/v1/customer-hand/observations/grant-abort-safe",
+            "https://api.aex.dev/v1/customer-environment/observations/grant-abort-safe",
           observation_token: "observation-abort-safe",
         }, { status: 201 });
       }
@@ -907,9 +1022,10 @@ test("aborting one create stops waiting without poisoning the process customer H
   });
 
   const controller = new AbortController();
-  const first = aex.sessions.create({
+  const first = create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
+    environments: { app },
   }, { signal: controller.signal });
   while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
   controller.abort(new Error("caller left"));
@@ -921,39 +1037,40 @@ test("aborting one create stops waiting without poisoning the process customer H
   );
 
   sockets[0].open();
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
+    environments: { app },
   });
   assert.equal(sockets.length, 1);
-  assert.equal(calls.filter((call) => call.url.endsWith("/customer-hand/grants")).length, 1);
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
   assert.equal(calls.filter((call) => call.url.endsWith("/v1/sessions")).length, 1);
   aex.close();
 });
 
-test("closing Aex is terminal even while a customer Hand is still connecting", async () => {
+test("closing Aex is terminal even while a customer Environment is still connecting", async () => {
   const sockets = [];
   let sessionCreates = 0;
   const lookup = tool(z.object({ id: z.string() }), async function lookup({ id }) {
     return { id };
-  }).client();
+  });
+  const app = application({ id: "closing-runner" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
-    client: { id: "closing-runner" },
     webSocketFactory(request) {
       const socket = new FakeWebSocket(request);
       sockets.push(socket);
       return socket;
     },
     fetch: async (input) => {
-      if (String(input).endsWith("/v1/customer-hand/grants")) {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
         return Response.json({
-          url: "wss://customer-hand.example.test/connect",
+          url: "wss://customer-environment.example.test/connect",
           protocol: "aex.grant.closing",
           expires_at: "2026-08-20T12:05:00Z",
           grant_id: "grant-closing",
           observation_url:
-            "https://api.aex.dev/v1/customer-hand/observations/grant-closing",
+            "https://api.aex.dev/v1/customer-environment/observations/grant-closing",
           observation_token: "observation-closing",
         }, { status: 201 });
       }
@@ -961,15 +1078,16 @@ test("closing Aex is terminal even while a customer Hand is still connecting", a
       return Response.json(snapshot, { status: 201 });
     },
   });
-  const creating = aex.sessions.create({
+  const creating = create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
+    environments: { app },
   });
   while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
   aex.close();
   await assert.rejects(creating, /Aex client is closed|closed/i);
   await assert.rejects(
-    aex.sessions.create({
+    create(aex, {
       model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     }),
     /Aex client is closed/,
@@ -982,16 +1100,13 @@ test("one client registration can never silently alias a different closure", asy
   const calls = [];
   const input = z.object({ id: z.string() });
   const first = tool(input, async ({ id }) => ({ source: "first", id }))
-    .named("lookup")
-    .client();
+    .named("lookup");
   const second = tool(input, async ({ id }) => ({ source: "second", id }))
-    .named("lookup")
-    .client();
-  assert.equal(first.contract.contractDigest, second.contract.contractDigest);
+    .named("lookup");
+  const app = application({ id: "closure-collision" });
 
   const aex = new Aex({
     apiKey: "aex_sk_test",
-    client: { id: "closure-collision" },
     webSocketFactory(request) {
       const socket = new FakeWebSocket(request);
       sockets.push(socket);
@@ -1001,14 +1116,14 @@ test("one client registration can never silently alias a different closure", asy
     fetch: async (request) => {
       const url = String(request);
       calls.push(url);
-      if (url.endsWith("/v1/customer-hand/grants")) {
+      if (url.endsWith("/v1/customer-environment/grants")) {
         return Response.json({
-          url: "wss://customer-hand.example.test/connect",
+          url: "wss://customer-environment.example.test/connect",
           protocol: "aex.grant.short-lived",
           expires_at: "2026-08-20T12:05:00Z",
           grant_id: "grant-non-secret",
           observation_url:
-            "https://api.aex.dev/v1/customer-hand/observations/grant-non-secret",
+            "https://api.aex.dev/v1/customer-environment/observations/grant-non-secret",
           observation_token: "observation-secret",
         }, { status: 201 });
       }
@@ -1016,14 +1131,16 @@ test("one client registration can never silently alias a different closure", asy
     },
   });
 
-  await aex.sessions.create({
+  await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [first],
+    environments: { app },
   });
   await assert.rejects(
-    aex.sessions.create({
+    create(aex, {
       model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
       tools: [second],
+      environments: { app },
     }),
     /conflicts with its existing contract or handler/,
   );
@@ -1035,7 +1152,7 @@ test("one client registration can never silently alias a different closure", asy
   aex.close();
 });
 
-test("sandbox, storage, and durable child resources keep generation and wire details explicit", async () => {
+test("storage and durable child resources keep wire details explicit", async () => {
   const requests = [];
   const file = {
     path: "/workspace/report.txt",
@@ -1079,13 +1196,13 @@ test("sandbox, storage, and durable child resources keep generation and wire det
       if (url.pathname === "/v1/sessions" && init.method === "POST") {
         return Response.json(snapshot, { status: 201 });
       }
-      if (url.pathname.endsWith("/sandbox") && init.method === "GET") {
+      if (url.pathname.endsWith("/environments/workspace") && init.method === "GET") {
         return Response.json({
           target: {
-            kind: "default",
+            kind: "environment",
             session_id: "ses_01",
             root_id: "ses_01",
-            binding_ref: "default",
+            binding_ref: "env_workspace",
           },
           state: "running",
           generation: "gen_01",
@@ -1093,24 +1210,24 @@ test("sandbox, storage, and durable child resources keep generation and wire det
           expires_at_ms: Date.parse("2026-08-20T12:30:00Z"),
         });
       }
-      if (url.pathname.endsWith("/sandbox/files/list")) {
+      if (url.pathname.endsWith("/environments/workspace/files/list")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/grep")) {
+      if (url.pathname.endsWith("/environments/workspace/files/grep")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/stat")) return Response.json(file);
-      if (url.pathname.endsWith("/sandbox/files/read-inline")) {
+      if (url.pathname.endsWith("/environments/workspace/files/stat")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/read-inline")) {
         return Response.json({ entry: file, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/sandbox/files/write-inline")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/write-inline")) return Response.json(file);
       if (url.pathname.endsWith("/storage/stat")) return Response.json(object);
       if (url.pathname.endsWith("/storage/write-inline")) return Response.json(object);
       if (url.pathname.endsWith("/storage/read-inline")) {
         return Response.json({ object, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/storage/copy-from-sandbox")) return Response.json(object);
-      if (url.pathname.endsWith("/storage/copy-to-sandbox")) return Response.json(file);
+      if (url.pathname.endsWith("/storage/copy-from-environment/workspace")) return Response.json(object);
+      if (url.pathname.endsWith("/storage/copy-to-environment/workspace")) return Response.json(file);
       if (url.pathname.endsWith("/children") && init.method === "POST") return Response.json(child, { status: 201 });
       if (url.pathname.endsWith("/children/ses_child") && init.method === "GET") return Response.json(child);
       if (url.pathname.endsWith("/messages")) {
@@ -1125,30 +1242,25 @@ test("sandbox, storage, and durable child resources keep generation and wire det
       throw new Error(`unexpected request: ${init.method} ${url.pathname}`);
     },
   });
-  const session = await aex.sessions.create({
+  const workspace = computerEnvironment();
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    environments: { workspace },
   });
 
-  const status = await session.sandbox.status();
-  assert.deepEqual(status, {
-    state: "running",
-    generation: "gen_01",
-    changedAt: "2026-08-20T12:00:00.000Z",
-    expiresAt: "2026-08-20T12:30:00.000Z",
-  });
-  const listed = await session.sandbox.files.list("/workspace", { generation: status.generation });
-  assert.equal(listed.data[0].modifiedAt, "2026-08-20T12:00:00.000Z");
-  const matchingFiles = await session.sandbox.files.grep(
-    { path: "/workspace", query: "hello" },
-    { generation: status.generation },
-  );
-  assert.equal(matchingFiles.data[0].path, file.path);
-  assert.equal(new TextDecoder().decode(await session.sandbox.files.download(file.path, { generation: "gen_01" })), "hello");
-  await session.sandbox.files.upload(file.path, "hello", { generation: "gen_01", overwrite: true });
+  assert.equal((await session.environment(workspace).status()).state, "running");
   await session.storage.upload(object.key, "hello", { contentType: "text/plain" });
   assert.equal(new TextDecoder().decode(await session.storage.download(object.key)), "hello");
-  await session.storage.copyFromSandbox({ key: object.key, path: file.path, sandboxGeneration: "gen_01" });
-  await session.storage.copyToSandbox({ key: object.key, path: file.path, sandboxGeneration: "gen_01" });
+  await session.storage.copyFromEnvironment(workspace, {
+    key: object.key,
+    path: file.path,
+    generation: "gen_01",
+  });
+  await session.storage.copyToEnvironment(workspace, {
+    key: object.key,
+    path: file.path,
+    generation: "gen_01",
+  });
   const childHandle = await session.children.create(
     { prompt: "Research this.", name: "research", forkTurns: "3" },
     { idempotencyKey: "child-create" },
@@ -1166,18 +1278,13 @@ test("sandbox, storage, and durable child resources keep generation and wire det
   );
   await childHandle.wait({ timeoutMs: 250 });
 
-  const listRequest = requests.find((request) => request.path.endsWith("/sandbox/files/list"));
-  assert.deepEqual(listRequest.body, { path: "/workspace", generation: "gen_01" });
-  const uploadRequest = requests.find((request) => request.path.endsWith("/sandbox/files/write-inline"));
-  assert.deepEqual(uploadRequest.body, {
-    path: file.path,
-    generation: "gen_01",
-    content_base64: "aGVsbG8=",
-    overwrite: true,
-  });
   const childRequest = requests.find((request) => request.path.endsWith("/children") && request.method === "POST");
   assert.deepEqual(childRequest.body, { prompt: "Research this.", name: "research", fork_turns: "3" });
   assert.equal(childRequest.idempotencyKey, "child-create");
+  assert.deepEqual(
+    requests.find((request) => request.path.endsWith("/storage/copy-from-environment/workspace")).body,
+    { key: object.key, path: file.path, environment_generation: "gen_01" },
+  );
   assert.equal(
     requests.find((request) => request.path.endsWith("/children/ses_child/messages"))
       .idempotencyKey,
@@ -1187,90 +1294,6 @@ test("sandbox, storage, and durable child resources keep generation and wire det
     requests.find((request) => request.path.endsWith("/follow-up")).idempotencyKey,
     "child-follow-up",
   );
-});
-
-test("large sandbox transfers are happy-path direct and never replay an ambiguous completion", async () => {
-  const content = new Uint8Array(1024 * 1024 + 1).fill(9);
-  const file = {
-    path: "/workspace/large.bin",
-    kind: "file",
-    bytes: content.byteLength,
-    sha256: "d".repeat(64),
-    modified_at_ms: Date.parse("2026-08-20T12:00:00Z"),
-  };
-  let uploadPrepares = 0;
-  let completionAttempts = 0;
-  let objectPuts = 0;
-  const aex = new Aex({
-    apiKey: "aex_sk_test",
-    fetch: async (input, init = {}) => {
-      const url = new URL(String(input));
-      if (url.pathname === "/v1/sessions") return Response.json(snapshot, { status: 201 });
-      if (url.pathname.endsWith("/sandbox/files/stat")) return Response.json(file);
-      if (url.pathname.endsWith("/sandbox/files/downloads")) {
-        return Response.json({
-          transfer_id: "sandbox_download",
-          method: "GET",
-          url: "https://objects.example.test/sandbox-download",
-          headers: {},
-          expires_at: "2026-08-20T12:05:00Z",
-          max_bytes: content.byteLength,
-        });
-      }
-      if (url.pathname.endsWith("/sandbox/files/uploads")) {
-        uploadPrepares += 1;
-        return Response.json({
-          transfer_id: `sandbox_upload_${uploadPrepares}`,
-          method: "PUT",
-          url: `https://objects.example.test/sandbox-upload-${uploadPrepares}`,
-          headers: {},
-          expires_at: "2026-08-20T12:05:00Z",
-          max_bytes: content.byteLength,
-        });
-      }
-      if (/\/sandbox\/files\/uploads\/sandbox_upload_[12]\/complete$/u.test(url.pathname)) {
-        completionAttempts += 1;
-        if (completionAttempts === 1) {
-          return Response.json({ error: { code: "unavailable", message: "outcome unknown" } }, {
-            status: 503,
-          });
-        }
-        return Response.json(file);
-      }
-      if (url.hostname === "objects.example.test" && init.method === "PUT") {
-        objectPuts += 1;
-        return new Response(null, { status: 200 });
-      }
-      if (url.hostname === "objects.example.test" && init.method === "GET") {
-        return new Response(content, { status: 200 });
-      }
-      throw new Error(`unexpected request: ${init.method} ${url}`);
-    },
-  });
-  const session = await aex.sessions.create({
-    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-  });
-
-  await assert.rejects(
-    session.sandbox.files.upload(file.path, content, { generation: "gen_01" }),
-    /outcome unknown/,
-  );
-  assert.equal(completionAttempts, 1, "ambiguous sandbox completion must not auto-retry");
-  assert.equal(uploadPrepares, 1);
-
-  const uploaded = await session.sandbox.files.upload(file.path, content, {
-    generation: "gen_01",
-    overwrite: true,
-  });
-  assert.equal(uploaded.path, file.path);
-  assert.equal(uploadPrepares, 2, "recovery is an explicit fresh prepare");
-  assert.equal(completionAttempts, 2);
-  assert.equal(objectPuts, 2);
-
-  const downloaded = await session.sandbox.files.downloadStream(file.path, {
-    generation: "gen_01",
-  });
-  assert.deepEqual(new Uint8Array(await new Response(downloaded).arrayBuffer()), content);
 });
 
 test("large storage transfers bypass Brain and complete the scoped ticket", async () => {
@@ -1325,7 +1348,7 @@ test("large storage transfers bypass Brain and complete the scoped ticket", asyn
       throw new Error(`unexpected request: ${init.method} ${url}`);
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -1411,7 +1434,7 @@ test("streaming storage transfers keep O(1) heap and enforce length, ticket, and
       throw new Error(`unexpected request: ${init.method} ${url}`);
     },
   });
-  const session = await aex.sessions.create({
+  const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
@@ -1534,20 +1557,20 @@ test("end is non-destructive and delete distinguishes queued acceptance from con
     },
   });
 
-  const queued = await aex.sessions.create({
+  const queued = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   assert.equal((await queued.end()).state, "ending");
   await queued.delete({ queue: true });
   assert.equal(queued.state, "deleting");
 
-  const confirmed = await aex.sessions.create({
+  const confirmed = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   await confirmed.delete();
   assert.equal(confirmed.state, "deleted");
 
-  const serverRetried = await aex.sessions.create({
+  const serverRetried = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   await serverRetried.delete({ queue: true });

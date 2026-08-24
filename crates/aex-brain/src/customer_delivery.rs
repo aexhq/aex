@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use aws_sdk_apigatewaymanagement::error::SdkError;
 use aws_sdk_apigatewaymanagement::primitives::Blob;
-use brain::customer::{CustomerDelivery, CustomerDeliveryRequest, CustomerHandDeliveryPort};
+use brain::customer::{CustomerDelivery, CustomerDeliveryRequest, CustomerEnvironmentDeliveryPort};
 
 pub struct ApiGatewayCustomerDelivery {
     client: aws_sdk_apigatewaymanagement::Client,
@@ -11,8 +11,8 @@ pub struct ApiGatewayCustomerDelivery {
 
 impl ApiGatewayCustomerDelivery {
     pub async fn from_env() -> anyhow::Result<Self> {
-        let callback_url = std::env::var("AEX_CUSTOMER_HAND_CALLBACK_URL")
-            .map_err(|_| anyhow::anyhow!("AEX_CUSTOMER_HAND_CALLBACK_URL is not set"))?;
+        let callback_url = std::env::var("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL")
+            .map_err(|_| anyhow::anyhow!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL is not set"))?;
         validate_callback_url(&callback_url)?;
         let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".into());
         let shared = aws_config::from_env()
@@ -29,7 +29,7 @@ impl ApiGatewayCustomerDelivery {
 }
 
 #[async_trait]
-impl CustomerHandDeliveryPort for ApiGatewayCustomerDelivery {
+impl CustomerEnvironmentDeliveryPort for ApiGatewayCustomerDelivery {
     async fn send(&self, request: CustomerDeliveryRequest) -> brain::Result<CustomerDelivery> {
         // Brain owns both the tagged command vocabulary and the 24 KiB bound. The AWS SDK's
         // standard retry policy handles retryable gateway responses; customer runners fence and
@@ -56,23 +56,23 @@ impl CustomerHandDeliveryPort for ApiGatewayCustomerDelivery {
                     || error.err().is_limit_exceeded_exception()
                     || error.err().is_payload_too_large_exception() =>
             {
-                tracing::warn!(error = %error.err(), "customer-Hand gateway rejected delivery");
+                tracing::warn!(error = %error.err(), "customer Environment gateway rejected delivery");
                 Ok(CustomerDelivery::Unavailable)
             }
             Err(SdkError::ServiceError(error)) => {
                 // A future/unmodelled service response can be emitted after the gateway accepted
                 // the frame. Do not claim a safe retry boundary we cannot prove.
-                tracing::warn!(error = %error.err(), "customer-Hand gateway delivery outcome is unknown");
+                tracing::warn!(error = %error.err(), "customer Environment gateway delivery outcome is unknown");
                 Ok(CustomerDelivery::Unknown)
             }
             Err(SdkError::ConstructionFailure(error)) => {
-                tracing::warn!(error = ?error, "customer-Hand delivery was not constructed");
+                tracing::warn!(error = ?error, "customer Environment delivery was not constructed");
                 Ok(CustomerDelivery::Unavailable)
             }
             Err(error) => {
                 // Timeout, dispatch and malformed-response failures may have reached the socket;
                 // reporting Unknown prevents Brain from claiming a safe replay.
-                tracing::warn!(error = %error, "customer-Hand delivery outcome is unknown");
+                tracing::warn!(error = %error, "customer Environment delivery outcome is unknown");
                 Ok(CustomerDelivery::Unknown)
             }
         }
@@ -81,18 +81,18 @@ impl CustomerHandDeliveryPort for ApiGatewayCustomerDelivery {
 
 fn validate_callback_url(value: &str) -> anyhow::Result<()> {
     let url = reqwest::Url::parse(value)
-        .map_err(|error| anyhow::anyhow!("AEX_CUSTOMER_HAND_CALLBACK_URL: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL: {error}"))?;
     if url.scheme() != "https" {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must use HTTPS");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must use HTTPS");
     }
     if url.host_str().is_none() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must have a host");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must have a host");
     }
     if !url.username().is_empty() || url.password().is_some() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must not contain credentials");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must not contain credentials");
     }
     if url.query().is_some() || url.fragment().is_some() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must not contain a query or fragment");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must not contain a query or fragment");
     }
     Ok(())
 }

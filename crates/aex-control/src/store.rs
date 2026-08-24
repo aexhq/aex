@@ -196,6 +196,15 @@ CREATE TABLE IF NOT EXISTS hosted_tool_calls (
   created_ms INTEGER NOT NULL,
   PRIMARY KEY(session_id, call_id)
 );
+CREATE TABLE IF NOT EXISTS tool_artifact_layers (
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  digest TEXT NOT NULL,
+  bytes INTEGER NOT NULL CHECK (bytes BETWEEN 1 AND 67108864),
+  media_type TEXT NOT NULL,
+  content BLOB NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY(account_id, digest)
+);
 ";
 
 #[derive(Debug, Clone)]
@@ -340,6 +349,14 @@ pub struct SessionCreateRow {
 pub struct SessionCreateIntentRow {
     pub request_hash: String,
     pub covered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolArtifactLayerRow {
+    pub digest: String,
+    pub bytes: i64,
+    pub media_type: String,
+    pub content: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,6 +655,78 @@ impl Db {
 
     // ---- identity ----
 
+    pub async fn tool_artifact_layer(
+        &self,
+        account_id: String,
+        digest: String,
+    ) -> Result<Option<ToolArtifactLayerRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT digest, bytes, media_type, content
+                 FROM tool_artifact_layers WHERE account_id = ?1 AND digest = ?2",
+                params![account_id, digest],
+                |row| {
+                    Ok(ToolArtifactLayerRow {
+                        digest: row.get(0)?,
+                        bytes: row.get(1)?,
+                        media_type: row.get(2)?,
+                        content: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn store_tool_artifact_layer(
+        &self,
+        account_id: String,
+        layer: ToolArtifactLayerRow,
+        created_ms: i64,
+    ) -> Result<bool> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let inserted = tx.execute(
+                "INSERT INTO tool_artifact_layers
+                   (account_id, digest, bytes, media_type, content, created_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(account_id, digest) DO NOTHING",
+                params![
+                    account_id,
+                    layer.digest,
+                    layer.bytes,
+                    layer.media_type,
+                    layer.content,
+                    created_ms
+                ],
+            )? == 1;
+            if !inserted {
+                let exact: i64 = tx.query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM tool_artifact_layers
+                       WHERE account_id = ?1 AND digest = ?2 AND bytes = ?3
+                         AND media_type = ?4 AND content = ?5
+                     )",
+                    params![
+                        account_id,
+                        layer.digest,
+                        layer.bytes,
+                        layer.media_type,
+                        layer.content
+                    ],
+                    |row| row.get(0),
+                )?;
+                if exact != 1 {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await
+    }
+
     /// Add an email once. Repeated submissions preserve the operator-owned lifecycle state.
     pub async fn join_waitlist(&self, email: String, now_ms: i64) -> Result<WaitlistRow> {
         self.call(move |c| {
@@ -887,6 +976,19 @@ impl Db {
                 "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
                  FROM accounts WHERE token_hash = ?1",
                 params![token_hash],
+                account_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn account(&self, account_id: String) -> Result<Option<AccountRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
+                 FROM accounts WHERE id = ?1",
+                params![account_id],
                 account_row,
             )
             .optional()

@@ -3,10 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const brain = path.resolve(root, "../brain");
+const root = path.resolve(import.meta.dirname, "..");
 const npmCli = process.env.npm_execpath;
 if (npmCli === undefined) throw new Error("run package-smoke through npm so its CLI is discoverable");
 const temporary = await mkdtemp(path.join(tmpdir(), "aex-package-smoke-"));
@@ -30,13 +28,11 @@ const pack = (directory) => {
 try {
   await mkdir(artifacts);
   await mkdir(consumer);
-  // @aexhq/tools resolves its exact released brain-tools patch from the registry; Brain itself
-  // remains the separately pinned 0.2 package source used by the SDK.
   const packages = [
-    pack(path.join(brain, "packages/brain")),
     pack(path.join(root, "packages/contracts")),
+    pack(path.join(root, "packages/environment")),
+    pack(path.join(root, "packages/session-protocol")),
     pack(path.join(root, "packages/sdk")),
-    pack(path.join(root, "packages/tools")),
     pack(path.join(root, "packages/cli")),
   ];
 
@@ -72,47 +68,30 @@ try {
     }, null, 2)}\n`,
   );
   await writeFile(
-    path.join(consumer, "custom.ts"),
-    `import { tool } from "@aexhq/sdk";
-import { z } from "zod";
-
-const custom = tool(
-  z.object({ value: z.string() }),
-  async function packageSmokeEcho(input) { return input; },
-)
-  .describe("Return the exact input.")
-  .returns(z.object({ value: z.string() }))
-  .server(import.meta.url);
-
-export default custom;
-`,
-  );
-  await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { compileTools, tool as brainTool, type Tool } from "@aexhq/brain";
-import { Aex, tool as aexTool } from "@aexhq/sdk";
-import { bash } from "@aexhq/tools";
-import custom from "./custom.js";
+import { callbacks, defineEnvironment, isEnvironmentRef } from "@aexhq/environment";
+import { tool, type EnvironmentRef } from "@aexhq/sdk";
+import { z } from "zod";
 
-assert.equal(aexTool, brainTool, "Aex must re-export Brain's one Tool constructor");
-const selected: readonly Tool[] = [custom, bash()];
-const prepared = await compileTools(selected);
-assert.deepEqual(prepared.items.map((item) => item.definition.name), ["packageSmokeEcho", "bash"]);
-
-async function typecheckAex(aex: Aex): Promise<void> {
-  await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-5", apiKey: "not-used" },
-    tools: selected,
-  });
-}
-void typecheckAex;
-console.log("packed Aex and Brain packages share one executable Tool identity");
+const application = defineEnvironment({
+  identity: "package-smoke",
+  protocol: "environment/v1",
+  profile: callbacks(),
+  serialize: () => ({}),
+  handle: () => ({ close() {} }),
+})();
+const echo = tool(z.object({ value: z.string() }), async function echo(input) { return input; });
+const bound = echo.bind(application);
+const reference: EnvironmentRef = bound.environment;
+assert.equal(reference, application);
+assert.equal(isEnvironmentRef(reference), true);
+console.log("packed Aex packages share one opaque EnvironmentRef identity");
 `,
   );
   run(process.execPath, [path.join(consumer, "node_modules/typescript/bin/tsc")], { cwd: consumer });
   const output = run(process.execPath, ["dist/smoke.js"], { cwd: consumer });
-  assert.match(output, /share one executable Tool identity/u);
+  assert.match(output, /share one opaque EnvironmentRef identity/u);
   process.stdout.write(`${output}\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });

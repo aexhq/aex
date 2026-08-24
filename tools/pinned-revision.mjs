@@ -3,21 +3,20 @@ import path from "node:path";
 import process from "node:process";
 
 const cargo = readFileSync(path.resolve(import.meta.dirname, "../Cargo.toml"), "utf8");
-// Public npm packages remain on the existing 0.2 package source. A Rust-only runtime repair may
-// advance the hosted Brain revision without mutating or republishing those immutable tarballs, so
-// package build/smoke jobs intentionally resolve their own exact source identity.
-const BRAIN_PACKAGES_REVISION = "af7e68e9ba987564952e51297a27ceeb193fa99e";
-if (process.argv[2] === "brain-packages") {
-  process.stdout.write(BRAIN_PACKAGES_REVISION);
-  process.exit(0);
-}
 const groups = {
-  brain: ["brain-protocol", "brain", "brain-aws", "brain-standalone"],
-  hands: ["hand-brain-aws"],
+  brain: [
+    "brain-protocol",
+    "brain",
+    "brain-aws",
+    "brain-standalone",
+    "brain-loophost",
+    "brain-server",
+    "brain-providers",
+  ],
 };
 const selected = groups[process.argv[2]];
 if (selected === undefined) {
-  throw new Error("usage: pinned-revision.mjs brain|brain-packages|hands");
+  throw new Error("usage: pinned-revision.mjs brain");
 }
 const revisions = selected.map((name) => {
   const match = cargo.match(

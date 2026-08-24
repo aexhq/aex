@@ -2,8 +2,8 @@ overlay: 1.0.0
 info:
   title: Aex hosted policy for the Brain session API
   version: mvp
-extends: https://raw.githubusercontent.com/aexhq/brain/6adf9624a9a35066cd2f5fc1ba88424eb39ccc47/contracts/session/v1/openapi.yaml
-x-aex-brain-openapi-sha256: 3185db5486c4ba3eefcf83eaee90a92cd5aaf24002352ba9f4bde32ad2e9c084
+extends: https://raw.githubusercontent.com/aexhq/brain/6a5c5063f532f85c90f0bb9b6473ecc081086a79/contracts/session/v1/openapi.yaml
+x-aex-brain-openapi-sha256: d344a06f654e778b10f5c6eefa5e18aa5139f9beb7e67e3c6be8015de4f808c8
 actions:
   - target: $.components.parameters.IdempotencyKey
     description: Hosted Aex requires a recoverable identity anywhere neutral Brain accepts one.

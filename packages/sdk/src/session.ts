@@ -7,13 +7,14 @@ import type {
   SessionList as SessionListData,
   SessionState,
   CreateSessionRequest,
-} from "@aexhq/brain/session";
-import { CustomerHand } from "@aexhq/brain";
+} from "@aexhq/session-protocol/session";
+import { CustomerEnvironment } from "@aexhq/session-protocol";
+import { inspectEnvironment, type EnvironmentRef, type HandleOf } from "@aexhq/environment";
 import type {
   ClientRegistration,
   NetworkPolicy,
   WebSocketFactory,
-} from "@aexhq/brain";
+} from "@aexhq/session-protocol";
 import * as z from "zod";
 
 import {
@@ -30,8 +31,12 @@ import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
 import { compileTools } from "./tools.js";
-import type { Tool } from "./tools.js";
-import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+import type {
+  EnvironmentMap,
+  EnvironmentValue,
+  ToolSelection,
+} from "./tools.js";
+import { encodeBase64, SessionChildren, SessionStorage } from "./resources.js";
 
 export type SessionInput = string;
 
@@ -49,8 +54,6 @@ export interface ModelOptions {
   maxOutputTokens?: number;
   /** Immutable context capacity used for admission and compaction; Brain never guesses by name. */
   contextWindowTokens?: number;
-  temperature?: number;
-  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**
@@ -58,7 +61,7 @@ export interface ModelOptions {
  * `buildLoopBundle` from `@aexhq/agentloop`. Assignment is by import, never by name:
  * the sealed identity is the content digest plus the pinned toolchain.
  */
-export interface AgentloopBundle {
+export interface Loop {
   /** The complete deterministic ESM source bundle — the exact bytes sealed and uploaded. */
   source: string;
   /** SHA-256 hex of the UTF-8 source bytes. */
@@ -67,27 +70,19 @@ export interface AgentloopBundle {
   toolchain: string;
 }
 
-export interface CreateSessionOptions {
+export interface CreateSessionOptions<Environments extends EnvironmentMap = EnvironmentMap> {
   model: ModelOptions;
+  /** The imported agent loop that drives this session and every child unless spawn overrides it. */
+  loop: Loop;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
-  tools?: readonly Tool[];
-  /**
-   * The agentloop driving this session's turns, assigned by importing its implementation.
-   * Sealed at create for the life of the session; children inherit it. Omission seals the
-   * official aex loop.
-   */
-  agentloop?: AgentloopBundle;
-  systemPrompt?: string;
+  environments?: Environments;
+  tools?: readonly ToolSelection<EnvironmentValue<Environments>>[];
   /** Write-only values for environment names declared by managed Tools. */
   secrets?: Record<string, string>;
   /** Maximum direct outbound network authority sealed for managed sandboxes. Omission is deny-all. */
   network?: NetworkPolicy;
   /** Replacement attempts after an unrecoverable provider outcome. Defaults to one. */
   providerRecoveryRetries?: 0 | 1;
-  client?: {
-    /** Replacement sends to the same customer process and operation. Defaults to one. */
-    submitRetries?: 0 | 1;
-  };
   /** Optional ceilings for durable child sessions. Omitted fields use the hosted defaults. */
   children?: {
     maxDepth?: number;
@@ -145,33 +140,44 @@ export interface SessionSummary {
 export class Sessions {
   readonly #transport: Transport;
   readonly #webSocketFactory: WebSocketFactory | undefined;
-  readonly #clientId: string | undefined;
-  #customerHand: Promise<CustomerHand> | undefined;
-  #customerHandInstance: CustomerHand | undefined;
+  readonly #customerEnvironments = new Map<string, Promise<CustomerEnvironment>>();
+  readonly #customerEnvironmentInstances = new Map<string, CustomerEnvironment>();
   #closed = false;
 
-  constructor(transport: Transport, webSocketFactory?: WebSocketFactory, clientId?: string) {
+  constructor(transport: Transport, webSocketFactory?: WebSocketFactory) {
     this.#transport = transport;
     this.#webSocketFactory = webSocketFactory;
-    this.#clientId = clientId;
   }
 
   /** @internal Called by `Aex.close()`. */
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#customerHandInstance?.close();
-    this.#customerHandInstance = undefined;
-    this.#customerHand = undefined;
+    for (const environment of this.#customerEnvironmentInstances.values()) environment.close();
+    this.#customerEnvironmentInstances.clear();
+    this.#customerEnvironments.clear();
   }
 
-  async create(options: CreateSessionOptions, request: RequestOptions = {}): Promise<Session> {
+  async create<Environments extends EnvironmentMap>(
+    options: CreateSessionOptions<Environments>,
+    request: RequestOptions = {},
+  ): Promise<Session<Environments>> {
     if (this.#closed) throw new SessionError("Aex client is closed");
-    const compiledTools = await compileTools(options.tools);
-    if (options.client?.submitRetries !== undefined && this.#clientId === undefined) {
-      throw new TypeError("client.submitRetries requires Aex({ client: { id } })");
-    }
-    await this.#ensureCustomerHand(compiledTools.clientRegistrations, request.signal);
+    if (options.loop === undefined) throw new TypeError("sessions.create requires an imported loop");
+    const compiledTools = await compileTools(options.tools, options.environments, options.secrets);
+    await Promise.all(compiledTools.layers.map((layer) =>
+      this.#transport.ensureArtifactLayer(
+        layer.checksum,
+        layer.media_type,
+        layer.content,
+        request.signal,
+      )
+    ));
+    await this.#ensureCustomerEnvironment(
+      compiledTools.callbackClientId,
+      compiledTools.clientRegistrations,
+      request.signal,
+    );
     const body = {
       model: {
         provider: options.model.provider,
@@ -184,26 +190,20 @@ export class Sessions {
         ...(options.model.contextWindowTokens === undefined
           ? {}
           : { context_window_tokens: options.model.contextWindowTokens }),
-        ...(options.model.temperature === undefined ? {} : { temperature: options.model.temperature }),
-        ...(options.model.reasoningEffort === undefined
-          ? {}
-          : { reasoning_effort: options.model.reasoningEffort }),
       },
       tools: {
         items: compiledTools.items,
       },
-      ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
-      ...(options.agentloop === undefined
+      ...(Object.keys(compiledTools.environments).length === 0
         ? {}
-        : {
-            agentloop: {
-              source_bundle_sha256: options.agentloop.sha256,
-              toolchain: options.agentloop.toolchain,
-              bundle_base64: encodeBase64(new TextEncoder().encode(options.agentloop.source)),
-            },
-          }),
+        : { environments: compiledTools.environments }),
+      ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
+      agentloop: {
+        source_bundle_sha256: options.loop.sha256,
+        toolchain: options.loop.toolchain,
+        bundle_base64: encodeBase64(new TextEncoder().encode(options.loop.source)),
+      },
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-      ...(options.systemPrompt === undefined ? {} : { system_prompt: options.systemPrompt }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
       ...(options.network === undefined
         ? {}
@@ -211,14 +211,11 @@ export class Sessions {
       ...(options.providerRecoveryRetries === undefined
         ? {}
         : { provider_recovery_retries: options.providerRecoveryRetries }),
-      ...(this.#clientId === undefined
+      ...(compiledTools.callbackClientId === undefined
         ? {}
         : {
             client: {
-              id: this.#clientId,
-              ...(options.client?.submitRetries === undefined
-                ? {}
-                : { submit_retries: options.client.submitRetries }),
+              id: compiledTools.callbackClientId,
             },
           }),
       ...(options.children === undefined
@@ -243,7 +240,7 @@ export class Sessions {
       signal: request.signal,
       retry: true,
     });
-    return new Session(this.#transport, data);
+    return new Session(this.#transport, data, compiledTools.environmentNames);
   }
 
   async get(id: string, options: Pick<RequestOptions, "signal"> = {}): Promise<Session> {
@@ -271,30 +268,30 @@ export class Sessions {
     };
   }
 
-  async #ensureCustomerHand(
+  async #ensureCustomerEnvironment(
+    clientId: string | undefined,
     registrations: readonly ClientRegistration[],
     signal?: AbortSignal,
   ): Promise<void> {
     if (this.#closed) throw new SessionError("Aex client is closed");
     if (registrations.length === 0) return;
-    if (this.#clientId === undefined) {
-      throw new TypeError("Customer-app Tools require Aex({ client: { id } })");
-    }
+    if (clientId === undefined) throw new TypeError("Callback Tools require an app() environment");
     if (this.#webSocketFactory === undefined) {
       throw new TypeError("This runtime does not provide WebSocket; pass webSocketFactory to Aex");
     }
-    if (this.#customerHand === undefined) {
-      let partial: CustomerHand | undefined;
+    const existing = this.#customerEnvironments.get(clientId);
+    if (existing === undefined) {
+      let partial: CustomerEnvironment | undefined;
       const starting = (async () => {
         try {
-          partial = new CustomerHand(
+          partial = new CustomerEnvironment(
             async () => {
-              const grant = await this.#transport.customerHandGrant(
-                this.#clientId!,
+              const grant = await this.#transport.customerEnvironmentGrant(
+                clientId,
               );
               return {
                 request: { url: grant.url, protocol: grant.protocol },
-                observe: (observation) => this.#transport.customerHandObserve(
+                observe: (observation) => this.#transport.customerEnvironmentObserve(
                   grant.observationUrl,
                   grant.observationToken,
                   observation,
@@ -303,9 +300,9 @@ export class Sessions {
             },
             registrations,
             this.#webSocketFactory!,
-            { clientId: this.#clientId! },
+            { clientId },
           );
-          this.#customerHandInstance = partial;
+          this.#customerEnvironmentInstances.set(clientId, partial);
           await partial.ready;
           if (this.#closed) {
             partial.close();
@@ -317,11 +314,13 @@ export class Sessions {
           throw error;
         }
       })();
-      this.#customerHand = starting;
+      this.#customerEnvironments.set(clientId, starting);
       void starting.catch(() => {
-        if (this.#customerHand === starting) {
-          this.#customerHand = undefined;
-          if (this.#customerHandInstance === partial) this.#customerHandInstance = undefined;
+        if (this.#customerEnvironments.get(clientId) === starting) {
+          this.#customerEnvironments.delete(clientId);
+          if (this.#customerEnvironmentInstances.get(clientId) === partial) {
+            this.#customerEnvironmentInstances.delete(clientId);
+          }
         }
       });
       // The request may stop waiting, but the process-scoped runner remains reconnectable for
@@ -329,9 +328,9 @@ export class Sessions {
       await waitWithSignal(starting, signal);
       return;
     }
-    const hand = await waitWithSignal(this.#customerHand, signal);
+    const environment = await waitWithSignal(existing, signal);
     if (this.#closed) throw new SessionError("Aex client is closed");
-    await waitWithSignal(hand.register(registrations), signal);
+    await waitWithSignal(environment.register(registrations), signal);
   }
 }
 
@@ -352,19 +351,39 @@ function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   });
 }
 
-export class Session implements SessionSummary {
+export class Session<Environments extends EnvironmentMap = EnvironmentMap> implements SessionSummary {
   readonly #transport: Transport;
   #data: SessionData;
-  readonly sandbox: SessionSandbox;
   readonly storage: SessionStorage;
   readonly children: SessionChildren;
+  readonly #environmentNames: ReadonlyMap<EnvironmentRef, string>;
+  readonly #environmentHandles = new Map<EnvironmentRef, unknown>();
 
-  constructor(transport: Transport, data: SessionData) {
+  constructor(
+    transport: Transport,
+    data: SessionData,
+    environmentNames: ReadonlyMap<EnvironmentRef, string> = new Map(),
+  ) {
     this.#transport = transport;
     this.#data = data;
-    this.sandbox = new SessionSandbox(transport, data.id);
-    this.storage = new SessionStorage(transport, data.id);
+    this.#environmentNames = environmentNames;
+    this.storage = new SessionStorage(transport, data.id, environmentNames);
     this.children = new SessionChildren(transport, data.id);
+  }
+
+  environment<Environment extends EnvironmentValue<Environments>>(environment: Environment): HandleOf<Environment> {
+    const name = this.#environmentNames.get(environment);
+    if (name === undefined) throw new TypeError("EnvironmentRef does not belong to this Session");
+    const existing = this.#environmentHandles.get(environment);
+    if (existing !== undefined) return existing as HandleOf<Environment>;
+    const handle = inspectEnvironment(environment).createHandle({
+      sessionId: this.id,
+      environment: name,
+      request: async <T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> =>
+        await this.#transport.json<T>(method, path, body === undefined ? {} : { body }),
+    });
+    this.#environmentHandles.set(environment, handle);
+    return handle as HandleOf<Environment>;
   }
 
   get id(): string {

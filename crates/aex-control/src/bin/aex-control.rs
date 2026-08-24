@@ -18,8 +18,8 @@
 //! 192 KiB prompt/message and 2 MiB inline-session request buffers.
 //! AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN authenticates the private Brain route; SERPER_API_KEY enables
 //! the managed web_search Tool without entering Brain or the Hand.
-//! AEX_CUSTOMER_HAND_GATEWAY_TOKEN, AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS and
-//! AEX_MANAGED_SANDBOX_NAT_CIDRS jointly enable the API Gateway WebSocket adapter.
+//! AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN, AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS and
+//! AEX_MANAGED_ENVIRONMENT_NAT_CIDRS jointly enable the API Gateway WebSocket adapter.
 
 use std::sync::Arc;
 
@@ -108,7 +108,9 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         card: cfg.card.clone(),
         operator_token_hash: cfg.operator_token_hash,
         external_executor_token_hash: cfg.external_executor_token_hash,
-        customer_hand_gateway: cfg.customer_hand_gateway,
+        tenant_tool_token_key: cfg.tenant_tool_token_key,
+        public_api_url: cfg.public_api_url,
+        customer_environment_gateway: cfg.customer_environment_gateway,
         web: WebRuntime::hosted(cfg.serper_api_key),
         admission,
         create_body_slots: Arc::new(tokio::sync::Semaphore::new(

@@ -5,10 +5,60 @@
 //! bits), shown exactly once; the store holds only their SHA-256. The `prefix` column keeps the
 //! first characters for recognition in a list — never enough to authenticate.
 
+use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 const BASE62: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+#[derive(Clone)]
+pub struct TenantToolTokenKey(Arc<[u8]>);
+
+impl TenantToolTokenKey {
+    pub fn new(value: impl AsRef<[u8]>) -> Result<Self, &'static str> {
+        let value = value.as_ref();
+        if !(32..=256).contains(&value.len()) || !value.iter().all(u8::is_ascii_graphic) {
+            return Err("must contain 32 through 256 visible ASCII bytes");
+        }
+        Ok(Self(Arc::from(value)))
+    }
+
+    pub fn mint(&self, account_id: &str) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.0).expect("HMAC accepts every key size");
+        mac.update(b"aex.tenant-tool.v1\0");
+        mac.update(account_id.as_bytes());
+        format!(
+            "aex_tt_{account_id}.{}",
+            hex::encode(mac.finalize().into_bytes())
+        )
+    }
+
+    pub fn authenticate(&self, token: &str) -> Option<String> {
+        let payload = token.strip_prefix("aex_tt_")?;
+        let (account_id, signature) = payload.split_once('.')?;
+        if account_id.is_empty()
+            || account_id.len() > 128
+            || !account_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return None;
+        }
+        let signature = hex::decode(signature).ok()?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.0).ok()?;
+        mac.update(b"aex.tenant-tool.v1\0");
+        mac.update(account_id.as_bytes());
+        mac.verify_slice(&signature).ok()?;
+        Some(account_id.into())
+    }
+}
+
+impl std::fmt::Debug for TenantToolTokenKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("TenantToolTokenKey(<redacted>)")
+    }
+}
 
 fn base62(len: usize) -> String {
     let mut rng = rand::rng();
@@ -98,5 +148,17 @@ mod tests {
         let id = new_id("acc");
         assert_eq!(id.len(), 4 + 24);
         assert!(id.starts_with("acc_"));
+    }
+
+    #[test]
+    fn tenant_tool_tokens_are_fixed_to_one_account() {
+        let key = TenantToolTokenKey::new("k".repeat(32)).unwrap();
+        let token = key.mint("acc_one");
+        assert_eq!(key.authenticate(&token).as_deref(), Some("acc_one"));
+        assert!(
+            key.authenticate(&token.replace("acc_one", "acc_two"))
+                .is_none()
+        );
+        assert!(key.authenticate("aex_tt_acc_one.not-hex").is_none());
     }
 }
