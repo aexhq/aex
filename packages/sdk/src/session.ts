@@ -380,9 +380,18 @@ export class Sessions {
           }
         }
       });
-      // The request may stop waiting, but the process-scoped runner remains reconnectable for
-      // later sessions. Its grant/reconnect lifetime must never inherit one create signal.
-      await waitWithSignal(starting, signal);
+      try {
+        await waitWithSignal(starting, signal);
+      } catch (error) {
+        if (signal?.aborted && this.#customerEnvironments.get(clientId) === starting) {
+          partial?.close();
+          this.#customerEnvironments.delete(clientId);
+          if (this.#customerEnvironmentInstances.get(clientId) === partial) {
+            this.#customerEnvironmentInstances.delete(clientId);
+          }
+        }
+        throw error;
+      }
       return;
     }
     const hand = await waitWithSignal(existing, signal);

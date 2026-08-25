@@ -29,7 +29,6 @@ use sha2::{Digest, Sha256};
 const OPERATOR_TOKEN: &str = "aex_ad_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2";
 const EXECUTOR_TOKEN: &str = "brain-to-aex-private-test-token";
 const GATEWAY_TOKEN: &str = "api-gateway-private-test-token-000000000000";
-const TENANT_TOOL_KEY: &str = "tenant-tool-test-key-00000000000000000000000000000000";
 
 // ---- a stub brain: session/v1, just enough, contract-shaped ----
 
@@ -45,6 +44,7 @@ struct StubBrain {
     counter: AtomicI64,
     sessions: Mutex<HashMap<String, StubSession>>,
     create_requests: Mutex<HashMap<String, (String, String)>>,
+    last_create_body: Mutex<Option<Value>>,
     ambiguous_create_responses: Mutex<HashSet<String>>,
     deletion_polls: Mutex<HashMap<String, usize>>,
     hidden_event_reads: Mutex<HashSet<String>>,
@@ -234,6 +234,7 @@ async fn stub_handler(
             let n = stub.counter.fetch_add(1, Ordering::SeqCst);
             let id = format!("ses_stub{n:020}");
             let create_body: Value = serde_json::from_slice(&body).expect("valid create body");
+            *stub.last_create_body.lock().unwrap() = Some(create_body.clone());
             let mut doc = stub_doc(
                 &id,
                 "open",
@@ -632,6 +633,7 @@ async fn spawn_stub_brain_with_state(token: &str) -> (String, Arc<StubBrain>) {
         counter: AtomicI64::new(0),
         sessions: Mutex::new(HashMap::new()),
         create_requests: Mutex::new(HashMap::new()),
+        last_create_body: Mutex::new(None),
         ambiguous_create_responses: Mutex::new(HashSet::new()),
         deletion_polls: Mutex::new(HashMap::new()),
         hidden_event_reads: Mutex::new(HashSet::new()),
@@ -676,10 +678,6 @@ async fn spawn_control_with_product_limits(
         card: card.clone(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
-        tenant_tool_token_key: Some(
-            aex_control::identity::TenantToolTokenKey::new(TENANT_TOOL_KEY).unwrap(),
-        ),
-        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: Some(
             CustomerEnvironmentGateway::new(
                 GATEWAY_TOKEN,
@@ -724,8 +722,6 @@ async fn spawn_control_without_deletion_worker(
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
-        tenant_tool_token_key: None,
-        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
@@ -772,8 +768,6 @@ async fn spawn_internal_executor(brain_url: &str, brain_token: &str) -> String {
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: Some(aex_control::identity::hash_secret(EXECUTOR_TOKEN)),
-        tenant_tool_token_key: None,
-        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
@@ -956,7 +950,7 @@ async fn private_executor_requires_its_service_credential_and_routes_pinned_capa
         "call_id": "call_01HZZZZZZZZZZZZZZZZZZZZZZZ",
         "name": "web_fetch",
         "input": {"url": "https://169.254.169.254/latest/meta-data/"},
-        "context": {"brain.capability": "brain.web.fetch"}
+        "context": {"brain.capability": "aex.web.fetch"}
     });
 
     let missing = http
@@ -1482,8 +1476,6 @@ async fn ambiguous_create_recovery_keeps_its_original_admission_at_zero_balance(
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: None,
-        tenant_tool_token_key: None,
-        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: admission.clone(),
@@ -1962,12 +1954,33 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         "unsupported shapes must not reach Brain",
     );
 
-    // Now a session runs.
+    // Now a session runs. The official subagents Tool is an ordinary component with Brain's
+    // native children grant; Aex must not rewrite it into a legacy Environment callback.
+    let component_subagents = json!({
+        "definition": {
+            "name": "subagents",
+            "description": "Create child sessions.",
+            "input_schema": {"type": "object"},
+            "output_schema": {},
+            "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "executor": {
+            "kind": "component",
+            "component_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "world": "aex:tool/tool@1.0.0",
+            "config": {"definition": {"name": "subagents"}},
+            "grants": ["children"]
+        }
+    });
+    let create_request = json!({
+        "model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"},
+        "tools": {"items": [component_subagents.clone()]}
+    });
     let session = json_of(
         http.post(format!("{base}/v1/sessions"))
             .bearer_auth(&sk)
             .header("Idempotency-Key", "same-create-request")
-            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .json(&create_request)
             .send()
             .await
             .unwrap(),
@@ -1975,24 +1988,14 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     )
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
+    let forwarded = stub_brain.last_create_body.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded["tools"]["items"][0], component_subagents);
+    assert_eq!(
+        forwarded["tools"]["items"][1]["executor"]["capability"],
+        "aex.output"
+    );
+    assert!(forwarded.get("secrets").is_none());
     let sid = session["id"].as_str().unwrap().to_string();
-    let tool_key = aex_control::identity::TenantToolTokenKey::new(TENANT_TOOL_KEY).unwrap();
-    let tool_token = tool_key.mint(&account_id);
-    let tool_read = http
-        .get(format!("{base}/v1/sessions/{sid}"))
-        .bearer_auth(&tool_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(tool_read.status().as_u16(), 200);
-    let tool_account = http
-        .get(format!("{base}/v1/account"))
-        .bearer_auth(&tool_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(tool_account.status().as_u16(), 401);
-
     let oversized_upload = http
         .post(format!("{base}/v1/sessions/{sid}/storage/uploads"))
         .bearer_auth(&sk)
@@ -2014,7 +2017,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         http.post(format!("{base}/v1/sessions"))
             .bearer_auth(&sk)
             .header("Idempotency-Key", "same-create-request")
-            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .json(&create_request)
             .send()
             .await
             .unwrap(),
@@ -2054,15 +2057,6 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .await
         .unwrap();
     assert_eq!(foreign.status().as_u16(), 404);
-    let other_tool_token = tool_key.mint(other["account"]["id"].as_str().unwrap());
-    let foreign_tool = http
-        .get(format!("{base}/v1/sessions/{sid}"))
-        .bearer_auth(other_tool_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(foreign_tool.status().as_u16(), 404);
-
     // The public proxy rejects one byte beyond Brain's exact journal-record ceiling before
     // buffering, output preparation, admission, or an upstream call.
     let oversized_message = http

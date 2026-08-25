@@ -212,10 +212,6 @@ pub struct AppState {
     pub operator_token_hash: Option<String>,
     /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
     pub external_executor_token_hash: Option<String>,
-    /// Mints and verifies credentials that grant tools access only to one tenant's session API.
-    pub tenant_tool_token_key: Option<identity::TenantToolTokenKey>,
-    /// Public origin injected for official environment Tools that call Aex session APIs.
-    pub public_api_url: String,
     /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Environments.
     pub customer_environment_gateway: Option<CustomerEnvironmentGateway>,
     /// Trusted host implementation for Aex-managed server Tools.
@@ -403,20 +399,7 @@ async fn auth_session(state: &AppState, headers: &HeaderMap) -> Result<SessionPr
             key_id: key.id,
         });
     }
-    let account_id = state
-        .tenant_tool_token_key
-        .as_ref()
-        .and_then(|key| key.authenticate(token))
-        .ok_or(Error::Unauthorized)?;
-    let account = state
-        .db
-        .account(account_id)
-        .await?
-        .ok_or(Error::Unauthorized)?;
-    Ok(SessionPrincipal {
-        account,
-        key_id: "tenant-tool".into(),
-    })
+    Err(Error::Unauthorized)
 }
 
 async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
@@ -2249,12 +2232,6 @@ async fn proxy_sessions_root(
                         .await?;
                     let idempotency = create_idempotency(&headers, &account.id)?;
                     let body = output::inject_output_tool(body)?;
-                    let body = output::inject_tool_credentials(
-                        body,
-                        &account.id,
-                        &state.public_api_url,
-                        state.tenant_tool_token_key.as_ref(),
-                    )?;
                     let body = inject_uploaded_artifact_layers(
                         &state.db,
                         &account.id,
@@ -2723,7 +2700,7 @@ mod event_filter_tests {
             "name": "web_search",
             "input": {"query": "aex"},
             "context": {
-                "brain.capability": "brain.web.search",
+                "brain.capability": "aex.web.search",
                 "padding": "x".repeat(padding)
             }
         }))
@@ -2773,8 +2750,6 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: Some(identity::hash_secret("executor-secret")),
-            tenant_tool_token_key: None,
-            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
@@ -3094,8 +3069,6 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            tenant_tool_token_key: None,
-            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
@@ -3199,8 +3172,6 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            tenant_tool_token_key: None,
-            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: Some(
                 CustomerEnvironmentGateway::new(
                     gateway_token,
@@ -3394,8 +3365,6 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            tenant_tool_token_key: None,
-            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),

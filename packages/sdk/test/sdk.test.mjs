@@ -980,7 +980,7 @@ test("customer Environment grants keep credentials out of URLs and pin observati
   );
 });
 
-test("aborting one create stops waiting without poisoning the process customer Environment", async () => {
+test("aborting callback readiness tears down the failed runner before a later create retries", async () => {
   const sockets = [];
   const calls = [];
   const lookup = tool(
@@ -1021,22 +1021,28 @@ test("aborting one create stops waiting without poisoning the process customer E
     environments: { app },
   }, { signal: controller.signal });
   while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  sockets[0].close();
   controller.abort(new Error("caller left"));
   await assert.rejects(first, (error) => error.name === "AbortError");
+  assert.equal(sockets[0].closed, true, "the cancelled create must close its reconnecting runner");
   assert.equal(
     calls.filter((call) => call.url.endsWith("/v1/sessions")).length,
     0,
     "aborted readiness cannot create the session",
   );
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(sockets.length, 1, "the failed ingress runner must not reconnect after cancellation");
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
 
-  sockets[0].open();
-  await create(aex, {
+  const second = create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
     environments: { app },
   });
-  assert.equal(sockets.length, 1);
-  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
+  while (sockets.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  sockets[1].open();
+  await second;
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 2);
   assert.equal(calls.filter((call) => call.url.endsWith("/v1/sessions")).length, 1);
   aex.close();
 });
