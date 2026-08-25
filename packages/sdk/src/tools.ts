@@ -6,6 +6,9 @@ import {
   type EnvironmentRef,
 } from "@aexhq/environment";
 import * as z from "zod";
+import { callback as callbackComponent } from "@aexhq/env-app";
+import type { ComponentExtension } from "@aexhq/brain";
+import type { ToolDefinition } from "@aexhq/brain/session";
 
 import { jcsSha256 } from "./json.js";
 
@@ -199,6 +202,62 @@ export interface CompiledTools {
   readonly environments: Readonly<Record<string, unknown>>;
   readonly environmentNames: ReadonlyMap<EnvironmentRef, string>;
   readonly callbackClientId?: string;
+}
+
+export interface CompiledCallbacks {
+  readonly components: readonly ComponentExtension<
+    "tool",
+    Readonly<Record<string, unknown>> & { readonly definition: ToolDefinition }
+  >[];
+  readonly registrations: readonly ClientRegistration[];
+}
+
+export async function compileCallbacks(selections: readonly Tool[]): Promise<CompiledCallbacks> {
+  const components: ComponentExtension<
+    "tool",
+    Readonly<Record<string, unknown>> & { readonly definition: ToolDefinition }
+  >[] = [];
+  const registrations: ClientRegistration[] = [];
+  const names = new Set<string>();
+  for (const value of selections) {
+    assertTool(value);
+    const contract = await compileContract(value);
+    if (names.has(contract.name)) {
+      throw new TypeError(`Tool ${JSON.stringify(contract.name)} was selected twice`);
+    }
+    names.add(contract.name);
+    if (value.artifact !== undefined) {
+      throw new TypeError(
+        `Tool ${JSON.stringify(contract.name)} is prepared for a hosted runtime and cannot execute as an application callback`,
+      );
+    }
+    if (value.requirements.workspace === true || value.requirements.processes === true) {
+      throw new TypeError(
+        `Tool ${JSON.stringify(contract.name)} requires hosted workspace or process capabilities`,
+      );
+    }
+    const definition = {
+      name: contract.name,
+      ...(contract.description === undefined ? {} : { description: contract.description }),
+      input_schema: contract.inputSchema,
+      output_schema: contract.outputSchema ?? {},
+      contract_digest: contract.contractDigest,
+    };
+    const registration = `tool:${contract.contractDigest}`;
+    components.push(callbackComponent(definition, registration));
+    registrations.push(Object.freeze({
+      registration,
+      name: contract.name,
+      contractDigest: contract.contractDigest,
+      input: value.input,
+      ...(value.output === undefined ? {} : { output: value.output }),
+      handler: value.handler as ToolHandler<z.ZodType>,
+    }));
+  }
+  return {
+    components: Object.freeze(components),
+    registrations: Object.freeze(registrations),
+  };
 }
 
 export async function compileTools(

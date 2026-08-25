@@ -35,7 +35,7 @@ import type { OutputValidationIssue } from "./errors.js";
 import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
-import { compileTools } from "./tools.js";
+import { compileCallbacks, compileTools } from "./tools.js";
 import type {
   EnvironmentMap,
   EnvironmentValue,
@@ -261,27 +261,37 @@ export class Sessions {
       throw new TypeError("component sessions require model.component and agentloop");
     }
     const tools = [...(options.tools ?? [])];
-    if (tools.some((tool) => !isComponentTool(tool))) {
-      throw new TypeError("component sessions accept only precompiled Tool component values");
-    }
+    const componentTools = tools.filter(isComponentTool);
+    const callbackTools = tools.filter((tool): tool is import("./tools.js").Tool => !isComponentTool(tool));
     const environments = Object.entries(options.environments ?? {});
     if (environments.some(([, environment]) => !isEnvironmentComponent(environment))) {
       throw new TypeError("component sessions accept only precompiled Environment component values");
     }
-    const componentTools = tools.map((tool) => {
-      if (!isComponentTool(tool)) throw new TypeError("invalid Tool component");
-      return tool;
-    });
     const environmentComponents = environments.map(([name, environment]) => {
       if (!isEnvironmentComponent(environment)) {
         throw new TypeError(`Environment ${JSON.stringify(name)} is not a component`);
       }
       return [name, environment] as const;
     });
+    const applicationEnvironments = environmentComponents.filter(([, environment]) =>
+      isApplicationEnvironment(environment));
+    if (callbackTools.length > 0 && applicationEnvironments.length !== 1) {
+      throw new TypeError("application callback Tools require exactly one app() Environment");
+    }
+    const callbacks = await compileCallbacks(callbackTools);
+    const allComponentTools = [...componentTools, ...callbacks.components];
+    const callbackEnvironment = applicationEnvironments[0];
+    if (callbackEnvironment !== undefined) {
+      await this.#ensureCustomerEnvironment(
+        applicationEnvironmentId(callbackEnvironment[1]),
+        callbacks.registrations,
+        request.signal,
+      );
+    }
     const prepared = await prepareComponents([
       model,
       agentloop,
-      ...componentTools,
+      ...allComponentTools,
       ...environmentComponents.map(([, environment]) => environment),
     ]);
     const modelBinding = prepared.bindings[0];
@@ -289,18 +299,22 @@ export class Sessions {
     if (modelBinding === undefined || agentloopBinding === undefined) {
       throw new TypeError("component session bindings are incomplete");
     }
-    const toolBindings = prepared.bindings.slice(2, 2 + componentTools.length);
-    const environmentBindings = prepared.bindings.slice(2 + componentTools.length);
-    const toolItems = componentTools.map((tool, index) => {
+    const toolBindings = prepared.bindings.slice(2, 2 + allComponentTools.length);
+    const environmentBindings = prepared.bindings.slice(2 + allComponentTools.length);
+    const toolItems = allComponentTools.map((tool, index) => {
       const binding = toolBindings[index];
       if (binding === undefined) throw new TypeError("Tool component binding is missing");
       const definition = componentToolDefinition(tool);
       const needsEnvironment = binding.grants.includes("environment");
-      if (needsEnvironment && environmentComponents.length !== 1) {
+      const isCallback = index >= componentTools.length;
+      if (needsEnvironment && !isCallback && environmentComponents.length !== 1) {
         throw new TypeError(
           "a Tool with the environment grant requires exactly one declared Environment",
         );
       }
+      const environmentName = isCallback
+        ? callbackEnvironment?.[0]
+        : environmentComponents[0]?.[0];
       return {
         definition,
         executor: {
@@ -309,7 +323,7 @@ export class Sessions {
           world: binding.world,
           config: binding.config,
           grants: binding.grants,
-          ...(needsEnvironment ? { environment: environmentComponents[0]![0] } : {}),
+          ...(needsEnvironment ? { environment: environmentName! } : {}),
         },
       };
     });
@@ -465,6 +479,23 @@ export class Sessions {
     if (this.#closed) throw new SessionError("Aex client is closed");
     await waitWithSignal(hand.register(registrations), signal);
   }
+}
+
+function isApplicationEnvironment(
+  value: ComponentExtension<"environment">,
+): boolean {
+  const config = value.config;
+  return config !== null && typeof config === "object" && !Array.isArray(config) &&
+    (config as { driver?: unknown }).driver === "customer";
+}
+
+function applicationEnvironmentId(value: ComponentExtension<"environment">): string {
+  const config = value.config as { configuration?: { registration?: unknown } };
+  const id = config.configuration?.registration;
+  if (typeof id !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(id)) {
+    throw new TypeError("app() Environment registration is invalid");
+  }
+  return id;
 }
 
 type ComponentToolConfig = Readonly<Record<string, unknown>> & {

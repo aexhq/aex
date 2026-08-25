@@ -12,6 +12,7 @@ import {
 import { parseEventStream, Transport } from "../dist/transport.js";
 import { compileTools, withPreparedArtifact } from "../dist/tools.js";
 import { MAX_PUBLIC_EVENT_BYTES, component } from "@aexhq/brain";
+import { app as appComponent } from "@aexhq/env-app";
 import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
 
@@ -398,6 +399,60 @@ test("component create composes ordinary Model, Agentloop, Tool, and Environment
   assert.deepEqual(body.tools.items[1].executor.grants, ["children"]);
   assert.equal(body.tools.items[1].executor.environment, undefined);
   assert.equal(body.environments.workspace.world, "aex:environment/environment@1.0.0");
+});
+
+test("component create keeps application callback source local and binds its Tool to app()", async () => {
+  let body;
+  const socket = new FakeWebSocket({});
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    webSocketFactory() {
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
+        return Response.json({
+          url: "wss://customer-environment.example.test/connect",
+          protocol: "aex.grant.component",
+          expires_at: "2026-08-25T12:05:00Z",
+          grant_id: "grant-component",
+          observation_url:
+            "https://api.aex.dev/v1/customer-environment/observations/grant-component",
+          observation_token: "observation-component",
+        }, { status: 201 });
+      }
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+  const lookup = tool(
+    z.object({ id: z.string() }),
+    async function lookup({ id }) {
+      return { id };
+    },
+  ).returns(z.object({ id: z.string() }));
+
+  await aex.sessions.create({
+    model: {
+      component: component("model", bytes, {}, { metadata: { name: "fixture" } }),
+      provider: "fixture",
+      name: "fixture",
+      apiKey: "key",
+    },
+    agentloop: component("agentloop", bytes, {}),
+    environments: { application: appComponent({ id: "component-app" }) },
+    tools: [lookup],
+  });
+
+  assert.equal(socket.sent[1].registrations[0].name, "lookup");
+  assert.equal(body.tools.items[0].executor.kind, "component");
+  assert.equal(body.tools.items[0].executor.environment, "application");
+  assert.deepEqual(body.tools.items[0].executor.grants, ["environment"]);
+  assert.equal(body.environments.application.config.driver, "customer");
+  assert.equal(JSON.stringify(body).includes("async function lookup"), false);
+  aex.close();
 });
 
 test("create seals managed network and bounded recovery policy", async () => {

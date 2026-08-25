@@ -33,33 +33,35 @@ environment satisfies it; otherwise creation fails with the eligible or missing 
 
 ## Application Tools
 
-Application callback authoring is temporarily outside the component MVP. Use precompiled Tool
-component packages; the callback authoring API will return through the same Tool/Environment ABI,
-without uploading function source to Brain.
-
-The previous source-function builder shown below remains a donor until that replacement gate:
+Application callbacks use the same Tool and Environment component ABI while the handler remains in
+your process. Declare one `app()` Environment; Aex registers each selected callback over one
+authenticated, reconnecting connection. Handler source and captured application state are never
+uploaded to Brain.
 
 ```ts
-import { tool } from "@aexhq/sdk";
+import { Aex, tool } from "@aexhq/sdk";
+import { app } from "@aexhq/env-app";
 import { z } from "zod";
 
-export default tool(
+const lookupOrder = tool(
   z.object({ orderId: z.string() }),
   async function lookupOrder({ orderId }) {
     return database.lookup(orderId);
   },
 )
   .describe("Look up an order")
-  .returns(z.object({ status: z.string() }))
-  .needs({ env: ["ORDERS_TOKEN"], network: [{ host: "orders.example.com", port: 443 }] })
-  .setup(async function prepareIndex() {
-    await database.prepareIndex();
-  });
+  .returns(z.object({ status: z.string() }));
+
+await new Aex({ apiKey: process.env.AEX_API_KEY! }).sessions.create({
+  model,
+  agentloop,
+  environments: { application: app({ id: "orders-ui" }) },
+  tools: [lookupOrder],
+});
 ```
 
-Use `tool.bind(environmentRef)` when more than one environment is compatible. Source tools run
-through an `app()` callback environment. `aex tools build` prepares computer tools with their
-runtime and dependencies; tool authors do not pass `import.meta.url` or choose a provider.
+Source callback Tools are routed automatically to the single `app()` Environment, even when the
+session also declares a hosted Environment for precompiled coding Tools.
 
 Environment references are opaque values returned by environment-extension factories. A created
 session preserves their types, so `session.environment(ref)` returns that extension's typed handle.
