@@ -7,7 +7,7 @@ import { Aex } from "@aexhq/sdk";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/loop-pi";
 import { openai } from "@aexhq/model-openai";
-import { bash, read, write } from "@aexhq/tools";
+import { bash, read, task, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const workspace = awsMicrovm();
@@ -21,7 +21,7 @@ const session = await aex.sessions.create({
   },
   agentloop: pi({ instructions: "Work carefully and verify changes." }),
   environments: { workspace },
-  tools: [bash(), read(), write()],
+  tools: [bash(), read(), write(), task()],
 });
 
 console.log(await session.send("Inspect the workspace."));

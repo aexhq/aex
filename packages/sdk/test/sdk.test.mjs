@@ -374,12 +374,20 @@ test("component create composes ordinary Model, Agentloop, Tool, and Environment
     },
     descriptor: { action: "echo" },
   }, { grants: ["environment"] });
+  const task = component("tool", bytes, {
+    definition: {
+      name: "subagents",
+      input_schema: { type: "object" },
+      output_schema: {},
+      contract_digest: "b".repeat(64),
+    },
+  }, { grants: ["children"] });
 
   await aex.sessions.create({
     model: { component: model, provider: "fixture", name: "fixture", apiKey: "key" },
     agentloop,
     environments: { workspace: environment },
-    tools: [echo],
+    tools: [echo, task],
   });
 
   assert.equal(body.component_artifacts.length, 1, "identical component bytes upload once");
@@ -387,6 +395,8 @@ test("component create composes ordinary Model, Agentloop, Tool, and Environment
   assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
   assert.equal(body.tools.items[0].executor.kind, "component");
   assert.equal(body.tools.items[0].executor.environment, "workspace");
+  assert.deepEqual(body.tools.items[1].executor.grants, ["children"]);
+  assert.equal(body.tools.items[1].executor.environment, undefined);
   assert.equal(body.environments.workspace.world, "aex:environment/environment@1.0.0");
 });
 
