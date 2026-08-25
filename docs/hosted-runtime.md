@@ -3,7 +3,7 @@
 Aex production is a composition, not a second session engine. Aex Control uses only Brain Server's
 versioned network API. Platform pins the Brain image, supplies AWS durability and the AWS
 Environment driver, and configures only these trusted capabilities: `aex.output`,
-`aex.web.search`, `aex.web.fetch`, and `aex.subagents`. Their scope, retry policy, input ceiling,
+`aex.web.search`, and `aex.web.fetch`. Their scope, retry policy, input ceiling,
 and terminal behavior are host configuration; session JSON can select a capability but cannot
 widen it.
 

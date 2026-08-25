@@ -980,7 +980,7 @@ test("customer Environment grants keep credentials out of URLs and pin observati
   );
 });
 
-test("aborting one create stops waiting without poisoning the process customer Environment", async () => {
+test("aborting callback readiness tears down the failed runner before a later create retries", async () => {
   const sockets = [];
   const calls = [];
   const lookup = tool(
@@ -1021,23 +1021,81 @@ test("aborting one create stops waiting without poisoning the process customer E
     environments: { app },
   }, { signal: controller.signal });
   while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  sockets[0].close();
   controller.abort(new Error("caller left"));
   await assert.rejects(first, (error) => error.name === "AbortError");
+  assert.equal(sockets[0].closed, true, "the cancelled create must close its reconnecting runner");
   assert.equal(
     calls.filter((call) => call.url.endsWith("/v1/sessions")).length,
     0,
     "aborted readiness cannot create the session",
   );
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(sockets.length, 1, "the failed ingress runner must not reconnect after cancellation");
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
 
-  sockets[0].open();
-  await create(aex, {
+  const second = create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [lookup],
     environments: { app },
   });
-  assert.equal(sockets.length, 1);
-  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 1);
+  while (sockets.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  sockets[1].open();
+  await second;
+  assert.equal(calls.filter((call) => call.url.endsWith("/customer-environment/grants")).length, 2);
   assert.equal(calls.filter((call) => call.url.endsWith("/v1/sessions")).length, 1);
+  aex.close();
+});
+
+test("aborting one shared callback readiness waiter keeps the runner for another create", async () => {
+  const sockets = [];
+  let grants = 0;
+  let sessionCreates = 0;
+  const lookup = tool(z.object({ id: z.string() }), async function lookup({ id }) {
+    return { id };
+  });
+  const app = appComponent({ id: "shared-readiness" });
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    webSocketFactory(request) {
+      const socket = new FakeWebSocket(request);
+      sockets.push(socket);
+      return socket;
+    },
+    fetch: async (input) => {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
+        grants += 1;
+        return Response.json({
+          url: "wss://customer-environment.example.test/connect",
+          protocol: "aex.grant.shared-readiness",
+          expires_at: "2026-08-20T12:05:00Z",
+          grant_id: "grant-shared-readiness",
+          observation_url:
+            "https://api.aex.dev/v1/customer-environment/observations/grant-shared-readiness",
+          observation_token: "observation-shared-readiness",
+        }, { status: 201 });
+      }
+      sessionCreates += 1;
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const firstController = new AbortController();
+  const options = {
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    tools: [lookup],
+    environments: { app },
+  };
+  const first = create(aex, options, { signal: firstController.signal });
+  const second = create(aex, options);
+  while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  firstController.abort(new Error("first caller left"));
+  await assert.rejects(first, (error) => error.name === "AbortError");
+  assert.equal(sockets[0].closed, false);
+  sockets[0].open();
+  await second;
+  assert.equal(grants, 1);
+  assert.equal(sockets.length, 1);
+  assert.equal(sessionCreates, 1);
   aex.close();
 });
 

@@ -225,8 +225,6 @@ pub struct Config {
     pub card: rating::RateCard,
     pub operator_token_hash: Option<String>,
     pub external_executor_token_hash: Option<String>,
-    pub tenant_tool_token_key: Option<identity::TenantToolTokenKey>,
-    pub public_api_url: String,
     pub customer_environment_gateway: Option<customer_environment::CustomerEnvironmentGateway>,
     pub serper_api_key: Option<String>,
     pub max_concurrent_sessions: i64,
@@ -286,26 +284,6 @@ impl Config {
         if !internal_listen.ip().is_loopback() {
             anyhow::bail!(
                 "AEX_CONTROL_INTERNAL_LISTEN must use a loopback address; got {internal_listen}"
-            );
-        }
-        let tenant_tool_token_key = std::env::var("AEX_TENANT_TOOL_TOKEN_KEY")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(identity::TenantToolTokenKey::new)
-            .transpose()
-            .map_err(|error| anyhow::anyhow!("AEX_TENANT_TOOL_TOKEN_KEY {error}"))?;
-        let public_api_url =
-            std::env::var("AEX_PUBLIC_API_URL").unwrap_or_else(|_| "https://api.aex.dev".into());
-        let parsed_public_api_url = reqwest::Url::parse(&public_api_url)
-            .map_err(|error| anyhow::anyhow!("AEX_PUBLIC_API_URL={public_api_url}: {error}"))?;
-        if parsed_public_api_url.scheme() != "https"
-            || parsed_public_api_url.host_str().is_none()
-            || parsed_public_api_url.path() != "/"
-            || parsed_public_api_url.query().is_some()
-            || parsed_public_api_url.fragment().is_some()
-        {
-            anyhow::bail!(
-                "AEX_PUBLIC_API_URL must be an HTTPS origin without a path, query, or fragment"
             );
         }
         let customer_environment_gateway = match std::env::var(
@@ -448,8 +426,6 @@ impl Config {
                 .ok()
                 .filter(|token| !token.is_empty())
                 .map(|token| identity::hash_secret(&token)),
-            tenant_tool_token_key,
-            public_api_url: public_api_url.trim_end_matches('/').into(),
             customer_environment_gateway,
             serper_api_key: std::env::var("SERPER_API_KEY")
                 .ok()
