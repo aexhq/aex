@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const brain = path.resolve(root, "../brain");
+const brainVersion = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"))
+  .devDependencies?.["@aexhq/brain"];
+if (!/^\d+\.\d+\.\d+$/u.test(brainVersion)) {
+  throw new Error("package smoke requires one exact published Brain version");
+}
 const npmCli = process.env.npm_execpath;
 if (npmCli === undefined) throw new Error("run package-smoke through npm so its CLI is discoverable");
 const temporary = await mkdtemp(path.join(tmpdir(), "aex-package-smoke-"));
@@ -31,7 +35,6 @@ try {
   await mkdir(artifacts);
   await mkdir(consumer);
   const packages = [
-    pack(path.join(brain, "packages/brain")),
     pack(path.join(root, "packages/contracts")),
     pack(path.join(root, "packages/sdk")),
     pack(path.join(root, "packages/cli")),
@@ -48,6 +51,7 @@ try {
       "--no-audit",
       "--no-fund",
       ...packages,
+      `@aexhq/brain@${brainVersion}`,
       "@types/node@24.3.0",
       "typescript@5.9.2",
       "zod@4.4.3",
