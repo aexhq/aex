@@ -27,17 +27,17 @@ with a `/deletion` status resource. Before Brain can purge anything, the retry w
 ends and fences the session tree, walks Brain's strongly consistent direct-child adjacency, and
 settles every journal through its authoritative high-water mark. The SDK's default
 `await session.delete()` polls that status with `Retry-After`; `{ queue: true }` returns immediately
-after the same acceptance. It never holds one request open across Hand and S3 cleanup. The alpha has
+after the same acceptance. It never holds one request open across Environment and S3 cleanup. The alpha has
 no post-delete content retention: Brain session data, storage objects, and Aex's cached structured
 and managed-Tool payloads are purged. Small billing and deletion-status tombstones remain. Bucket
 versioning is suspended for new production objects, but deletion remains exhaustive so historical
 versions cannot strand data.
 
-## Customer-app Hands
+## Customer-app Environments
 
 One application connection multiplexes sessions. The SDK obtains a short-lived grant from
-`POST /v1/customer-hand/grants` and sends it as the sole `Sec-WebSocket-Protocol` value. API Gateway
-forwards callbacks to `POST /v1/customer-hand/gateway`; Aex verifies the private integration on
+`POST /v1/customer-environment/grants` and sends it as the sole `Sec-WebSocket-Protocol` value. API Gateway
+forwards callbacks to `POST /v1/customer-environment/gateway`; Aex verifies the private integration on
 `$connect`, the trusted proxy path, and the source-IP denylist, then Brain consumes the grant and
 owns connection epochs. API Gateway authorizer context is not assumed on later routes. Each runner
 registration and heartbeat carries a proof derived from the connect grant, which Brain binds to the
@@ -46,7 +46,7 @@ comes from the heartbeat lease or a confirmed outbound `410`. There is no creden
 no tenant header supplied by the caller.
 
 Commands stay below one WebSocket frame. Terminal receipts and results use the scoped HTTPS endpoint
-`POST /v1/customer-hand/observations/{grant_id}`. The non-secret grant ID stays in the path and its
+`POST /v1/customer-environment/observations/{grant_id}`. The non-secret grant ID stays in the path and its
 paired short-lived token stays only in the public `Authorization` header. On the private Brain hop,
 Aex authenticates with its operator bearer and forwards the scoped token separately as
 `x-brain-observation-grant`; Brain validates the ID/token pair. Brain reports a missing or ambiguous
@@ -100,7 +100,7 @@ Brain independently enforces 128 MiB per session, 512 MiB cumulative journal dat
 4,096 retained session identities per tenant at the journal's atomic write boundary.
 Separately, `AEX_MAX_CONCURRENT_CREATE_BODIES` defaults to four, bounding simultaneous authenticated
 24 MiB create buffers to 96 MiB. `AEX_MAX_CONCURRENT_MESSAGE_BODIES=256` bounds root messages,
-child creation prompts, child messages, follow-ups, and the smaller customer-Hand grant/frame/
+child creation prompts, child messages, follow-ups, and the smaller customer-Environment grant/frame/
 observation bodies to about 48 MiB of raw buffers at the 192 KiB maximum;
 `AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES=64` bounds every other buffered session mutation to
 128 MiB of raw 2 MiB buffers. These are independent fail-fast gates so small-message throughput
@@ -167,7 +167,7 @@ strong subtree settlement before Brain removes a cascading subtree.
 Alpha does not charge suspended-sandbox storage. The provider exposes instantaneous lifecycle state
 but no authoritative suspension timestamp and retained-byte size, so sampling or predicting the
 idle timeout would create a false meter. Aex absorbs snapshot storage and I/O cost for now. The
-backlog may reintroduce the line only after Hands supplies authoritative timestamped size transitions,
+backlog may reintroduce the line only after the Environment supplies authoritative timestamped size transitions,
 or the product explicitly defines a deterministic reserved-storage unit.
 
 Relevant tuning is explicit:
@@ -214,15 +214,15 @@ Aex exposes no peak-capacity meter in the MVP.
 
 The per-account concurrent-root-session limit does not count child sessions and is not a
 managed-compute quota: sandboxes materialize lazily, root and child sessions share one default
-sandbox, and running plus suspended MicroVM memory counts against the AWS regional quota. Hands
-therefore enforces a separate shared transactional ceiling with `HAND_MAX_MATERIALIZED_MIB`. For
+sandbox, and running plus suspended MicroVM memory counts against the AWS regional quota. The Environment
+therefore enforces a separate shared transactional ceiling with `ENVIRONMENT_MAX_MATERIALIZED_MIB`. For
 the initial 8-GiB `us-east-1` quota, development is capped at 1 GiB and production at 5 GiB, leaving
 2 GiB of regional headroom. A provider capacity rejection is still returned as unavailable; Aex
 never falls back to local or another executor.
 
 Within a hosted guest, each custom `.server()` binding gets a bounded generation-lifetime
 unprivileged UID. The ordinary shell remains UID 1000 and bindings share workspace access through a
-group. Hands injects declared environment secrets without writing them to workspace files, argv,
+group. The Environment injects declared secrets without writing them to workspace files, argv,
 results, or logs, and `/proc` prevents ordinary sibling users from reading them. This is an
 unprivileged in-guest boundary, not a defense against guest root or intentional disclosure through
 the shared workspace/result. Applications needing that stronger boundary keep the operation in a
@@ -232,7 +232,7 @@ claim.
 The official `sandbox` Tool can hold at most two live additional targets per root tree under
 `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2`. The root/child-shared default sandbox is excluded;
 terminating an additional target releases its slot while its ID remains a tombstone until root
-deletion. This is a fairness guard, not a substitute for Hands' global memory ceiling, and callers
+deletion. This is a fairness guard, not a substitute for the Environment's global memory ceiling, and callers
 cannot widen it per session.
 
 Production promotion requires the applied quota and configured image shape to be read from AWS,
@@ -244,7 +244,7 @@ evidence for this gate.
 
 - Aex public traffic reaches Brain only with the authenticated tenant sealed in
   `x-brain-tenant-id`; Brain remains authoritative for ownership on the actual session operation.
-- The customer-Hand gateway is the only exception: its scoped grant derives tenant and client inside
+- The customer-Environment gateway is the only exception: its scoped grant derives tenant and client inside
   Brain, while later frames resolve the stored connection epoch.
 - Managed sandbox egress blocks metadata, private/platform ranges, and Aex infrastructure even when
   a session selects public outbound access.
@@ -259,7 +259,7 @@ values, grouped by the process that reads them:
 
 | Process | Required hosted values |
 | --- | --- |
-| `aex-control` | `AEX_BRAIN_URL`, `AEX_BRAIN_TOKEN`, `AEX_CONTROL_LISTEN`, `AEX_CONTROL_INTERNAL_LISTEN` (loopback), `AEX_CONTROL_DB` (the singleton EFS path), `AEX_PAYMENTS=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `AEX_TOPUP_SUCCESS_URL`, `AEX_TOPUP_CANCEL_URL`, `AEX_OPERATOR_TOKEN`, `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `AEX_CUSTOMER_HAND_GATEWAY_TOKEN`, `AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS`, `AEX_MANAGED_SANDBOX_NAT_CIDRS`, and `SERPER_API_KEY` while managed web search is advertised |
+| `aex-control` | `AEX_BRAIN_URL`, `AEX_BRAIN_TOKEN`, `AEX_CONTROL_LISTEN`, `AEX_CONTROL_INTERNAL_LISTEN` (loopback), `AEX_CONTROL_DB` (the singleton EFS path), `AEX_PAYMENTS=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `AEX_TOPUP_SUCCESS_URL`, `AEX_TOPUP_CANCEL_URL`, `AEX_OPERATOR_TOKEN`, `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN`, `AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS`, `AEX_MANAGED_ENVIRONMENT_NAT_CIDRS`, and `SERPER_API_KEY` while managed web search is advertised |
 | `brain` | `BRAIN_MODE=production`, `BRAIN_LISTEN`, `BRAIN_API_TOKEN`, `BRAIN_EXTERNAL_TOOL_EXECUTOR_URL`, `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `BRAIN_EXTERNAL_TOOL_POLICIES_JSON`, `BRAIN_CUSTOMER_ENVIRONMENT_WEBSOCKET_URL`, `BRAIN_CUSTOMER_ENVIRONMENT_OBSERVATION_BASE_URL`, `BRAIN_CUSTOMER_ENVIRONMENT_CALLBACK_URL`, `BRAIN_JOURNAL_TABLE`, `BRAIN_KMS_KEY_ID`, `BRAIN_SESSION_STORAGE_BUCKET`, `BRAIN_SESSION_STORAGE_PREFIX`, `BRAIN_STORAGE_MAX_OBJECT_BYTES`, `BRAIN_STORAGE_MAX_SESSION_BYTES`, `BRAIN_STORAGE_MAX_TENANT_BYTES`, `BRAIN_STORAGE_TRANSFER_TTL_MS`, `BRAIN_JOURNAL_MAX_SESSION_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_SESSIONS`, and `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2` |
 | AWS Environment driver | `ENVIRONMENT_IMAGE`, `ENVIRONMENT_IMAGE_VERSION`, `ENVIRONMENT_REGISTRY_TABLE`, `ENVIRONMENT_MAX_MATERIALIZED_MIB`, `ENVIRONMENT_NETWORK_CONNECTOR_NONE`, `ENVIRONMENT_NETWORK_CONNECTOR_ALLOWLIST`, `ENVIRONMENT_NETWORK_CONNECTOR_PUBLIC`, `ENVIRONMENT_CAPABILITY_SIGNING_KEY_ID`, and `ENVIRONMENT_EGRESS_GATEWAY_AUTHORITY` |
 
@@ -270,15 +270,15 @@ non-secret grant path), and the callback URL is the API Gateway Management API H
 Brain's fixed `aex.output`, `aex.web.search`, and `aex.web.fetch` capabilities to the private Aex
 executor without placing product handlers inside the neutral engine.
 
-Rate-card, admission, discovery, product-limit, Brain scheduling/context, and Hand provider-pacing
+Rate-card, admission, discovery, product-limit, Brain scheduling/context, and Environment provider-pacing
 variables are optional bounded tuning. Production pins them in infrastructure even when their code
 defaults match; changing them is an operational policy change, not a session API feature. The
 three `BRAIN_JOURNAL_MAX_*` ceilings are process policy rather than immutable session seals, so
 every Brain replica must receive identical values. The
-customer-Hand limits bound grant and connection registries, in-flight operations, retained
+customer-Environment limits bound grant and connection registries, in-flight operations, retained
 terminal payloads, and compiled registrations independently so one limit cannot silently consume
-the whole Brain heap. The Hand pacing set is
-`HAND_PROVIDER_{RUN,RESUME,SUSPEND,TERMINATE}_{RATE_PER_SECOND,BURST}`; there is no Hand storage
+the whole Brain heap. The Environment pacing set is
+`ENVIRONMENT_PROVIDER_{RUN,RESUME,SUSPEND,TERMINATE}_{RATE_PER_SECOND,BURST}`; there is no Environment storage
 bucket or executor-token setting.
 
 The alpha release pins these bounded values explicitly; they are host policy, never public SDK

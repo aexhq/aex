@@ -502,13 +502,13 @@ function validateCustomerEnvironmentGrant(
   },
 ): string {
   if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(grant.grant_id)) {
-    throw new SessionError("Aex returned an invalid customer Hand grant id");
+    throw new SessionError("Aex returned an invalid customer Environment grant id");
   }
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,2048}$/u.test(grant.protocol)) {
-    throw new SessionError("Aex returned an invalid customer Hand WebSocket protocol");
+    throw new SessionError("Aex returned an invalid customer Environment WebSocket protocol");
   }
   if (!/^[\x21-\x7e]{1,2048}$/u.test(grant.observation_token)) {
-    throw new SessionError("Aex returned an invalid customer Hand observation token");
+    throw new SessionError("Aex returned an invalid customer Environment observation token");
   }
 
   let socket: URL;
@@ -521,7 +521,7 @@ function validateCustomerEnvironmentGrant(
       `${baseUrl}/v1/customer-environment/observations/${encodeURIComponent(grant.grant_id)}`,
     );
   } catch (cause) {
-    throw new SessionError("Aex returned an invalid customer Hand URL", { cause });
+    throw new SessionError("Aex returned an invalid customer Environment URL", { cause });
   }
   const secureSocket = socket.protocol === "wss:" ||
     (socket.protocol === "ws:" && isLoopback(socket.hostname));
@@ -530,7 +530,7 @@ function validateCustomerEnvironmentGrant(
     socket.search !== "" || socket.hash !== ""
   ) {
     throw new SessionError(
-      "Aex customer Hand sockets require credential-free WSS (or loopback WS for development)",
+      "Aex customer Environment sockets require credential-free WSS (or loopback WS for development)",
     );
   }
   if (observation.href !== expectedObservation.href) {

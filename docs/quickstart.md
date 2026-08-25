@@ -187,7 +187,7 @@ policy, fake payments, and unsandboxed Tool execution inside the Brain container
 still run in the connected Node application; `.server()` Tools use the explicit local host Hand.
 Aex never silently falls back from hosted execution to local execution. Local storage supports
 restart-safe inline objects up to 1 MiB; large presigned transfers are hosted-only in the MVP. Call
-`aex.close()` during graceful application shutdown to close the shared customer-Hand connection;
+`aex.close()` during graceful application shutdown to close the shared customer-Environment connection;
 the closed client cannot create another session.
 
 [Session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·

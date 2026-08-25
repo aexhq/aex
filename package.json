@@ -10,7 +10,6 @@
   },
   "devDependencies": {
     "@aexhq/brain": "file:../brain/packages/brain",
-    "@aexhq/brain-tools": "0.2.1",
     "@aexhq/env-app": "file:../extensions/packages/env-app",
     "yaml": "2.9.0"
   },

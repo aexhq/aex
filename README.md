@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://aex.dev">Website</a> ·
   <a href="docs/quickstart.md">Quickstart</a> ·
-  <a href="https://aex.dev/dashboard">Dashboard</a> ·
+  <a href="https://aex.dev/dashboard">Dashboard</a>
 </p>
 
 > This repo is under early and heavy development
@@ -30,24 +30,25 @@ data.
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/model-openai @aexhq/tools
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/loop-pi";
+import { openai } from "@aexhq/model-openai";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const workspace = awsMicrovm();
 const session = await aex.sessions.create({
   model: {
-    provider: "openai",
+    component: openai(),
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,
   },
-  loop: pi(),
+  agentloop: pi(),
   environments: { workspace },
   tools: [bash(), read(), write()],
 });
@@ -64,12 +65,13 @@ and subagents.
 ```text
 Your app → Aex SDK → Brain session kernel → bound environment extensions
                          ↑                         ↑
-                 brain extension            tool extensions
+                 Agentloop + Model          Tool + Environment
 ```
 
-- **Brain extensions** implement agent-loop policy.
-- **Tool extensions** define capabilities available to the model.
-- **Environment extensions** execute bound tools and own their runtime lifecycle.
+- **Agentloop components** implement agent-loop policy.
+- **Model components** adapt model providers behind the neutral stream contract.
+- **Tool components** define capabilities available to the model.
+- **Environment components** execute bound tools and own their runtime lifecycle.
 
 Brain owns durable session mechanism, not a default loop or environment. The SDK auto-binds an
 unbound tool only when exactly one declared environment is compatible.
@@ -92,7 +94,7 @@ than one environment is compatible. The `app()` environment runs callbacks in yo
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 
 [`brain`](https://github.com/aexhq/brain) owns the neutral session kernel and protocols.
-[`extensions`](https://github.com/aexhq/extensions) contains official loop, tool, and environment
+[`extensions`](https://github.com/aexhq/extensions) contains official Agentloop, Tool, Environment, and Model
 extensions. This repository owns the public SDK, control plane, and hosted Aex composition.
 
 ## Development

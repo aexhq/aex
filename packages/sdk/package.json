@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@aexhq/brain": "0.3.1",
-    "@aexhq/env-app": "0.1.0",
+    "@aexhq/env-app": "0.2.0",
     "@aexhq/environment": "0.1.0"
   },
   "peerDependencies": {
