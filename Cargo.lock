@@ -230,7 +230,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=6adf9624a9a35066cd2f5fc1ba88424eb39ccc47#6adf9624a9a35066cd2f5fc1ba88424eb39ccc47"
+source = "git+https://github.com/aexhq/brain.git?rev=3b991a3a25a7ea2a64c3bb44df9339f0e7b1e10d#3b991a3a25a7ea2a64c3bb44df9339f0e7b1e10d"
 dependencies = [
  "chrono",
  "hex",
