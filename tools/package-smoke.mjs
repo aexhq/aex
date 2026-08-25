@@ -36,6 +36,7 @@ try {
   await mkdir(consumer);
   const packages = [
     pack(path.join(root, "packages/contracts")),
+    pack(path.join(root, "packages/environment")),
     pack(path.join(root, "packages/sdk")),
     pack(path.join(root, "packages/cli")),
   ];
