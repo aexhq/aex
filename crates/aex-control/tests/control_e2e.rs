@@ -1973,8 +1973,36 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         }
     });
     let create_request = json!({
-        "model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"},
-        "tools": {"items": [component_subagents.clone()]}
+        "model": {
+            "provider": "anthropic",
+            "name": "m",
+            "api_key": "sk-x",
+            "component_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "world": "aex:model/model@1.0.0"
+        },
+        "agentloop": {
+            "component_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "world": "aex:agentloop/agentloop@1.0.0"
+        },
+        "component_artifacts": [
+            {
+                "component_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "component_base64": "eg==",
+                "bytes": 1
+            },
+            {
+                "component_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "component_base64": "eA==",
+                "bytes": 1
+            },
+            {
+                "component_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "component_base64": "eQ==",
+                "bytes": 1
+            }
+        ],
+        "tools": {"items": [component_subagents.clone()]},
+        "metadata": {"case": "hosted-seal"}
     });
     let session = json_of(
         http.post(format!("{base}/v1/sessions"))
@@ -1989,7 +2017,30 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let forwarded = stub_brain.last_create_body.lock().unwrap().clone().unwrap();
-    assert_eq!(forwarded["shape"], "1gb");
+    assert!(forwarded.get("shape").is_none());
+    let forwarded_fields = forwarded
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        forwarded_fields,
+        HashSet::from([
+            "agentloop",
+            "component_artifacts",
+            "metadata",
+            "model",
+            "tools",
+        ])
+    );
+    assert_eq!(forwarded["model"], create_request["model"]);
+    assert_eq!(forwarded["agentloop"], create_request["agentloop"]);
+    assert_eq!(
+        forwarded["component_artifacts"],
+        create_request["component_artifacts"]
+    );
+    assert_eq!(forwarded["metadata"], create_request["metadata"]);
     assert_eq!(forwarded["tools"]["items"][0], component_subagents);
     assert_eq!(
         forwarded["tools"]["items"][1]["executor"]["capability"],
