@@ -658,14 +658,10 @@ mod tests {
                 .body(Body::from(body.to_string()))
                 .unwrap()
         };
-        if method == Method::GET && uri.path() == "/v1/sessions" {
-            let state = uri.query().and_then(|query| {
-                query
-                    .split('&')
-                    .find_map(|pair| pair.strip_prefix("state="))
-            });
-            let data = if state == Some("open") {
-                vec![json!({
+        if method == Method::GET && uri.path() == "/v1/session-changes" {
+            let data = vec![json!({
+                "id":"change-failure",
+                "session":{
                     "id":"ses_failure00000000000001",
                     "root_id":"ses_failure00000000000001",
                     "depth":0,
@@ -680,11 +676,19 @@ mod tests {
                     "last_seq":2,
                     "turns":1,
                     "metadata":{}
-                })]
-            } else {
-                Vec::new()
-            };
-            return response(200, json!({"object":"list", "data":data, "has_more":false}));
+                }
+            })];
+            return response(
+                200,
+                json!({
+                    "object":"session.change.list",
+                    "partition":0,
+                    "partitions":1,
+                    "watermark_ms":crate::now_ms(),
+                    "data":data,
+                    "has_more":false
+                }),
+            );
         }
         if method == Method::GET && uri.path() == "/v1/sessions/ses_failure00000000000001" {
             return response(
@@ -727,8 +731,18 @@ mod tests {
                 .body(Body::from(body.to_string()))
                 .unwrap()
         };
-        if method == Method::GET && uri.path() == "/v1/sessions" {
-            return response(200, json!({"object":"list", "data":[], "has_more":false}));
+        if method == Method::GET && uri.path() == "/v1/session-changes" {
+            return response(
+                200,
+                json!({
+                    "object":"session.change.list",
+                    "partition":0,
+                    "partitions":1,
+                    "watermark_ms":crate::now_ms(),
+                    "data":[],
+                    "has_more":false
+                }),
+            );
         }
         if method == Method::GET && uri.path().starts_with("/v1/sessions/") {
             return response(
