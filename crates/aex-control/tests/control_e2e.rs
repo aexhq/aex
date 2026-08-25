@@ -1961,7 +1961,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
             "name": "subagents",
             "description": "Create child sessions.",
             "input_schema": {"type": "object"},
-            "output_schema": {},
+            "output_schema": {"type": "object"},
             "contract_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "executor": {
@@ -2017,6 +2017,13 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let forwarded = stub_brain.last_create_body.lock().unwrap().clone().unwrap();
+    serde_json::from_value::<brain_protocol::session::CreateSessionRequest>(forwarded.clone())
+        .expect("Control's amended create body must deserialize at the Brain boundary");
+    assert_valid(
+        brain_protocol::SESSION_SCHEMA_JSON,
+        "CreateSessionRequest",
+        &forwarded,
+    );
     assert!(forwarded.get("shape").is_none());
     let forwarded_fields = forwarded
         .as_object()
