@@ -261,6 +261,29 @@ async fn stub_handler(
             }
             respond(201, doc)
         }
+        ("GET", ["v1", "session-changes"]) => {
+            let mut data = sessions
+                .values()
+                .map(|session| {
+                    json!({
+                        "id": format!("change:{}:{}", session.doc["id"].as_str().unwrap(), session.seq),
+                        "session": session.doc
+                    })
+                })
+                .collect::<Vec<_>>();
+            data.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
+            respond(
+                200,
+                json!({
+                    "object":"session.change.list",
+                    "partition":0,
+                    "partitions":1,
+                    "watermark_ms":aex_control::now_ms(),
+                    "data":data,
+                    "has_more":false
+                }),
+            )
+        }
         ("GET", ["v1", "sessions"]) => {
             let requested_state = uri.query().and_then(|query| {
                 query

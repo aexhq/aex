@@ -11,13 +11,10 @@ if (process.argv[2] === "brain-packages") {
   process.stdout.write(BRAIN_PACKAGES_REVISION);
   process.exit(0);
 }
-const groups = {
-  brain: ["brain-protocol", "brain", "brain-aws", "brain-standalone"],
-  hands: ["hand-brain-aws"],
-};
+const groups = { brain: ["brain-protocol"] };
 const selected = groups[process.argv[2]];
 if (selected === undefined) {
-  throw new Error("usage: pinned-revision.mjs brain|brain-packages|hands");
+  throw new Error("usage: pinned-revision.mjs brain|brain-packages");
 }
 const revisions = selected.map((name) => {
   const match = cargo.match(

@@ -40,7 +40,7 @@ const revision = /^https:\/\/raw\.githubusercontent\.com\/aexhq\/brain\/([0-9a-f
   .exec(overlay.extends ?? "")?.[1];
 if (revision === undefined) fail("the hosted overlay must extend one immutable Brain revision");
 const cargo = cargoBytes.toString("utf8");
-const dependencyNames = ["brain-protocol", "brain", "brain-aws", "brain-standalone"];
+const dependencyNames = ["brain-protocol"];
 const dependencyRevisions = dependencyNames.map((name) => {
   const match = cargo.match(
     new RegExp(`^${name}\\s*=\\s*\\{[^\\n]*\\brev\\s*=\\s*"([0-9a-f]{40})"`, "mu"),
@@ -49,7 +49,7 @@ const dependencyRevisions = dependencyNames.map((name) => {
   return match[1];
 });
 if (dependencyRevisions.some((dependencyRevision) => dependencyRevision !== revision)) {
-  fail("the hosted overlay and all Rust Brain dependencies must pin the same revision");
+  fail("the hosted overlay and Rust protocol dependency must pin the same revision");
 }
 
 const digest = contractDigest(brainBytes);

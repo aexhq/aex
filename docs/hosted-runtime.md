@@ -1,17 +1,18 @@
 # Hosted runtime
 
-Aex production is a composition, not a second session engine. The hosted binary pins one immutable
-Brain revision, supplies AWS durability and Hands, and registers only these trusted capabilities:
-`aex.output`, `aex.web.search`, and `aex.web.fetch`. Their scope, retry policy, input ceiling, and
-terminal behavior are host configuration; session JSON can select a capability but cannot widen it.
+Aex production is a composition, not a second session engine. Aex Control uses only Brain Server's
+versioned network API. Platform pins the Brain image, supplies AWS durability and the AWS
+Environment driver, and configures only these trusted capabilities: `aex.output`,
+`aex.web.search`, `aex.web.fetch`, and `aex.subagents`. Their scope, retry policy, input ceiling,
+and terminal behavior are host configuration; session JSON can select a capability but cannot
+widen it.
 
-Production is the default composition. It requires DynamoDB, KMS, S3 session storage, and a remote
-Hand and fails startup when any required dependency is absent. All initial development and
-production resources live in isolated planes in `us-east-1`. The Aex-owned binary also provides an
-explicit `local` mode using Brain's durable SQLite/custody/storage adapters, the same fixed official
-capability policy, and unsafe host execution. There is no volatile mode and no production-to-local
-fallback. Local session storage is restart-safe for inline objects up to 1 MiB; hosted large-object
-transfer tickets remain S3-only in the MVP.
+Production Brain requires DynamoDB, KMS, S3 session storage, and a configured Environment driver,
+and fails startup when a required dependency is absent. All initial development and production
+resources live in isolated planes in `us-east-1`. The public Brain image also provides explicit
+`local` mode using durable SQLite/custody/storage adapters and unsafe host execution. There is no
+volatile mode and no production-to-local fallback. Local session storage is restart-safe for
+inline objects up to 1 MiB; hosted large-object transfer tickets remain S3-only in the MVP.
 
 ## Durability and deletion
 
@@ -52,7 +53,7 @@ Aex authenticates with its operator bearer and forwards the scoped token separat
 delivery honestly to the model; effectful application code should deduplicate `operationId`.
 
 The hosted Brain sends commands with the API Gateway Management API at the HTTPS endpoint in
-`AEX_CUSTOMER_HAND_CALLBACK_URL`. The AWS SDK's standard retry policy handles retryable gateway
+`BRAIN_CUSTOMER_ENVIRONMENT_CALLBACK_URL`. The AWS SDK's standard retry policy handles retryable gateway
 responses. A confirmed `410` fences the recorded connection as gone; a gateway rejection is
 unavailable, while a timeout or transport failure is reported as an unknown outcome because the
 frame may have arrived.
@@ -259,13 +260,13 @@ values, grouped by the process that reads them:
 | Process | Required hosted values |
 | --- | --- |
 | `aex-control` | `AEX_BRAIN_URL`, `AEX_BRAIN_TOKEN`, `AEX_CONTROL_LISTEN`, `AEX_CONTROL_INTERNAL_LISTEN` (loopback), `AEX_CONTROL_DB` (the singleton EFS path), `AEX_PAYMENTS=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `AEX_TOPUP_SUCCESS_URL`, `AEX_TOPUP_CANCEL_URL`, `AEX_OPERATOR_TOKEN`, `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `AEX_CUSTOMER_HAND_GATEWAY_TOKEN`, `AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS`, `AEX_MANAGED_SANDBOX_NAT_CIDRS`, and `SERPER_API_KEY` while managed web search is advertised |
-| `aex-brain` | `BRAIN_MODE=production`, `AEX_BRAIN_LISTEN`, `AEX_BRAIN_TOKEN`, `AEX_CONTROL_INTERNAL_URL`, `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `AEX_CUSTOMER_HAND_WEBSOCKET_URL`, `AEX_CUSTOMER_HAND_OBSERVATION_BASE_URL`, `AEX_CUSTOMER_HAND_CALLBACK_URL`, `BRAIN_JOURNAL_TABLE`, `BRAIN_KMS_KEY_ID`, `BRAIN_SESSION_STORAGE_BUCKET`, `BRAIN_SESSION_STORAGE_PREFIX`, `BRAIN_STORAGE_MAX_OBJECT_BYTES`, `BRAIN_STORAGE_MAX_SESSION_BYTES`, `BRAIN_STORAGE_MAX_TENANT_BYTES`, `BRAIN_STORAGE_TRANSFER_TTL_MS`, `BRAIN_JOURNAL_MAX_SESSION_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_SESSIONS`, and `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2` |
-| production Hand | `HAND_IMAGE`, `HAND_IMAGE_VERSION`, `HAND_REGISTRY_TABLE`, `HAND_MAX_MATERIALIZED_MIB`, `HAND_NETWORK_CONNECTOR_NONE`, `HAND_NETWORK_CONNECTOR_ALLOWLIST`, `HAND_NETWORK_CONNECTOR_PUBLIC`, `HAND_CAPABILITY_SIGNING_KEY_ID`, and `HAND_EGRESS_GATEWAY_AUTHORITY` |
+| `brain` | `BRAIN_MODE=production`, `BRAIN_LISTEN`, `BRAIN_API_TOKEN`, `BRAIN_EXTERNAL_TOOL_EXECUTOR_URL`, `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN`, `BRAIN_EXTERNAL_TOOL_POLICIES_JSON`, `BRAIN_CUSTOMER_ENVIRONMENT_WEBSOCKET_URL`, `BRAIN_CUSTOMER_ENVIRONMENT_OBSERVATION_BASE_URL`, `BRAIN_CUSTOMER_ENVIRONMENT_CALLBACK_URL`, `BRAIN_JOURNAL_TABLE`, `BRAIN_KMS_KEY_ID`, `BRAIN_SESSION_STORAGE_BUCKET`, `BRAIN_SESSION_STORAGE_PREFIX`, `BRAIN_STORAGE_MAX_OBJECT_BYTES`, `BRAIN_STORAGE_MAX_SESSION_BYTES`, `BRAIN_STORAGE_MAX_TENANT_BYTES`, `BRAIN_STORAGE_TRANSFER_TTL_MS`, `BRAIN_JOURNAL_MAX_SESSION_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_BYTES`, `BRAIN_JOURNAL_MAX_TENANT_SESSIONS`, and `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2` |
+| AWS Environment driver | `ENVIRONMENT_IMAGE`, `ENVIRONMENT_IMAGE_VERSION`, `ENVIRONMENT_REGISTRY_TABLE`, `ENVIRONMENT_MAX_MATERIALIZED_MIB`, `ENVIRONMENT_NETWORK_CONNECTOR_NONE`, `ENVIRONMENT_NETWORK_CONNECTOR_ALLOWLIST`, `ENVIRONMENT_NETWORK_CONNECTOR_PUBLIC`, `ENVIRONMENT_CAPABILITY_SIGNING_KEY_ID`, and `ENVIRONMENT_EGRESS_GATEWAY_AUTHORITY` |
 
-The customer URLs belong only to `aex-brain`; control does not read them. The WebSocket URL is the
+The customer URLs belong only to Brain; control does not read them. The WebSocket URL is the
 public API Gateway URL, the observation base is the public Aex HTTPS origin (Brain appends the
 non-secret grant path), and the callback URL is the API Gateway Management API HTTPS base.
-`AEX_CONTROL_INTERNAL_URL` and `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` are not obsolete: they connect
+`BRAIN_EXTERNAL_TOOL_EXECUTOR_URL` and `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN` connect
 Brain's fixed `aex.output`, `aex.web.search`, and `aex.web.fetch` capabilities to the private Aex
 executor without placing product handlers inside the neutral engine.
 
@@ -286,8 +287,8 @@ knobs:
 | Process | Pinned bounded values |
 | --- | --- |
 | `aex-control` | `AEX_SWEEP_SECONDS=30`, `AEX_ADMISSION_ACTION_EXPOSURE_MICROUSD=100000`, `AEX_ADMISSION_ACCOUNT_EXPOSURE_MICROUSD=1000000`, `AEX_ADMISSION_LOW_BALANCE_MICROUSD=1000000`, `AEX_ADMISSION_STALE_SECONDS=60`, `AEX_ADMISSION_RESERVATION_SECONDS=60`, `AEX_ADMISSION_MAX_CACHED_ACCOUNTS=10000`, `AEX_DISCOVERY_OVERLAP_SECONDS=120`, `AEX_DISCOVERY_SESSION_LIMIT=100000`, `AEX_DISCOVERY_PARTITIONS=1`, `AEX_STORAGE_MAX_OBJECT_BYTES=536870912`, `AEX_STORAGE_MAX_SESSION_BYTES=10737418240`, `AEX_MAX_CONCURRENT_CREATE_BODIES=4`, `AEX_MAX_CONCURRENT_MESSAGE_BODIES=256`, `AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES=64`, `AEX_LIMIT_CONCURRENT_SESSIONS=10` (open, ending, failed, or deleting roots), `AEX_LIMIT_RETAINED_ROOT_SESSIONS=100` (all roots until physical deletion), and `AEX_LIMIT_SESSION_CREATES_PER_HOUR=30` (roots) |
-| `aex-brain` | `BRAIN_STORAGE_MAX_OBJECT_BYTES=536870912`, `BRAIN_STORAGE_MAX_SESSION_BYTES=10737418240`, `BRAIN_STORAGE_MAX_TENANT_BYTES=10737418240`, `BRAIN_STORAGE_TRANSFER_TTL_MS=900000`, `BRAIN_JOURNAL_MAX_SESSION_BYTES=134217728`, `BRAIN_JOURNAL_MAX_TENANT_BYTES=536870912`, `BRAIN_JOURNAL_MAX_TENANT_SESSIONS=4096`, `BRAIN_MAX_MODEL_ROUNDS=64`, `BRAIN_MAX_TURNS=64`, `BRAIN_PROVIDER_HEADER_TIMEOUT_MS=30000`, `BRAIN_PROVIDER_IDLE_TIMEOUT_MS=60000`, `BRAIN_PROVIDER_TOTAL_TIMEOUT_MS=900000`, `BRAIN_EXTERNAL_TOOL_TIMEOUT_MS=30000`, `BRAIN_MAX_CONCURRENT_CREATES=4`, `BRAIN_MAX_RESIDENT_SESSIONS=128`, `BRAIN_MAX_EVENT_FOLLOWERS=64`, `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2`, `BRAIN_IDLE_DISCARD_SECONDS=900`, `BRAIN_RECOVERY_POLL_MS=1000`, `BRAIN_RECOVERY_SHARDS_PER_POLL=4`, `BRAIN_RECOVERY_PAGE_SIZE=32`, `BRAIN_MAX_CONCURRENT_RECOVERIES=16`, `BRAIN_CUSTOMER_HAND_MAX_GRANTS=4096`, `BRAIN_CUSTOMER_HAND_MAX_CONNECTIONS=1024`, `BRAIN_CUSTOMER_HAND_MAX_PENDING_OPERATIONS=256`, `BRAIN_CUSTOMER_HAND_MAX_PENDING_TERMINAL_BYTES=33554432`, and `BRAIN_CUSTOMER_HAND_MAX_REGISTRATION_BYTES=67108864` |
-| production Hand | `HAND_BUNDLE_CACHE_MAX_MIB=128`, `HAND_BUNDLE_FETCH_MAX_MIB=32`, plus `RUN=1/1`, `RESUME=5/5`, `SUSPEND=2/2`, and `TERMINATE=10/10` for each `HAND_PROVIDER_*_{RATE_PER_SECOND,BURST}` pair |
+| `brain` | `BRAIN_STORAGE_MAX_OBJECT_BYTES=536870912`, `BRAIN_STORAGE_MAX_SESSION_BYTES=10737418240`, `BRAIN_STORAGE_MAX_TENANT_BYTES=10737418240`, `BRAIN_STORAGE_TRANSFER_TTL_MS=900000`, `BRAIN_JOURNAL_MAX_SESSION_BYTES=134217728`, `BRAIN_JOURNAL_MAX_TENANT_BYTES=536870912`, `BRAIN_JOURNAL_MAX_TENANT_SESSIONS=4096`, `BRAIN_MAX_MODEL_ROUNDS=64`, `BRAIN_MAX_TURNS=64`, `BRAIN_PROVIDER_HEADER_TIMEOUT_MS=30000`, `BRAIN_PROVIDER_IDLE_TIMEOUT_MS=60000`, `BRAIN_PROVIDER_TOTAL_TIMEOUT_MS=900000`, `BRAIN_EXTERNAL_TOOL_TIMEOUT_MS=30000`, `BRAIN_MAX_CONCURRENT_CREATES=4`, `BRAIN_MAX_RESIDENT_SESSIONS=128`, `BRAIN_MAX_EVENT_FOLLOWERS=64`, `BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT=2`, `BRAIN_IDLE_DISCARD_SECONDS=900`, `BRAIN_RECOVERY_POLL_MS=1000`, `BRAIN_RECOVERY_SHARDS_PER_POLL=4`, `BRAIN_RECOVERY_PAGE_SIZE=32`, `BRAIN_MAX_CONCURRENT_RECOVERIES=16`, `BRAIN_CUSTOMER_ENVIRONMENT_MAX_GRANTS=4096`, `BRAIN_CUSTOMER_ENVIRONMENT_MAX_CONNECTIONS=1024`, `BRAIN_CUSTOMER_ENVIRONMENT_MAX_PENDING_OPERATIONS=256`, `BRAIN_CUSTOMER_ENVIRONMENT_MAX_PENDING_TERMINAL_BYTES=33554432`, and `BRAIN_CUSTOMER_ENVIRONMENT_MAX_REGISTRATION_BYTES=67108864` |
+| AWS Environment driver | `ENVIRONMENT_BUNDLE_CACHE_MAX_MIB=128`, `ENVIRONMENT_BUNDLE_FETCH_MAX_MIB=32`, plus `RUN=1/1`, `RESUME=5/5`, `SUSPEND=2/2`, and `TERMINATE=10/10` for each `ENVIRONMENT_PROVIDER_*_{RATE_PER_SECOND,BURST}` pair |
 
 The alpha rate card is also sealed in infrastructure:
 `AEX_RATE_VCPU_HOUR_MICROUSD=190000`, `AEX_RATE_GB_HOUR_MICROUSD=25000`,
