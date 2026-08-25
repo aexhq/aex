@@ -34,7 +34,7 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.3.1",
+    "@aexhq/brain": "0.3.2",
     "@aexhq/env-app": "0.2.0"
   },
   "peerDependencies": {
