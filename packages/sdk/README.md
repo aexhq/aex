@@ -27,9 +27,8 @@ const session = await aex.sessions.create({
 console.log(await session.send("Inspect the workspace."));
 ```
 
-There is no default Agentloop, Model, Tool, or Environment. Every Tool is bound to one declared Environment before
-the request is sent. An unbound tool is bound automatically only when exactly one declared
-environment satisfies it; otherwise creation fails with the eligible or missing capabilities.
+There is no default Agentloop, Model, Tool, or Environment. A Tool component that requests the
+Environment capability requires the session's one declared Environment in the MVP.
 
 ## Application Tools
 
@@ -60,9 +59,5 @@ await new Aex({ apiKey: process.env.AEX_API_KEY! }).sessions.create({
 });
 ```
 
-Source callback Tools are routed automatically to the single `app()` Environment, even when the
-session also declares a hosted Environment for precompiled coding Tools.
-
-Environment references are opaque values returned by environment-extension factories. A created
-session preserves their types, so `session.environment(ref)` returns that extension's typed handle.
-Durable objects remain available through `session.storage`, independently of environment lifetime.
+Source callback Tools are routed automatically to the single `app()` Environment. Durable objects
+remain available through `session.storage`, independently of Environment lifetime.

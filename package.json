@@ -1,11 +1,11 @@
 {
   "name": "aex-monorepo",
   "private": true,
-  "workspaces": ["packages/contracts", "packages/environment", "packages/sdk", "packages/cli"],
+  "workspaces": ["packages/contracts", "packages/sdk", "packages/cli"],
   "scripts": {
     "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/environment && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
-    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/environment && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
+    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
+    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
     "package-smoke": "node tools/package-smoke.mjs"
   },
   "devDependencies": {

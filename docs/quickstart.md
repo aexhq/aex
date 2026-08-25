@@ -44,51 +44,33 @@ The SDK generates a stable retry identity for every root or child creation/messa
 application needs to retry across its own restart, pass an explicit `idempotencyKey`; raw hosted
 REST calls must provide the 1-to-128-byte `Idempotency-Key` header for these operations.
 
-Brain seals model capacity instead of guessing from a mutable model-name catalog. The conservative
-default is 32,768 tokens; set `model.contextWindowTokens` when the selected model has a different
-context window so admission and compaction use the intended immutable limit.
-
 Hosted alpha uses one fixed managed-compute shape: `1gb` (0.5 vCPU and 1 GiB). The SDK therefore
 has no shape selector; children and every managed sandbox inherit that seal.
 
 ## Where Tools run
 
-Use one placement suffix for custom functions:
+Hosted Tools are imported component values and run in their declared Environment. Application
+callbacks use `tool()` with one `app()` Environment; their source and captured state remain in your
+process:
 
 ```ts
-const inThisApp = tool(schema, async function inThisApp(input) {
-  return serviceUsingThisProcessEnvironment(input);
-}).client();
+import { tool } from "@aexhq/sdk";
+import { app } from "@aexhq/env-app";
 
-export default tool(schema, async function processFile(input, context) {
-  return processInsideManagedComputer(input, context.workspace);
-}).server(import.meta.url, { env: ["PROCESSOR_TOKEN"] });
+const lookup = tool(schema, async function lookup(input) {
+  return serviceUsingThisProcessEnvironment(input);
+});
+
+await aex.sessions.create({
+  model,
+  agentloop,
+  environments: { application: app({ id: "customer-app" }) },
+  tools: [lookup],
+});
 ```
 
-- `.client()` executes in the application process connected to Aex. Its closures and environment
-  remain there; the callback must enforce the application's own tenant authorization.
-- `.server()` executes through the session's shared, lazily-created default managed computer.
-  The completed Tool value must be the module's default export in the MVP, as in the example.
-- Placement, Tool contracts and network policy are immutable after session creation. A model cannot
-  choose or change them.
-
-In hosted managed compute, each `.server()` binding runs as its own generation-lifetime
-unprivileged user; the ordinary shell uses another user and the workspace is shared through a
-group. Aex injects declared environment secrets into that binding without writing them to the
-workspace, process arguments, result, or logs. This prevents ordinary sibling bindings and shell
-code from reading the environment directly. It does not protect against guest-root compromise or
-a Tool intentionally copying a secret into the shared workspace or its result. Keep the stronger
-boundary in `.client()` code or an external service when that distinction matters. Explicit local
-mode is unsandboxed and does not provide the hosted UID boundary.
-
-The default client registration is derived from the Tool contract. If the same Node application
-intentionally uses different closures with identical names and schemas, assign each a stable unique
-`.client({ registration: "customer-lookup-v2" })`; collisions fail before session creation.
-
-If `network` is omitted, managed compute has no outbound network. `{ outbound: "public" }` enables
-supported public destinations while directly blocking private, metadata and Aex infrastructure.
-Allowlist policies can seal narrower hosts or CIDRs. This policy does not govern `.client()` code.
-Managed allowlist egress uses the platform's HTTP CONNECT proxy; SOCKS is not part of the MVP.
+Placement, Tool contracts and network policy are immutable after session creation. A model cannot
+choose or widen them. If `network` is omitted, managed compute has no outbound network.
 
 ## Temporary files and durable storage
 
@@ -180,15 +162,9 @@ and retains its journal and storage; deletion is destructive. Hosted alpha accou
 roots at once, independent of the smaller concurrent-root limit, so delete finished sessions you no
 longer need.
 
-The Aex SDK always connects to the hosted production composition at `https://api.aex.dev` unless a
-different `baseUrl` is supplied for development. `docker compose up --build` starts the Aex-owned
-composition with `BRAIN_MODE=local`, reusable SQLite/session storage, the same fixed official Tool
-policy, fake payments, and unsandboxed Tool execution inside the Brain container. `.client()` Tools
-still run in the connected Node application; `.server()` Tools use the explicit local host Hand.
-Aex never silently falls back from hosted execution to local execution. Local storage supports
-restart-safe inline objects up to 1 MiB; large presigned transfers are hosted-only in the MVP. Call
-`aex.close()` during graceful application shutdown to close the shared customer-Environment connection;
-the closed client cannot create another session.
+The Aex SDK connects to `https://api.aex.dev` unless a different `baseUrl` is supplied. Call
+`aex.close()` during graceful application shutdown to close the shared customer-Environment
+connection; the closed client cannot create another session.
 
 [Session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
 [Hosted policy overlay](../contracts/hosted/brain-session.overlay.yaml) ·
