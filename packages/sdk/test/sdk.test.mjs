@@ -1219,8 +1219,12 @@ test("storage and durable child resources keep wire details explicit", async () 
       if (url.pathname.endsWith("/storage/read-inline")) {
         return Response.json({ object, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/storage/copy-from-sandbox")) return Response.json(object);
-      if (url.pathname.endsWith("/storage/copy-to-sandbox")) return Response.json(file);
+      if (url.pathname.endsWith("/storage/copy-from-environment/workspace")) {
+        return Response.json(object);
+      }
+      if (url.pathname.endsWith("/storage/copy-to-environment/workspace")) {
+        return Response.json(file);
+      }
       if (url.pathname.endsWith("/children") && init.method === "POST") return Response.json(child, { status: 201 });
       if (url.pathname.endsWith("/children/ses_child") && init.method === "GET") return Response.json(child);
       if (url.pathname.endsWith("/messages")) {
@@ -1239,8 +1243,35 @@ test("storage and durable child resources keep wire details explicit", async () 
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
+  const sandbox = await session.sandbox.status();
+  assert.equal(sandbox.state, "running");
+  assert.equal(sandbox.generation, "gen_01");
+  assert.equal((await session.sandbox.files.list("/workspace", {
+    generation: sandbox.generation,
+  })).data[0].path, file.path);
+  assert.equal(new TextDecoder().decode(await session.sandbox.files.download(file.path, {
+    generation: sandbox.generation,
+  })), "hello");
+  await session.sandbox.files.upload(file.path, "hello", {
+    generation: sandbox.generation,
+    overwrite: true,
+  });
   await session.storage.upload(object.key, "hello", { contentType: "text/plain" });
   assert.equal(new TextDecoder().decode(await session.storage.download(object.key)), "hello");
+  await session.storage.copyFromSandbox({
+    environment: "workspace",
+    key: object.key,
+    path: file.path,
+    sandboxGeneration: sandbox.generation,
+    overwrite: true,
+  });
+  await session.storage.copyToSandbox({
+    environment: "workspace",
+    key: object.key,
+    path: file.path,
+    sandboxGeneration: sandbox.generation,
+    overwrite: true,
+  });
   const childHandle = await session.children.create(
     { prompt: "Research this.", name: "research", forkTurns: "3" },
     { idempotencyKey: "child-create" },
@@ -1269,6 +1300,16 @@ test("storage and durable child resources keep wire details explicit", async () 
   assert.equal(
     requests.find((request) => request.path.endsWith("/follow-up")).idempotencyKey,
     "child-follow-up",
+  );
+  assert.deepEqual(
+    requests.find((request) => request.path.endsWith("/storage/copy-from-environment/workspace"))
+      .body,
+    {
+      key: object.key,
+      path: file.path,
+      environment_generation: "gen_01",
+      overwrite: true,
+    },
   );
 });
 
