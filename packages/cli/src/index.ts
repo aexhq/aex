@@ -8,14 +8,11 @@ import process from "node:process";
 import { Aex, AexError, type SessionSummary } from "@aexhq/sdk";
 import * as z from "zod";
 
-import { buildTools } from "./tools-build.js";
-
 const HELP = `Aex — the session backend for AI apps
 
 Usage:
   aex login
   aex doctor
-  aex tools build
   aex session list
   aex session get <session-id>
   aex session send <session-id> <message>
@@ -40,13 +37,6 @@ async function main(argv: string[]): Promise<void> {
     await login();
     return;
   }
-  if (command === "tools" && rest[0] === "build") {
-    if (rest.length !== 1) usage("tools build takes no positional arguments");
-    const built = await buildTools();
-    for (const artifact of built) process.stdout.write(`${artifact.name} -> ${artifact.digest} (${artifact.bytes} bytes)\n`);
-    return;
-  }
-
   const aex = await client();
   if (command === "doctor") {
     await aex.sessions.list({ limit: 1 });

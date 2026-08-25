@@ -73,23 +73,22 @@ Your app → Aex SDK → Brain session kernel → bound environment extensions
 - **Tool components** define capabilities available to the model.
 - **Environment components** execute bound tools and own their runtime lifecycle.
 
-Brain owns durable session mechanism, not a default loop or environment. The SDK auto-binds an
-unbound tool only when exactly one declared environment is compatible.
+Brain owns durable session mechanism, not a default loop or environment. A Tool component that
+requests the Environment capability is bound to the session's one declared Environment in the MVP.
 
 Session journals live in the database. Files become durable only when copied to storage.
 
 ## Tool placement
 
-Tools and bindings are fixed when a session is created. Use `tool.bind(environmentRef)` when more
-than one environment is compatible. The `app()` environment runs callbacks in your application;
-`aex tools build` prepares a computer tool with its own runtime and immutable dependencies.
+Tools and bindings are fixed when a session is created. Import hosted Tool components from an
+extension package. The `app()` Environment runs `tool()` callbacks in your application without
+uploading their source or captured state.
 
 ## Packages
 
 | Package | Purpose |
 | --- | --- |
 | [`@aexhq/sdk`](packages/sdk) | Sessions, tools, files, storage, and structured output |
-| [`@aexhq/environment`](packages/environment) | Environment extension authoring contracts |
 | [`@aexhq/contracts`](packages/contracts) | Generated control-plane types |
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 

@@ -10,52 +10,31 @@ import {
   tool,
 } from "../dist/index.js";
 import { parseEventStream, Transport } from "../dist/transport.js";
-import { compileTools, withPreparedArtifact } from "../dist/tools.js";
 import { MAX_PUBLIC_EVENT_BYTES, component } from "@aexhq/brain";
 import { app as appComponent } from "@aexhq/env-app";
-import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
 
-const loopSource = "export async function activate() {}";
-const testLoop = Object.freeze({
-  source: loopSource,
-  sha256: createHash("sha256").update(loopSource).digest("hex"),
-  toolchain: "componentize-js@0.19.3+wasi-sdk-25.0",
-});
+const componentBytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+const testModel = component("model", componentBytes, {}, { metadata: { name: "fixture" } });
+const testAgentloop = component("agentloop", componentBytes, {});
 
-function create(aex, options, request) {
-  return aex.sessions.create({ loop: testLoop, ...options }, request);
+function testTool(name, grants = []) {
+  return component("tool", componentBytes, {
+    definition: {
+      name,
+      input_schema: { type: "object" },
+      output_schema: {},
+      contract_digest: createHash("sha256").update(name).digest("hex"),
+    },
+  }, { grants });
 }
 
-const application = defineEnvironment({
-  identity: "test/app",
-  protocol: "environment/v1",
-  profile: callbacks(),
-  serialize: ({ id }) => ({ id }),
-  handle: () => Object.freeze({ kind: "test-app" }),
-});
-
-const computerEnvironment = defineEnvironment({
-  identity: "test/computer",
-  protocol: "environment/v1",
-  profile: computer({ platform: linux.amd64, network: "allowlist", recovery: "retained" }),
-  serialize: () => ({}),
-  handle: (context) => Object.freeze({
-    status: () => context.request("GET", `/v1/sessions/${context.sessionId}/environments/${context.environment}`),
-  }),
-});
-
-function prepared(name) {
-  return withPreparedArtifact(
-    tool(async function execute() {}).named(name),
-    {
-      digest: createHash("sha256").update(name).digest("hex"),
-      target: "linux-amd64",
-      contentBase64: Buffer.from(`export default ${JSON.stringify(name)}`).toString("base64"),
-      bytes: Buffer.byteLength(`export default ${JSON.stringify(name)}`),
-      execute: "/artifact/execute",
-    },
-  );
+function create(aex, options, request) {
+  return aex.sessions.create({
+    ...options,
+    model: { component: testModel, ...options.model },
+    agentloop: testAgentloop,
+  }, request);
 }
 
 const snapshot = {
@@ -101,48 +80,17 @@ test("tool infers a named function and has no placement finalizer", () => {
   assert.equal("server" in lookup, false);
 });
 
-test("environment binding is explicit on the wire and infers only one compatible ref", async () => {
-  const first = computerEnvironment();
-  const second = computerEnvironment();
-  const read = prepared("read").needs({ workspace: true, recovery: "retained" });
-  const automatic = await compileTools([read], { workspace: first });
-  const explicit = await compileTools([read.bind(first)], { workspace: first });
-  assert.deepEqual(automatic.items, explicit.items);
-  assert.equal(automatic.items[0].executor.environment, "workspace");
-
-  await assert.rejects(compileTools([read], undefined), /at least one declared environment/);
-  await assert.rejects(
-    compileTools([read], { first, second }),
-    /matches more than one environment.*Bind it explicitly/s,
-  );
-  await assert.rejects(
-    compileTools([read.bind(first)], { second }),
-    /bound to an environment absent/,
-  );
-  const app = application({ id: "app" });
-  await assert.rejects(
-    compileTools([read.bind(app)], { app, workspace: first }),
-    /missing workspace|cannot launch target/,
-  );
-  await assert.rejects(
-    compileTools([read], { workspace: first, duplicate: first }),
-    /same EnvironmentRef was declared/,
-  );
-  await assert.rejects(
-    compileTools([read], { "not valid": first }),
-    /Invalid environment name/,
-  );
-});
-
-test("session creation fails before transport without a loop", async () => {
+test("session creation fails before transport without an Agentloop component", async () => {
   let called = false;
   const aex = new Aex({
     apiKey: "aex_sk_test",
     fetch: async () => { called = true; return Response.json(snapshot); },
   });
   await assert.rejects(
-    aex.sessions.create({ model: { provider: "anthropic", name: "m", apiKey: "key" } }),
-    /requires an imported loop/,
+    aex.sessions.create({
+      model: { component: testModel, provider: "anthropic", name: "m", apiKey: "key" },
+    }),
+    /requires an imported Agentloop component/,
   );
   assert.equal(called, false);
 });
@@ -163,26 +111,19 @@ test("create uses the production origin and maps the small camelCase surface", a
       name: "claude-sonnet-5",
       apiKey: "sk-ant-test",
       maxOutputTokens: 2048,
-      contextWindowTokens: 200_000,
     },
   });
 
   assert.equal(request.input, "https://api.aex.dev/v1/sessions");
-  assert.deepEqual(JSON.parse(request.init.body), {
-    model: {
-      provider: "anthropic",
-      name: "claude-sonnet-5",
-      api_key: "sk-ant-test",
-      max_output_tokens: 2048,
-      context_window_tokens: 200_000,
-    },
-    tools: { items: [] },
-    agentloop: {
-      source_bundle_sha256: testLoop.sha256,
-      toolchain: testLoop.toolchain,
-      bundle_base64: Buffer.from(testLoop.source).toString("base64"),
-    },
-  });
+  const body = JSON.parse(request.init.body);
+  assert.equal(body.model.provider, "anthropic");
+  assert.equal(body.model.name, "claude-sonnet-5");
+  assert.equal(body.model.api_key, "sk-ant-test");
+  assert.equal(body.model.max_output_tokens, 2048);
+  assert.equal(body.model.world, "aex:model/model@1.0.0");
+  assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
+  assert.deepEqual(body.tools, { items: [] });
+  assert.equal(body.component_artifacts.length, 1);
   assert.equal(request.init.headers.Authorization, "Bearer aex_sk_test");
   assert.ok(request.init.headers["Idempotency-Key"]);
   assert.equal(session.id, "ses_01");
@@ -279,10 +220,10 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
     },
   });
 
-  const workspace = computerEnvironment();
-  const task = prepared("task");
-  const read = prepared("read");
-  const write = prepared("write");
+  const workspace = component("environment", componentBytes, {});
+  const task = testTool("task", ["environment"]);
+  const read = testTool("read", ["environment"]);
+  const write = testTool("write", ["environment"]);
   await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [task, read, write],
@@ -295,7 +236,7 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
   );
   assert.deepEqual(
     bodies[0].tools.items.map((item) => item.executor.kind),
-    ["environment", "environment", "environment"],
+    ["component", "component", "component"],
   );
   await assert.rejects(
     create(aex, {
@@ -324,34 +265,6 @@ test("an explicit empty tool list is equivalent to omission", async () => {
   });
 
   assert.deepEqual(body.tools, { items: [] });
-});
-
-test("create seals an imported agentloop as digest, toolchain and bytes", async () => {
-  let request;
-  const aex = new Aex({
-    apiKey: "aex_sk_test",
-    fetch: async (input, init) => {
-      request = { init };
-      return Response.json(snapshot, { status: 201 });
-    },
-  });
-
-  const source = 'export const activate = () => 1;' + String.fromCharCode(10);
-  await create(aex, {
-    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-    loop: {
-      source,
-      sha256: "a".repeat(64),
-      toolchain: "starlingmonkey-componentize-js-0.22.0",
-    },
-  });
-
-  const body = JSON.parse(request.init.body);
-  assert.deepEqual(body.agentloop, {
-    source_bundle_sha256: "a".repeat(64),
-    toolchain: "starlingmonkey-componentize-js-0.22.0",
-    bundle_base64: Buffer.from(source, "utf8").toString("base64"),
-  });
 });
 
 test("component create composes ordinary Model, Agentloop, Tool, and Environment values", async () => {
@@ -966,7 +879,7 @@ test("one customer Environment socket registers client Tools before creating mul
       return { id };
     },
   );
-  const app = application({ id: "customer-backend" });
+  const app = appComponent({ id: "customer-backend" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
     webSocketFactory(request) {
@@ -1017,9 +930,10 @@ test("one customer Environment socket registers client Tools before creating mul
   assert.equal(sockets[0].sent[2].type, "register_tools");
   assert.deepEqual(sockets[0].sent[2].registrations.map((value) => value.name), ["update"]);
   const creates = calls.filter((call) => call.url.endsWith("/v1/sessions"));
-  assert.deepEqual(creates[0].body.client, { id: "customer-backend" });
-  assert.equal(creates[0].body.tools.items[0].executor.kind, "environment");
+  assert.equal(creates[0].body.client, undefined);
+  assert.equal(creates[0].body.tools.items[0].executor.kind, "component");
   assert.equal(creates[0].body.tools.items[0].executor.environment, "app");
+  assert.equal(creates[0].body.environments.app.config.driver, "customer");
   aex.close();
   assert.equal(sockets[0].closed, true);
 });
@@ -1075,7 +989,7 @@ test("aborting one create stops waiting without poisoning the process customer E
       return { id };
     },
   );
-  const app = application({ id: "abort-safe-runner" });
+  const app = appComponent({ id: "abort-safe-runner" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
     webSocketFactory(request) {
@@ -1133,7 +1047,7 @@ test("closing Aex is terminal even while a customer Environment is still connect
   const lookup = tool(z.object({ id: z.string() }), async function lookup({ id }) {
     return { id };
   });
-  const app = application({ id: "closing-runner" });
+  const app = appComponent({ id: "closing-runner" });
   const aex = new Aex({
     apiKey: "aex_sk_test",
     webSocketFactory(request) {
@@ -1182,7 +1096,7 @@ test("one client registration can never silently alias a different closure", asy
     .named("lookup");
   const second = tool(input, async ({ id }) => ({ source: "second", id }))
     .named("lookup");
-  const app = application({ id: "closure-collision" });
+  const app = appComponent({ id: "closure-collision" });
 
   const aex = new Aex({
     apiKey: "aex_sk_test",

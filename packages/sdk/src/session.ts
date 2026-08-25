@@ -14,7 +14,6 @@ import {
   type ComponentExtension,
   type SessionTool as ComponentSessionTool,
 } from "@aexhq/brain";
-import { inspectEnvironment, type EnvironmentRef, type HandleOf } from "@aexhq/environment";
 import type {
   ClientRegistration,
   NetworkPolicy,
@@ -35,13 +34,8 @@ import type { OutputValidationIssue } from "./errors.js";
 import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
-import { compileCallbacks, compileTools } from "./tools.js";
-import type {
-  EnvironmentMap,
-  EnvironmentValue,
-  ToolSelection,
-} from "./tools.js";
-import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+import { compileCallbacks, type Tool } from "./tools.js";
+import { SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
 
 type SessionData = BrainSessionData & { retain_until: string };
 
@@ -54,41 +48,23 @@ interface MessageAccepted extends BrainMessageAccepted {
 }
 
 export interface ModelOptions {
-  /** Imported Model component. Omission uses the temporary pre-cut donor path. */
-  component?: ComponentExtension<"model">;
+  /** Imported Model component. */
+  component: ComponentExtension<"model">;
   provider: string;
   name: string;
   apiKey: string;
   baseUrl?: string;
   maxOutputTokens?: number;
-  /** Immutable context capacity used for admission and compaction; Brain never guesses by name. */
-  contextWindowTokens?: number;
 }
 
-/**
- * A built agentloop implementation, as exported by a loop package or produced by
- * `buildLoopBundle` from `@aexhq/agentloop`. Assignment is by import, never by name:
- * the sealed identity is the content digest plus the pinned toolchain.
- */
-export interface Loop {
-  /** The complete deterministic ESM source bundle — the exact bytes sealed and uploaded. */
-  source: string;
-  /** SHA-256 hex of the UTF-8 source bytes. */
-  sha256: string;
-  /** The pinned loop-toolchain identity the bundle was built for. */
-  toolchain: string;
-}
-
-export interface CreateSessionOptions<Environments extends EnvironmentMap = EnvironmentMap> {
+export interface CreateSessionOptions {
   model: ModelOptions;
   /** The imported agent loop that drives this session and every child unless spawn overrides it. */
-  loop?: Loop;
-  /** Imported Agentloop component. This is the clean component path. */
-  agentloop?: ComponentExtension<"agentloop">;
+  agentloop: ComponentExtension<"agentloop">;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
-  environments?: Environments | Readonly<Record<string, ComponentExtension<"environment">>>;
-  tools?: readonly (ToolSelection<EnvironmentValue<Environments>> | ComponentSessionTool)[];
-  /** Write-only values for environment names declared by managed Tools. */
+  environments?: Readonly<Record<string, ComponentExtension<"environment">>>;
+  tools?: readonly (Tool | ComponentSessionTool)[];
+  /** Write-only values for components that explicitly consume session secrets. */
   secrets?: Record<string, string>;
   /** Maximum direct outbound network authority sealed for managed sandboxes. Omission is deny-all. */
   network?: NetworkPolicy;
@@ -172,105 +148,19 @@ export class Sessions {
     this.#customerEnvironments.clear();
   }
 
-  async create<Environments extends EnvironmentMap>(
-    options: CreateSessionOptions<Environments>,
-    request: RequestOptions = {},
-  ): Promise<Session<Environments>> {
+  async create(options: CreateSessionOptions, request: RequestOptions = {}): Promise<Session> {
     if (this.#closed) throw new SessionError("Aex client is closed");
-    if (options.agentloop !== undefined || options.model.component !== undefined) {
-      return await this.#createComponentSession(options, request);
+    if (options.model?.component === undefined) {
+      throw new TypeError("sessions.create requires an imported Model component");
     }
-    if (options.loop === undefined) throw new TypeError("sessions.create requires an imported loop");
-    const compiledTools = await compileTools(
-      options.tools as readonly ToolSelection[] | undefined,
-      options.environments as Environments | undefined,
-      options.secrets,
-    );
-    await this.#ensureCustomerEnvironment(
-      compiledTools.callbackClientId,
-      compiledTools.clientRegistrations,
-      request.signal,
-    );
-    const body = {
-      model: {
-        provider: options.model.provider,
-        name: options.model.name,
-        api_key: options.model.apiKey,
-        ...(options.model.baseUrl === undefined ? {} : { base_url: options.model.baseUrl }),
-        ...(options.model.maxOutputTokens === undefined
-          ? {}
-          : { max_output_tokens: options.model.maxOutputTokens }),
-        ...(options.model.contextWindowTokens === undefined
-          ? {}
-          : { context_window_tokens: options.model.contextWindowTokens }),
-      },
-      tools: {
-        items: compiledTools.items,
-      },
-      ...(Object.keys(compiledTools.environments).length === 0
-        ? {}
-        : { environments: compiledTools.environments }),
-      ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
-      agentloop: {
-        source_bundle_sha256: options.loop.sha256,
-        toolchain: options.loop.toolchain,
-        bundle_base64: encodeBase64(new TextEncoder().encode(options.loop.source)),
-      },
-      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-      ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
-      ...(options.retainUntil === undefined
-        ? {}
-        : { retain_until: normalizeTimestamp(options.retainUntil, "retainUntil") }),
-      ...(options.network === undefined
-        ? {}
-        : { network: options.network as NonNullable<CreateSessionRequest["network"]> }),
-      ...(options.providerRecoveryRetries === undefined
-        ? {}
-        : { provider_recovery_retries: options.providerRecoveryRetries }),
-      ...(compiledTools.callbackClientId === undefined
-        ? {}
-        : {
-            client: {
-              id: compiledTools.callbackClientId,
-            },
-          }),
-      ...(options.children === undefined
-        ? {}
-        : {
-            children: {
-              ...(options.children.maxDepth === undefined
-                ? {}
-                : { max_depth: options.children.maxDepth }),
-              ...(options.children.maxDirectChildren === undefined
-                ? {}
-                : { max_direct_children: options.children.maxDirectChildren }),
-              ...(options.children.maxDescendants === undefined
-                ? {}
-                : { max_descendants: options.children.maxDescendants }),
-            },
-          }),
-    };
-    const data = await this.#transport.json<SessionData>("POST", "/v1/sessions", {
-      body,
-      headers: { "Idempotency-Key": request.idempotencyKey ?? randomIdempotencyKey() },
-      signal: request.signal,
-      retry: true,
-    });
-    return new Session(this.#transport, data, compiledTools.environmentNames);
-  }
-
-  async #createComponentSession<Environments extends EnvironmentMap>(
-    options: CreateSessionOptions<Environments>,
-    request: RequestOptions,
-  ): Promise<Session<Environments>> {
+    if (options.agentloop === undefined) {
+      throw new TypeError("sessions.create requires an imported Agentloop component");
+    }
     const model = options.model.component;
     const agentloop = options.agentloop;
-    if (model === undefined || agentloop === undefined) {
-      throw new TypeError("component sessions require model.component and agentloop");
-    }
     const tools = [...(options.tools ?? [])];
     const componentTools = tools.filter(isComponentTool);
-    const callbackTools = tools.filter((tool): tool is import("./tools.js").Tool => !isComponentTool(tool));
+    const callbackTools = tools.filter((tool): tool is Tool => !isComponentTool(tool));
     const environments = Object.entries(options.environments ?? {});
     if (environments.some(([, environment]) => !isEnvironmentComponent(environment))) {
       throw new TypeError("component sessions accept only precompiled Environment component values");
@@ -288,6 +178,14 @@ export class Sessions {
     }
     const callbacks = await compileCallbacks(callbackTools);
     const allComponentTools = [...componentTools, ...callbacks.components];
+    const toolDefinitions = allComponentTools.map(componentToolDefinition);
+    const names = new Set<string>();
+    for (const definition of toolDefinitions) {
+      if (names.has(definition.name)) {
+        throw new TypeError(`Tool ${JSON.stringify(definition.name)} was selected twice`);
+      }
+      names.add(definition.name);
+    }
     const callbackEnvironment = applicationEnvironments[0];
     if (callbackEnvironment !== undefined) {
       await this.#ensureCustomerEnvironment(
@@ -312,7 +210,8 @@ export class Sessions {
     const toolItems = allComponentTools.map((tool, index) => {
       const binding = toolBindings[index];
       if (binding === undefined) throw new TypeError("Tool component binding is missing");
-      const definition = componentToolDefinition(tool);
+      const definition = toolDefinitions[index];
+      if (definition === undefined) throw new TypeError("Tool component definition is missing");
       const needsEnvironment = binding.grants.includes("environment");
       const isCallback = index >= componentTools.length;
       if (needsEnvironment && !isCallback && environmentComponents.length !== 1) {
@@ -560,39 +459,17 @@ function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   });
 }
 
-export class Session<Environments extends EnvironmentMap = EnvironmentMap> implements SessionSummary {
+export class Session implements SessionSummary {
   readonly #transport: Transport;
   #data: SessionData;
   readonly storage: SessionStorage;
   readonly children: SessionChildren;
-  readonly #environmentNames: ReadonlyMap<EnvironmentRef, string>;
-  readonly #environmentHandles = new Map<EnvironmentRef, unknown>();
 
-  constructor(
-    transport: Transport,
-    data: SessionData,
-    environmentNames: ReadonlyMap<EnvironmentRef, string> = new Map(),
-  ) {
+  constructor(transport: Transport, data: SessionData) {
     this.#transport = transport;
     this.#data = data;
-    this.#environmentNames = environmentNames;
     this.storage = new SessionStorage(transport, data.id);
     this.children = new SessionChildren(transport, data.id);
-  }
-
-  environment<Environment extends EnvironmentValue<Environments>>(environment: Environment): HandleOf<Environment> {
-    const name = this.#environmentNames.get(environment);
-    if (name === undefined) throw new TypeError("EnvironmentRef does not belong to this Session");
-    const existing = this.#environmentHandles.get(environment);
-    if (existing !== undefined) return existing as HandleOf<Environment>;
-    const handle = inspectEnvironment(environment).createHandle({
-      sessionId: this.id,
-      environment: name,
-      request: async <T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> =>
-        await this.#transport.json<T>(method, path, body === undefined ? {} : { body }),
-    });
-    this.#environmentHandles.set(environment, handle);
-    return handle as HandleOf<Environment>;
   }
 
   get id(): string {

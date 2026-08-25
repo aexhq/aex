@@ -19,7 +19,6 @@ export {
 export type {
   CreateSessionOptions,
   ListSessionsOptions,
-  Loop,
   ModelSummary,
   ModelOptions,
   OutputOptions,
@@ -47,20 +46,12 @@ export type {
 export type { EventOptions } from "./transport.js";
 export { tool } from "./tools.js";
 export type {
-  BoundTool,
-  EnvironmentMap,
-  EnvironmentValue,
-  PreparedArtifact,
   Tool,
   ToolContract,
   ToolContext,
   ToolHandler,
-  ToolRequirements,
-  ToolSelection,
-  ToolSetupHandler,
 } from "./tools.js";
 export type { NetworkPolicy, WebSocketFactory } from "@aexhq/brain";
-export type { EnvironmentRef, HandleOf } from "@aexhq/environment";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
 
