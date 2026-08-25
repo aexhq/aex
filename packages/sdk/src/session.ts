@@ -2,13 +2,18 @@ import type {
   ApiError,
   Event,
   MessageAccepted as BrainMessageAccepted,
-  Provider,
+  ToolDefinition,
   Session as SessionData,
   SessionList as SessionListData,
   SessionState,
   CreateSessionRequest,
 } from "@aexhq/brain/session";
-import { CustomerEnvironment } from "@aexhq/brain";
+import {
+  CustomerEnvironment,
+  prepareComponents,
+  type ComponentExtension,
+  type SessionTool as ComponentSessionTool,
+} from "@aexhq/brain";
 import { inspectEnvironment, type EnvironmentRef, type HandleOf } from "@aexhq/environment";
 import type {
   ClientRegistration,
@@ -47,7 +52,9 @@ interface MessageAccepted extends BrainMessageAccepted {
 }
 
 export interface ModelOptions {
-  provider: Provider;
+  /** Imported Model component. Omission uses the temporary pre-cut donor path. */
+  component?: ComponentExtension<"model">;
+  provider: string;
   name: string;
   apiKey: string;
   baseUrl?: string;
@@ -73,10 +80,12 @@ export interface Loop {
 export interface CreateSessionOptions<Environments extends EnvironmentMap = EnvironmentMap> {
   model: ModelOptions;
   /** The imported agent loop that drives this session and every child unless spawn overrides it. */
-  loop: Loop;
+  loop?: Loop;
+  /** Imported Agentloop component. This is the clean component path. */
+  agentloop?: ComponentExtension<"agentloop">;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
-  environments?: Environments;
-  tools?: readonly ToolSelection<EnvironmentValue<Environments>>[];
+  environments?: Environments | Readonly<Record<string, ComponentExtension<"environment">>>;
+  tools?: readonly (ToolSelection<EnvironmentValue<Environments>> | ComponentSessionTool)[];
   /** Write-only values for environment names declared by managed Tools. */
   secrets?: Record<string, string>;
   /** Maximum direct outbound network authority sealed for managed sandboxes. Omission is deny-all. */
@@ -118,7 +127,7 @@ export interface SessionList {
 }
 
 export interface ModelSummary {
-  provider: Provider;
+  provider: string;
   name: string;
   baseUrl?: string;
   contextWindowTokens: number;
@@ -163,8 +172,15 @@ export class Sessions {
     request: RequestOptions = {},
   ): Promise<Session<Environments>> {
     if (this.#closed) throw new SessionError("Aex client is closed");
+    if (options.agentloop !== undefined || options.model.component !== undefined) {
+      return await this.#createComponentSession(options, request);
+    }
     if (options.loop === undefined) throw new TypeError("sessions.create requires an imported loop");
-    const compiledTools = await compileTools(options.tools, options.environments, options.secrets);
+    const compiledTools = await compileTools(
+      options.tools as readonly ToolSelection[] | undefined,
+      options.environments as Environments | undefined,
+      options.secrets,
+    );
     await this.#ensureCustomerEnvironment(
       compiledTools.callbackClientId,
       compiledTools.clientRegistrations,
@@ -233,6 +249,131 @@ export class Sessions {
       retry: true,
     });
     return new Session(this.#transport, data, compiledTools.environmentNames);
+  }
+
+  async #createComponentSession<Environments extends EnvironmentMap>(
+    options: CreateSessionOptions<Environments>,
+    request: RequestOptions,
+  ): Promise<Session<Environments>> {
+    const model = options.model.component;
+    const agentloop = options.agentloop;
+    if (model === undefined || agentloop === undefined) {
+      throw new TypeError("component sessions require model.component and agentloop");
+    }
+    const tools = [...(options.tools ?? [])];
+    if (tools.some((tool) => !isComponentTool(tool))) {
+      throw new TypeError("component sessions accept only precompiled Tool component values");
+    }
+    const environments = Object.entries(options.environments ?? {});
+    if (environments.some(([, environment]) => !isEnvironmentComponent(environment))) {
+      throw new TypeError("component sessions accept only precompiled Environment component values");
+    }
+    const componentTools = tools.map((tool) => {
+      if (!isComponentTool(tool)) throw new TypeError("invalid Tool component");
+      return tool;
+    });
+    const environmentComponents = environments.map(([name, environment]) => {
+      if (!isEnvironmentComponent(environment)) {
+        throw new TypeError(`Environment ${JSON.stringify(name)} is not a component`);
+      }
+      return [name, environment] as const;
+    });
+    const prepared = await prepareComponents([
+      model,
+      agentloop,
+      ...componentTools,
+      ...environmentComponents.map(([, environment]) => environment),
+    ]);
+    const modelBinding = prepared.bindings[0];
+    const agentloopBinding = prepared.bindings[1];
+    if (modelBinding === undefined || agentloopBinding === undefined) {
+      throw new TypeError("component session bindings are incomplete");
+    }
+    const toolBindings = prepared.bindings.slice(2, 2 + componentTools.length);
+    const environmentBindings = prepared.bindings.slice(2 + componentTools.length);
+    const toolItems = componentTools.map((tool, index) => {
+      const binding = toolBindings[index];
+      if (binding === undefined) throw new TypeError("Tool component binding is missing");
+      const definition = componentToolDefinition(tool);
+      const needsEnvironment = binding.grants.includes("environment");
+      if (needsEnvironment && environmentComponents.length !== 1) {
+        throw new TypeError(
+          "a Tool with the environment grant requires exactly one declared Environment",
+        );
+      }
+      return {
+        definition,
+        executor: {
+          kind: "component",
+          component_digest: binding.component_digest,
+          world: binding.world,
+          config: binding.config,
+          grants: binding.grants,
+          ...(needsEnvironment ? { environment: environmentComponents[0]![0] } : {}),
+        },
+      };
+    });
+    const environmentConfig = Object.fromEntries(environmentComponents.map(([name], index) => {
+      const binding = environmentBindings[index];
+      if (binding === undefined) {
+        throw new TypeError(`Environment component binding ${JSON.stringify(name)} is missing`);
+      }
+      return [name, {
+        component_digest: binding.component_digest,
+        world: binding.world,
+        config: binding.config,
+      }];
+    }));
+    const body = {
+      model: {
+        component_digest: modelBinding.component_digest,
+        world: modelBinding.world,
+        config: modelBinding.config,
+        provider: options.model.provider,
+        name: options.model.name,
+        api_key: options.model.apiKey,
+        ...(options.model.baseUrl === undefined ? {} : { base_url: options.model.baseUrl }),
+        ...(options.model.maxOutputTokens === undefined
+          ? {}
+          : { max_output_tokens: options.model.maxOutputTokens }),
+      },
+      agentloop: {
+        component_digest: agentloopBinding.component_digest,
+        world: agentloopBinding.world,
+        config: agentloopBinding.config,
+      },
+      component_artifacts: prepared.artifacts,
+      tools: { items: toolItems },
+      ...(environmentComponents.length === 0 ? {} : { environments: environmentConfig }),
+      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
+      ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.network === undefined ? {} : { network: options.network }),
+      ...(options.providerRecoveryRetries === undefined
+        ? {}
+        : { provider_recovery_retries: options.providerRecoveryRetries }),
+      ...(options.children === undefined
+        ? {}
+        : {
+            children: {
+              ...(options.children.maxDepth === undefined
+                ? {}
+                : { max_depth: options.children.maxDepth }),
+              ...(options.children.maxDirectChildren === undefined
+                ? {}
+                : { max_direct_children: options.children.maxDirectChildren }),
+              ...(options.children.maxDescendants === undefined
+                ? {}
+                : { max_descendants: options.children.maxDescendants }),
+            },
+          }),
+    } as unknown as CreateSessionRequest;
+    const data = await this.#transport.json<SessionData>("POST", "/v1/sessions", {
+      body,
+      headers: { "Idempotency-Key": request.idempotencyKey ?? randomIdempotencyKey() },
+      signal: request.signal,
+      retry: true,
+    });
+    return new Session(this.#transport, data);
   }
 
   async get(id: string, options: Pick<RequestOptions, "signal"> = {}): Promise<Session> {
@@ -324,6 +465,40 @@ export class Sessions {
     if (this.#closed) throw new SessionError("Aex client is closed");
     await waitWithSignal(hand.register(registrations), signal);
   }
+}
+
+type ComponentToolConfig = Readonly<Record<string, unknown>> & {
+  readonly definition: ToolDefinition;
+};
+
+function isComponentTool(
+  value: unknown,
+): value is ComponentExtension<"tool", ComponentToolConfig> {
+  return value !== null
+    && typeof value === "object"
+    && (value as { kind?: unknown }).kind === "brain.component"
+    && (value as { extension?: unknown }).extension === "tool";
+}
+
+function isEnvironmentComponent(value: unknown): value is ComponentExtension<"environment"> {
+  return value !== null
+    && typeof value === "object"
+    && (value as { kind?: unknown }).kind === "brain.component"
+    && (value as { extension?: unknown }).extension === "environment";
+}
+
+function componentToolDefinition(
+  value: ComponentExtension<"tool", ComponentToolConfig>,
+): ToolDefinition {
+  const config = value.config;
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    throw new TypeError("Tool component config must be an object containing definition");
+  }
+  const definition = config.definition;
+  if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new TypeError("Tool component config.definition is required");
+  }
+  return definition;
 }
 
 function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

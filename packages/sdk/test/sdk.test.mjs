@@ -11,7 +11,7 @@ import {
 } from "../dist/index.js";
 import { parseEventStream, Transport } from "../dist/transport.js";
 import { compileTools, withPreparedArtifact } from "../dist/tools.js";
-import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/brain";
+import { MAX_PUBLIC_EVENT_BYTES, component } from "@aexhq/brain";
 import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
 
@@ -350,6 +350,44 @@ test("create seals an imported agentloop as digest, toolchain and bytes", async 
     toolchain: "starlingmonkey-componentize-js-0.22.0",
     bundle_base64: Buffer.from(source, "utf8").toString("base64"),
   });
+});
+
+test("component create composes ordinary Model, Agentloop, Tool, and Environment values", async () => {
+  let body;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (_input, init) => {
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+  const model = component("model", bytes, { dialect: "fixture" }, { metadata: { name: "fixture" } });
+  const agentloop = component("agentloop", bytes, { policy: "sequential" });
+  const environment = component("environment", bytes, { driver: "fixture" });
+  const echo = component("tool", bytes, {
+    definition: {
+      name: "echo",
+      input_schema: { type: "object" },
+      output_schema: { type: "object" },
+      contract_digest: "a".repeat(64),
+    },
+    descriptor: { action: "echo" },
+  }, { grants: ["environment"] });
+
+  await aex.sessions.create({
+    model: { component: model, provider: "fixture", name: "fixture", apiKey: "key" },
+    agentloop,
+    environments: { workspace: environment },
+    tools: [echo],
+  });
+
+  assert.equal(body.component_artifacts.length, 1, "identical component bytes upload once");
+  assert.equal(body.model.world, "aex:model/model@1.0.0");
+  assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
+  assert.equal(body.tools.items[0].executor.kind, "component");
+  assert.equal(body.tools.items[0].executor.environment, "workspace");
+  assert.equal(body.environments.workspace.world, "aex:environment/environment@1.0.0");
 });
 
 test("create seals managed network and bounded recovery policy", async () => {

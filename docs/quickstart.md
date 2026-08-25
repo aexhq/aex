@@ -1,36 +1,33 @@
 # TypeScript quickstart
 
-Create an Aex API key in the [dashboard](https://aex.dev/dashboard), then install the SDK and Zod:
+Create an Aex API key in the [dashboard](https://aex.dev/dashboard), then install the SDK and the
+four ordinary component packages:
 
 ```sh
-npm install @aexhq/sdk @aexhq/tools zod
+npm install @aexhq/sdk @aexhq/tools @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/model-openai zod
 ```
 
 ```ts
-import { Aex, tool } from "@aexhq/sdk";
-import { bash, read, storage, write } from "@aexhq/tools";
+import { Aex } from "@aexhq/sdk";
+import { awsMicrovm } from "@aexhq/env-aws-microvm";
+import { pi } from "@aexhq/loop-pi";
+import { openai } from "@aexhq/model-openai";
+import { bash, read, write } from "@aexhq/tools";
 import { z } from "zod";
-
-const lookupCustomer = tool(
-  z.object({ id: z.string() }),
-  async function lookupCustomer({ id }) {
-    return database.customers.find(id);
-  },
-)
-  .describe("Look up a customer in this application.")
-  .client();
 
 const aex = new Aex({
   apiKey: process.env.AEX_API_KEY!,
-  client: { id: "customer-api" },
 });
 const session = await aex.sessions.create({
   model: {
+    component: openai(),
     provider: "openai",
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,
   },
-  tools: [lookupCustomer, bash(), read(), write(), storage()],
+  agentloop: pi({ instructions: "Work carefully and verify changes." }),
+  environments: { workspace: awsMicrovm() },
+  tools: [bash(), read(), write()],
   network: { outbound: "none" },
 });
 

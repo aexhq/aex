@@ -337,14 +337,15 @@ export class SessionStorage {
   }
 
   async copyFromSandbox(
-    input: { key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
+    input: { environment: string; key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
     options: OperationOptions = {},
   ): Promise<StorageObject> {
-    return storageObject(await this.#inner.copyFromSandbox(
+    return storageObject(await this.#inner.copyFromEnvironment(
+      input.environment,
       {
         key: input.key,
         path: input.path,
-        sandbox_generation: input.sandboxGeneration,
+        environment_generation: input.sandboxGeneration,
         ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
       },
       request(options),
@@ -352,14 +353,15 @@ export class SessionStorage {
   }
 
   async copyToSandbox(
-    input: { key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
+    input: { environment: string; key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
     options: OperationOptions = {},
   ): Promise<SandboxFile> {
-    return file(await this.#inner.copyToSandbox(
+    return file(await this.#inner.copyToEnvironment(
+      input.environment,
       {
         key: input.key,
         path: input.path,
-        sandbox_generation: input.sandboxGeneration,
+        environment_generation: input.sandboxGeneration,
         ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
       },
       request(options),

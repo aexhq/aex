@@ -6,6 +6,7 @@ TypeScript SDK for Aex sessions and tool extensions.
 import { Aex } from "@aexhq/sdk";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/loop-pi";
+import { openai } from "@aexhq/model-openai";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
@@ -13,11 +14,12 @@ const workspace = awsMicrovm();
 
 const session = await aex.sessions.create({
   model: {
+    component: openai(),
     provider: "openai",
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,
   },
-  loop: pi({ instructions: "Work carefully and verify changes." }),
+  agentloop: pi({ instructions: "Work carefully and verify changes." }),
   environments: { workspace },
   tools: [bash(), read(), write()],
 });
@@ -25,13 +27,17 @@ const session = await aex.sessions.create({
 console.log(await session.send("Inspect the workspace."));
 ```
 
-There is no default loop or environment. Every tool is bound to one declared environment before
+There is no default Agentloop, Model, Tool, or Environment. Every Tool is bound to one declared Environment before
 the request is sent. An unbound tool is bound automatically only when exactly one declared
 environment satisfies it; otherwise creation fails with the eligible or missing capabilities.
 
-## Tools
+## Application Tools
 
-`tool()` creates an immutable tool extension from a Zod input schema and a handler:
+Application callback authoring is temporarily outside the component MVP. Use precompiled Tool
+component packages; the callback authoring API will return through the same Tool/Environment ABI,
+without uploading function source to Brain.
+
+The previous source-function builder shown below remains a donor until that replacement gate:
 
 ```ts
 import { tool } from "@aexhq/sdk";
