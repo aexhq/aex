@@ -1571,7 +1571,7 @@ test("streaming storage transfers keep O(1) heap and enforce length, ticket, and
   );
 });
 
-test("end is non-destructive and delete distinguishes queued acceptance from confirmation", async () => {
+test("session capacity can suspend and resume before non-destructive end", async () => {
   const paths = [];
   let strictDeleteAttempts = 0;
   let deletionPolls = 0;
@@ -1581,6 +1581,12 @@ test("end is non-destructive and delete distinguishes queued acceptance from con
       const url = new URL(String(input));
       paths.push(`${init.method} ${url.pathname}${url.search}`);
       if (url.pathname === "/v1/sessions") return Response.json(snapshot, { status: 201 });
+      if (url.pathname.endsWith("/suspend")) {
+        return Response.json({ ...snapshot, state: "suspended" });
+      }
+      if (url.pathname.endsWith("/resume")) {
+        return Response.json({ ...snapshot, state: "open" });
+      }
       if (url.pathname.endsWith("/end")) {
         return Response.json({ ...snapshot, state: "ending" }, { status: 202 });
       }
@@ -1621,6 +1627,8 @@ test("end is non-destructive and delete distinguishes queued acceptance from con
   const queued = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
+  assert.equal((await queued.suspend()).state, "suspended");
+  assert.equal((await queued.resume()).state, "open");
   assert.equal((await queued.end()).state, "ending");
   await queued.delete({ queue: true });
   assert.equal(queued.state, "deleting");

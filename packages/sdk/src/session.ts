@@ -759,6 +759,24 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     return this;
   }
 
+  async suspend(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/suspend`,
+      { signal: options.signal, retry: true },
+    );
+    return this;
+  }
+
+  async resume(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/resume`,
+      { signal: options.signal, retry: true },
+    );
+    return this;
+  }
+
   async end(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
     this.#data = await this.#transport.json<SessionData>(
       "POST",
