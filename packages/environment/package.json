@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/environment",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Provider-neutral Aex environment extension authoring kit",
   "license": "Apache-2.0",
   "type": "module",
