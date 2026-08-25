@@ -1047,6 +1047,58 @@ test("aborting callback readiness tears down the failed runner before a later cr
   aex.close();
 });
 
+test("aborting one shared callback readiness waiter keeps the runner for another create", async () => {
+  const sockets = [];
+  let grants = 0;
+  let sessionCreates = 0;
+  const lookup = tool(z.object({ id: z.string() }), async function lookup({ id }) {
+    return { id };
+  });
+  const app = appComponent({ id: "shared-readiness" });
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    webSocketFactory(request) {
+      const socket = new FakeWebSocket(request);
+      sockets.push(socket);
+      return socket;
+    },
+    fetch: async (input) => {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
+        grants += 1;
+        return Response.json({
+          url: "wss://customer-environment.example.test/connect",
+          protocol: "aex.grant.shared-readiness",
+          expires_at: "2026-08-20T12:05:00Z",
+          grant_id: "grant-shared-readiness",
+          observation_url:
+            "https://api.aex.dev/v1/customer-environment/observations/grant-shared-readiness",
+          observation_token: "observation-shared-readiness",
+        }, { status: 201 });
+      }
+      sessionCreates += 1;
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const firstController = new AbortController();
+  const options = {
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    tools: [lookup],
+    environments: { app },
+  };
+  const first = create(aex, options, { signal: firstController.signal });
+  const second = create(aex, options);
+  while (sockets.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  firstController.abort(new Error("first caller left"));
+  await assert.rejects(first, (error) => error.name === "AbortError");
+  assert.equal(sockets[0].closed, false);
+  sockets[0].open();
+  await second;
+  assert.equal(grants, 1);
+  assert.equal(sockets.length, 1);
+  assert.equal(sessionCreates, 1);
+  aex.close();
+});
+
 test("closing Aex is terminal even while a customer Environment is still connecting", async () => {
   const sockets = [];
   let sessionCreates = 0;

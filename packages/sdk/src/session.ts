@@ -132,6 +132,7 @@ export class Sessions {
   readonly #webSocketFactory: WebSocketFactory | undefined;
   readonly #customerEnvironments = new Map<string, Promise<CustomerEnvironment>>();
   readonly #customerEnvironmentInstances = new Map<string, CustomerEnvironment>();
+  readonly #customerEnvironmentReadinessWaiters = new Map<string, number>();
   #closed = false;
 
   constructor(transport: Transport, webSocketFactory?: WebSocketFactory) {
@@ -380,23 +381,49 @@ export class Sessions {
           }
         }
       });
-      try {
-        await waitWithSignal(starting, signal);
-      } catch (error) {
-        if (signal?.aborted && this.#customerEnvironments.get(clientId) === starting) {
-          partial?.close();
-          this.#customerEnvironments.delete(clientId);
-          if (this.#customerEnvironmentInstances.get(clientId) === partial) {
-            this.#customerEnvironmentInstances.delete(clientId);
-          }
-        }
-        throw error;
-      }
+      await this.#waitForCustomerEnvironmentReadiness(clientId, starting, signal);
       return;
     }
-    const hand = await waitWithSignal(existing, signal);
+    const hand = await this.#waitForCustomerEnvironmentReadiness(clientId, existing, signal);
     if (this.#closed) throw new SessionError("Aex client is closed");
     await waitWithSignal(hand.register(registrations), signal);
+  }
+
+  async #waitForCustomerEnvironmentReadiness(
+    clientId: string,
+    starting: Promise<CustomerEnvironment>,
+    signal?: AbortSignal,
+  ): Promise<CustomerEnvironment> {
+    this.#customerEnvironmentReadinessWaiters.set(
+      clientId,
+      (this.#customerEnvironmentReadinessWaiters.get(clientId) ?? 0) + 1,
+    );
+    let settled = false;
+    void starting.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    try {
+      return await waitWithSignal(starting, signal);
+    } catch (error) {
+      if (
+        signal?.aborted && !settled
+        && this.#customerEnvironmentReadinessWaiters.get(clientId) === 1
+        && this.#customerEnvironments.get(clientId) === starting
+      ) {
+        const partial = this.#customerEnvironmentInstances.get(clientId);
+        partial?.close();
+        this.#customerEnvironments.delete(clientId);
+        if (this.#customerEnvironmentInstances.get(clientId) === partial) {
+          this.#customerEnvironmentInstances.delete(clientId);
+        }
+      }
+      throw error;
+    } finally {
+      const waiters = this.#customerEnvironmentReadinessWaiters.get(clientId) ?? 1;
+      if (waiters <= 1) this.#customerEnvironmentReadinessWaiters.delete(clientId);
+      else this.#customerEnvironmentReadinessWaiters.set(clientId, waiters - 1);
+    }
   }
 }
 
