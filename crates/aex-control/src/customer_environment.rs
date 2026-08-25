@@ -1,7 +1,7 @@
-//! Hosted customer-Hand gateway admission.
+//! Hosted customer-environment gateway admission.
 //!
 //! API Gateway supplies connection metadata to one HTTP proxy target. This module authenticates
-//! that integration and rejects managed-sandbox sources before any frame reaches Brain. Brain owns
+//! that integration and rejects managed-environment sources before any frame reaches Brain. Brain owns
 //! connection epochs, registration and frame semantics; Aex does not duplicate that protocol.
 
 use std::net::{IpAddr, SocketAddr};
@@ -20,16 +20,16 @@ const SOURCE_HEADER: &str = "x-aex-source-ip";
 const WEBSOCKET_PROTOCOL_HEADER: &str = "sec-websocket-protocol";
 
 #[derive(Clone)]
-pub struct CustomerHandGateway {
+pub struct CustomerEnvironmentGateway {
     token_hash: String,
     trusted_proxy_cidrs: Vec<IpNet>,
     blocked_source_cidrs: Vec<IpNet>,
 }
 
-impl std::fmt::Debug for CustomerHandGateway {
+impl std::fmt::Debug for CustomerEnvironmentGateway {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CustomerHandGateway")
+            .debug_struct("CustomerEnvironmentGateway")
             .field("token_hash", &"<redacted>")
             .field("trusted_proxy_cidrs", &self.trusted_proxy_cidrs)
             .field("blocked_source_cidrs", &self.blocked_source_cidrs)
@@ -63,7 +63,7 @@ impl GatewayRoute {
     }
 }
 
-impl CustomerHandGateway {
+impl CustomerEnvironmentGateway {
     pub fn new(
         token: &str,
         trusted_proxy_cidrs: Vec<IpNet>,
@@ -74,18 +74,18 @@ impl CustomerHandGateway {
             || !token.bytes().all(|byte| byte.is_ascii_graphic())
         {
             return Err(Error::Invalid(
-                "customer-Hand gateway token must contain 32 through 256 visible ASCII bytes"
+                "customer-environment gateway token must contain 32 through 256 visible ASCII bytes"
                     .into(),
             ));
         }
         if trusted_proxy_cidrs.is_empty() {
             return Err(Error::Invalid(
-                "customer-Hand gateway requires at least one trusted proxy CIDR".into(),
+                "customer-environment gateway requires at least one trusted proxy CIDR".into(),
             ));
         }
         if blocked_source_cidrs.is_empty() {
             return Err(Error::Invalid(
-                "customer-Hand gateway requires managed-sandbox NAT CIDRs".into(),
+                "customer-environment gateway requires managed-environment NAT CIDRs".into(),
             ));
         }
         Ok(Self {
@@ -102,7 +102,8 @@ impl CustomerHandGateway {
             .any(|network| network.contains(&peer.ip()))
         {
             return Err(Error::Forbidden(
-                "customer-Hand gateway request did not arrive through a trusted proxy".into(),
+                "customer-environment gateway request did not arrive through a trusted proxy"
+                    .into(),
             ));
         }
         let connection_id = bounded_identity(
@@ -114,7 +115,11 @@ impl CustomerHandGateway {
             "$connect" => GatewayRoute::Connect,
             "$disconnect" => GatewayRoute::Disconnect,
             "$default" => GatewayRoute::Message,
-            _ => return Err(Error::Invalid("unknown customer-Hand gateway route".into())),
+            _ => {
+                return Err(Error::Invalid(
+                    "unknown customer-environment gateway route".into(),
+                ));
+            }
         };
         // API Gateway authorizer context is reliable only during `$connect`. Later frames carry a
         // connection-bound proof in Brain's raw protocol and Brain verifies it before mutation.
@@ -138,7 +143,7 @@ impl CustomerHandGateway {
         };
         let source_ip = required_header(headers, SOURCE_HEADER)?
             .parse::<IpAddr>()
-            .map_err(|_| Error::Invalid("invalid customer-Hand source IP".into()))?;
+            .map_err(|_| Error::Invalid("invalid customer-environment source IP".into()))?;
         self.reject_blocked(source_ip)?;
 
         // ALB appends the immediate source to X-Forwarded-For. Inspect every parseable address:
@@ -177,7 +182,8 @@ impl CustomerHandGateway {
             .any(|network| network.contains(&address))
         {
             return Err(Error::Forbidden(
-                "managed sandbox network identities cannot attach a customer Hand".into(),
+                "managed environment network identities cannot attach a customer Environment"
+                    .into(),
             ));
         }
         Ok(())
@@ -193,7 +199,7 @@ fn single_protocol(headers: &HeaderMap) -> Result<String> {
         != 1
     {
         return Err(Error::Invalid(
-            "customer-Hand connection must select exactly one valid WebSocket grant protocol"
+            "customer-environment connection must select exactly one valid WebSocket grant protocol"
                 .into(),
         ));
     }
@@ -203,7 +209,7 @@ fn single_protocol(headers: &HeaderMap) -> Result<String> {
         || !value.bytes().all(|byte| byte.is_ascii_graphic())
     {
         return Err(Error::Invalid(
-            "customer-Hand connection must select exactly one valid WebSocket grant protocol"
+            "customer-environment connection must select exactly one valid WebSocket grant protocol"
                 .into(),
         ));
     }
@@ -238,7 +244,9 @@ fn required_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str> {
 
 fn bounded_identity(value: &str, label: &str) -> Result<String> {
     if value.len() > 256 || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
-        return Err(Error::Invalid(format!("invalid customer-Hand {label}")));
+        return Err(Error::Invalid(format!(
+            "invalid customer-environment {label}"
+        )));
     }
     Ok(value.to_owned())
 }
@@ -248,8 +256,8 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
-    fn gateway() -> CustomerHandGateway {
-        CustomerHandGateway::new(
+    fn gateway() -> CustomerEnvironmentGateway {
+        CustomerEnvironmentGateway::new(
             "gateway-secret-with-at-least-thirty-two-bytes",
             vec!["127.0.0.0/8".parse().unwrap()],
             vec!["198.51.100.0/24".parse().unwrap()],

@@ -19,9 +19,10 @@
 //! 192 KiB prompt/message and 2 MiB inline-session request buffers.
 //! AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN authenticates the private Brain route; SERPER_API_KEY enables
 //! the managed web_search Tool without entering Brain or the Hand.
-//! AEX_CUSTOMER_HAND_GATEWAY_TOKEN, AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS and
-//! AEX_MANAGED_SANDBOX_NAT_CIDRS jointly enable the API Gateway WebSocket adapter.
+//! AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN, AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS and
+//! AEX_MANAGED_ENVIRONMENT_NAT_CIDRS jointly enable the API Gateway WebSocket adapter.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use aex_control::admission::Admission;
@@ -40,11 +41,34 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "aex_control=info".into()),
         )
         .init();
-    let cfg = Config::from_env()?;
-    tokio::runtime::Builder::new_multi_thread()
+    let command = match std::env::args().nth(1).as_deref() {
+        None => Command::Serve,
+        Some("reset-prelaunch-sessions") if std::env::args().nth(2).is_none() => {
+            Command::ResetPrelaunchSessions
+        }
+        Some(argument) => anyhow::bail!("unknown command: {argument}"),
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?
-        .block_on(run(cfg))
+        .build()?;
+    match command {
+        Command::Serve => runtime.block_on(run(Config::from_env()?)),
+        Command::ResetPrelaunchSessions => runtime.block_on(reset_prelaunch_sessions()),
+    }
+}
+
+enum Command {
+    Serve,
+    ResetPrelaunchSessions,
+}
+
+async fn reset_prelaunch_sessions() -> anyhow::Result<()> {
+    let path = std::env::var_os("AEX_CONTROL_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./aex-control-data/control.db"));
+    let removed = Db::open(&path)?.reset_prelaunch_sessions().await?;
+    tracing::info!(removed, "discarded pre-launch control session state");
+    Ok(())
 }
 
 async fn run(cfg: Config) -> anyhow::Result<()> {
@@ -110,7 +134,9 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         card: cfg.card.clone(),
         operator_token_hash: cfg.operator_token_hash,
         external_executor_token_hash: cfg.external_executor_token_hash,
-        customer_hand_gateway: cfg.customer_hand_gateway,
+        tenant_tool_token_key: cfg.tenant_tool_token_key,
+        public_api_url: cfg.public_api_url,
+        customer_environment_gateway: cfg.customer_environment_gateway,
         web: WebRuntime::hosted(cfg.serper_api_key),
         admission,
         create_body_slots: Arc::new(tokio::sync::Semaphore::new(

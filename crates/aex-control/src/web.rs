@@ -14,9 +14,9 @@ use crate::outbound::Outbound;
 use crate::{Error, Result};
 
 pub const SEARCH_TOOL_NAME: &str = "web_search";
-pub const SEARCH_CAPABILITY: &str = "aex.web.search";
+pub const SEARCH_CAPABILITY: &str = "brain.web.search";
 pub const FETCH_TOOL_NAME: &str = "web_fetch";
-pub const FETCH_CAPABILITY: &str = "aex.web.fetch";
+pub const FETCH_CAPABILITY: &str = "brain.web.fetch";
 
 const SEARCH_ENDPOINT: &str = "https://google.serper.dev/search";
 const SEARCH_MAX_RESPONSE_BYTES: usize = 1024 * 1024;

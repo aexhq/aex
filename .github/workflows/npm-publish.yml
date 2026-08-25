@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Publish immutable versions under next, or promote those same versions to latest
+        description: Bootstrap new package names, publish versions under next, or promote them to latest
         type: choice
         required: true
         default: stage
         options:
+          - bootstrap
           - stage
           - promote
       expected_commit:
@@ -69,7 +70,7 @@ jobs:
           fi
 
   stage-tests:
-    if: inputs.operation == 'stage'
+    if: inputs.operation != 'promote'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -86,23 +87,19 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Checkout the Brain revision pinned by Aex
+      - run: npm ci
+      - name: Checkout the pinned Brain contract
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
+          brain_revision=$(node tools/pinned-revision.mjs brain)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
-      - run: npm ci
       - run: npm test
 
   stage-package-smoke:
-    if: inputs.operation == 'stage'
+    if: inputs.operation != 'promote'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -119,24 +116,12 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Checkout the Brain revision pinned by Aex
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm run build
       - run: npm run package-smoke
 
   prepare:
-    if: inputs.operation == 'stage'
+    if: inputs.operation != 'promote'
     needs: [validate, stage-tests, stage-package-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -153,20 +138,8 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Checkout the Brain revision pinned by Aex
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm run build
       - name: Pack the exact release archives
@@ -210,7 +183,7 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Require the staged Brain dependency set
+      - name: Require the staged external dependency set
         shell: bash
         run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" next
       - name: Publish once with provenance under next
@@ -224,6 +197,36 @@ jobs:
           VERSIONS: ${{ needs.prepare.outputs.versions }}
         run: |
           echo "Staged exact versions under npm dist-tag \`next\`: \`$VERSIONS\`" >> "$GITHUB_STEP_SUMMARY"
+
+  bootstrap:
+    if: inputs.operation == 'bootstrap'
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: aex-npm-release-${{ github.sha }}
+          path: ${{ runner.temp }}/aex-npm-release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use the npm version pinned for trusted publishing
+        run: npm install --global npm@11.19.0
+      - name: Publish only new or placeholder package names
+        shell: bash
+        env:
+          # npm cannot configure OIDC before the first publish. This protected token may create a
+          # name or replace its 0.0.0 reservation; every later version uses the stage operation.
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
+        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" bootstrap
 
   promote:
     if: inputs.operation == 'promote'
@@ -248,14 +251,14 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for promotion
         run: npm install --global npm@11.19.0
-      - name: Require the promoted Brain dependency set
+      - name: Require the promoted external dependency set
         shell: bash
         run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" latest
       - name: Promote the already-staged archives without republishing
         shell: bash
         env:
           # Trusted-publisher OIDC intentionally cannot mutate dist-tags. Keep this granular token
-          # scoped to the four Aex packages and protect it with the npm-production environment.
+          # scoped to the Aex packages and protect it with the npm-production environment.
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
         run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" promote

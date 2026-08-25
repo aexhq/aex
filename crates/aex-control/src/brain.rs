@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-use crate::customer_hand::GatewayRequest;
+use crate::customer_environment::GatewayRequest;
 
 use crate::{Error, Result};
 
@@ -45,7 +45,7 @@ pub struct BrainDeletionStatus {
     pub completed_at_ms: Option<i64>,
 }
 
-const CUSTOMER_HAND_HOP_TIMEOUT: Duration = Duration::from_secs(15);
+const CUSTOMER_ENVIRONMENT_HOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Every bounded (non-streaming) Brain call carries this total deadline: a stalled
 /// established connection must not hang the sweeper, deletion worker, or /v1/balance.
 /// The SSE follow forward is the one exemption (it streams indefinitely by design).
@@ -131,8 +131,8 @@ impl BrainClient {
             .map_err(|e| Error::Upstream(format!("{e}")))
     }
 
-    /// Mint a short-lived customer-Hand connection grant under Aex's authenticated tenant.
-    pub async fn customer_hand_grant(
+    /// Mint a short-lived customer-environment connection grant under Aex's authenticated tenant.
+    pub async fn customer_environment_grant(
         &self,
         tenant_id: &str,
         content_type: Option<&str>,
@@ -140,8 +140,11 @@ impl BrainClient {
     ) -> Result<reqwest::Response> {
         let mut request = self
             .http
-            .post(format!("{}/internal/v1/customer-hand/grants", self.base))
-            .timeout(CUSTOMER_HAND_HOP_TIMEOUT)
+            .post(format!(
+                "{}/internal/v1/customer-environment/grants",
+                self.base
+            ))
+            .timeout(CUSTOMER_ENVIRONMENT_HOP_TIMEOUT)
             .bearer_auth(&self.token)
             .header("x-brain-tenant-id", tenant_id)
             .body(body);
@@ -151,11 +154,11 @@ impl BrainClient {
         request
             .send()
             .await
-            .map_err(|error| Error::Upstream(format!("customer-Hand grant: {error}")))
+            .map_err(|error| Error::Upstream(format!("customer-environment grant: {error}")))
     }
 
     /// Forward one authenticated API Gateway event without interpreting Brain's frame protocol.
-    pub async fn customer_hand_gateway(
+    pub async fn customer_environment_gateway(
         &self,
         metadata: &GatewayRequest,
         content_type: Option<&str>,
@@ -163,8 +166,11 @@ impl BrainClient {
     ) -> Result<reqwest::Response> {
         let mut request = self
             .http
-            .post(format!("{}/internal/v1/customer-hand/gateway", self.base))
-            .timeout(CUSTOMER_HAND_HOP_TIMEOUT)
+            .post(format!(
+                "{}/internal/v1/customer-environment/gateway",
+                self.base
+            ))
+            .timeout(CUSTOMER_ENVIRONMENT_HOP_TIMEOUT)
             .bearer_auth(&self.token)
             .header("x-brain-connection-id", &metadata.connection_id)
             .header("x-brain-route-key", metadata.route.as_brain_header())
@@ -180,14 +186,14 @@ impl BrainClient {
         request
             .send()
             .await
-            .map_err(|error| Error::Upstream(format!("customer-Hand gateway: {error}")))
+            .map_err(|error| Error::Upstream(format!("customer-environment gateway: {error}")))
     }
 
     /// Forward a terminal operation observation using both trust layers: the Aex-to-Brain
     /// operator bearer authenticates this private route, while the short-lived scoped grant is a
     /// separate header paired with the non-secret path ID. Aex does not interpret the neutral
     /// observation body and never sends a customer API key to Brain.
-    pub async fn customer_hand_observation(
+    pub async fn customer_environment_observation(
         &self,
         grant_id: &str,
         grant: &str,
@@ -197,10 +203,10 @@ impl BrainClient {
         let mut request = self
             .http
             .post(format!(
-                "{}/internal/v1/customer-hand/observations/{grant_id}",
+                "{}/internal/v1/customer-environment/observations/{grant_id}",
                 self.base
             ))
-            .timeout(CUSTOMER_HAND_HOP_TIMEOUT)
+            .timeout(CUSTOMER_ENVIRONMENT_HOP_TIMEOUT)
             .bearer_auth(&self.token)
             .header("x-brain-observation-grant", grant)
             .body(body);
@@ -210,7 +216,7 @@ impl BrainClient {
         request
             .send()
             .await
-            .map_err(|error| Error::Upstream(format!("customer-Hand observation: {error}")))
+            .map_err(|error| Error::Upstream(format!("customer-environment observation: {error}")))
     }
 
     /// The session document; None on 404 (deleted).

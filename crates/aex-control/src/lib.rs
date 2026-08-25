@@ -14,14 +14,13 @@
 pub mod admission;
 pub mod api;
 pub mod brain;
-pub mod customer_hand;
+pub mod customer_environment;
 pub mod identity;
 pub mod outbound;
 pub mod output;
 pub mod payments;
 pub mod rating;
 pub mod store;
-pub mod subagents_tool;
 pub mod sweep;
 pub mod web;
 
@@ -226,7 +225,9 @@ pub struct Config {
     pub card: rating::RateCard,
     pub operator_token_hash: Option<String>,
     pub external_executor_token_hash: Option<String>,
-    pub customer_hand_gateway: Option<customer_hand::CustomerHandGateway>,
+    pub tenant_tool_token_key: Option<identity::TenantToolTokenKey>,
+    pub public_api_url: String,
+    pub customer_environment_gateway: Option<customer_environment::CustomerEnvironmentGateway>,
     pub serper_api_key: Option<String>,
     pub max_concurrent_sessions: i64,
     pub max_retained_root_sessions: i64,
@@ -287,28 +288,53 @@ impl Config {
                 "AEX_CONTROL_INTERNAL_LISTEN must use a loopback address; got {internal_listen}"
             );
         }
-        let customer_hand_gateway = match std::env::var("AEX_CUSTOMER_HAND_GATEWAY_TOKEN") {
+        let tenant_tool_token_key = std::env::var("AEX_TENANT_TOOL_TOKEN_KEY")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(identity::TenantToolTokenKey::new)
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("AEX_TENANT_TOOL_TOKEN_KEY {error}"))?;
+        let public_api_url =
+            std::env::var("AEX_PUBLIC_API_URL").unwrap_or_else(|_| "https://api.aex.dev".into());
+        let parsed_public_api_url = reqwest::Url::parse(&public_api_url)
+            .map_err(|error| anyhow::anyhow!("AEX_PUBLIC_API_URL={public_api_url}: {error}"))?;
+        if parsed_public_api_url.scheme() != "https"
+            || parsed_public_api_url.host_str().is_none()
+            || parsed_public_api_url.path() != "/"
+            || parsed_public_api_url.query().is_some()
+            || parsed_public_api_url.fragment().is_some()
+        {
+            anyhow::bail!(
+                "AEX_PUBLIC_API_URL must be an HTTPS origin without a path, query, or fragment"
+            );
+        }
+        let customer_environment_gateway = match std::env::var(
+            "AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN",
+        ) {
             Ok(token) => {
-                let trusted = std::env::var("AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS").map_err(|_| {
+                let trusted = std::env::var("AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS").map_err(|_| {
                     anyhow::anyhow!(
-                        "AEX_CUSTOMER_HAND_GATEWAY_TOKEN needs AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS"
+                        "AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN needs AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS"
                     )
                 })?;
-                let blocked = std::env::var("AEX_MANAGED_SANDBOX_NAT_CIDRS").map_err(|_| {
+                let blocked = std::env::var("AEX_MANAGED_ENVIRONMENT_NAT_CIDRS").map_err(|_| {
                     anyhow::anyhow!(
-                        "AEX_CUSTOMER_HAND_GATEWAY_TOKEN needs AEX_MANAGED_SANDBOX_NAT_CIDRS"
+                        "AEX_CUSTOMER_ENVIRONMENT_GATEWAY_TOKEN needs AEX_MANAGED_ENVIRONMENT_NAT_CIDRS"
                     )
                 })?;
                 Some(
-                    customer_hand::CustomerHandGateway::new(
+                    customer_environment::CustomerEnvironmentGateway::new(
                         &token,
-                        customer_hand::parse_cidrs(
-                            "AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS",
+                        customer_environment::parse_cidrs(
+                            "AEX_CUSTOMER_ENVIRONMENT_TRUSTED_PROXY_CIDRS",
                             &trusted,
                         )?,
-                        customer_hand::parse_cidrs("AEX_MANAGED_SANDBOX_NAT_CIDRS", &blocked)?,
+                        customer_environment::parse_cidrs(
+                            "AEX_MANAGED_ENVIRONMENT_NAT_CIDRS",
+                            &blocked,
+                        )?,
                     )
-                    .map_err(|error| anyhow::anyhow!("customer-Hand gateway: {error}"))?,
+                    .map_err(|error| anyhow::anyhow!("customer-environment gateway: {error}"))?,
                 )
             }
             Err(_) => None,
@@ -422,7 +448,9 @@ impl Config {
                 .ok()
                 .filter(|token| !token.is_empty())
                 .map(|token| identity::hash_secret(&token)),
-            customer_hand_gateway,
+            tenant_tool_token_key,
+            public_api_url: public_api_url.trim_end_matches('/').into(),
+            customer_environment_gateway,
             serper_api_key: std::env::var("SERPER_API_KEY")
                 .ok()
                 .filter(|key| !key.is_empty()),

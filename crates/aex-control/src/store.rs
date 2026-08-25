@@ -196,6 +196,15 @@ CREATE TABLE IF NOT EXISTS hosted_tool_calls (
   created_ms INTEGER NOT NULL,
   PRIMARY KEY(session_id, call_id)
 );
+CREATE TABLE IF NOT EXISTS tool_artifact_layers (
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  digest TEXT NOT NULL,
+  bytes INTEGER NOT NULL CHECK (bytes BETWEEN 1 AND 67108864),
+  media_type TEXT NOT NULL,
+  content BLOB NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY(account_id, digest)
+);
 ";
 
 #[derive(Debug, Clone)]
@@ -340,6 +349,14 @@ pub struct SessionCreateRow {
 pub struct SessionCreateIntentRow {
     pub request_hash: String,
     pub covered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolArtifactLayerRow {
+    pub digest: String,
+    pub bytes: i64,
+    pub media_type: String,
+    pub content: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -636,7 +653,102 @@ impl Db {
         .map_err(internal)
     }
 
+    pub async fn reset_prelaunch_sessions(&self) -> Result<i64> {
+        self.call(|connection| {
+            let transaction = connection.transaction()?;
+            let removed = transaction.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+            transaction.execute_batch(
+                "DELETE FROM external_tool_calls;
+                 DELETE FROM hosted_tool_calls;
+                 DELETE FROM output_requests;
+                 DELETE FROM session_create_requests;
+                 DELETE FROM session_create_intents;
+                 DELETE FROM session_deletion_dependencies;
+                 DELETE FROM session_deletions;
+                 DELETE FROM sessions;
+                 DELETE FROM session_discovery;",
+            )?;
+            transaction.commit()?;
+            Ok(removed)
+        })
+        .await
+    }
+
     // ---- identity ----
+
+    pub async fn tool_artifact_layer(
+        &self,
+        account_id: String,
+        digest: String,
+    ) -> Result<Option<ToolArtifactLayerRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT digest, bytes, media_type, content
+                 FROM tool_artifact_layers WHERE account_id = ?1 AND digest = ?2",
+                params![account_id, digest],
+                |row| {
+                    Ok(ToolArtifactLayerRow {
+                        digest: row.get(0)?,
+                        bytes: row.get(1)?,
+                        media_type: row.get(2)?,
+                        content: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn store_tool_artifact_layer(
+        &self,
+        account_id: String,
+        layer: ToolArtifactLayerRow,
+        created_ms: i64,
+    ) -> Result<bool> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let inserted = tx.execute(
+                "INSERT INTO tool_artifact_layers
+                   (account_id, digest, bytes, media_type, content, created_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(account_id, digest) DO NOTHING",
+                params![
+                    account_id,
+                    layer.digest,
+                    layer.bytes,
+                    layer.media_type,
+                    layer.content,
+                    created_ms
+                ],
+            )? == 1;
+            if !inserted {
+                let exact: i64 = tx.query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM tool_artifact_layers
+                       WHERE account_id = ?1 AND digest = ?2 AND bytes = ?3
+                         AND media_type = ?4 AND content = ?5
+                     )",
+                    params![
+                        account_id,
+                        layer.digest,
+                        layer.bytes,
+                        layer.media_type,
+                        layer.content
+                    ],
+                    |row| row.get(0),
+                )?;
+                if exact != 1 {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await
+    }
 
     /// Add an email once. Repeated submissions preserve the operator-owned lifecycle state.
     pub async fn join_waitlist(&self, email: String, now_ms: i64) -> Result<WaitlistRow> {
@@ -887,6 +999,19 @@ impl Db {
                 "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
                  FROM accounts WHERE token_hash = ?1",
                 params![token_hash],
+                account_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn account(&self, account_id: String) -> Result<Option<AccountRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
+                 FROM accounts WHERE id = ?1",
+                params![account_id],
                 account_row,
             )
             .optional()
@@ -3226,6 +3351,83 @@ mod tests {
         let claimed = db.claim_pending_deletions(1, 12).await.unwrap();
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].session_id, "ses_old");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prelaunch_session_reset_preserves_identity_and_ledger() {
+        let db = Db::open_memory().unwrap();
+        db.call(|connection| {
+            connection.execute_batch(
+                "INSERT INTO accounts VALUES ('acc', 'a@example.test', 'token', 1, 10, 30);
+                 INSERT INTO api_keys
+                   (id, account_id, name, prefix, secret_hash, created_ms)
+                 VALUES ('key', 'acc', 'test', 'prefix', 'secret', 1);
+                 INSERT INTO ledger VALUES ('usage:ses_root', 'acc', -1, 2);
+                 INSERT INTO sessions
+                   (id, account_id, key_id, root_id, depth, shape, created_ms)
+                 VALUES
+                   ('ses_root', 'acc', 'key', 'ses_root', 0, '1gb', 3),
+                   ('ses_child', 'acc', 'key', 'ses_root', 1, '1gb', 4);
+                 INSERT INTO session_create_requests
+                   (account_id, request_key_hash, request_hash, session_id, created_ms)
+                 VALUES ('acc', 'request-key', 'request', 'ses_root', 3);
+                 INSERT INTO session_create_intents
+                   (account_id, request_key_hash, request_hash, state, created_ms, updated_ms)
+                 VALUES ('acc', 'intent-key', 'intent', 'uncertain', 3, 3);
+                 INSERT INTO session_discovery VALUES ('acc', 3);
+                 INSERT INTO session_deletions
+                   (session_id, account_id, anchor_id, phase, accepted_ms, updated_ms)
+                 VALUES
+                   ('ses_root', 'acc', 'ses_root', 'ending', 3, 3),
+                   ('ses_child', 'acc', 'ses_child', 'ending', 4, 4);
+                 INSERT INTO session_deletion_dependencies VALUES ('ses_root', 'ses_child');
+                 INSERT INTO output_requests
+                   (id, session_id, schema_hash, schema_json, max_attempts, request_hash, created_ms)
+                 VALUES ('out', 'ses_root', 'schema', '{}', 1, 'output-request', 3);
+                 INSERT INTO external_tool_calls VALUES ('ses_root', 'external', 'out', '{}', 3);
+                 INSERT INTO hosted_tool_calls VALUES ('ses_root', 'hosted', 'request', '{}', 3);",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(db.reset_prelaunch_sessions().await.unwrap(), 2);
+        let counts = db
+            .call(|connection| {
+                let retained = connection.query_row(
+                    "SELECT
+                       (SELECT COUNT(*) FROM accounts),
+                       (SELECT COUNT(*) FROM api_keys),
+                       (SELECT COUNT(*) FROM ledger)",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )?;
+                let removed = connection.query_row(
+                    "SELECT
+                       (SELECT COUNT(*) FROM sessions) +
+                       (SELECT COUNT(*) FROM session_create_requests) +
+                       (SELECT COUNT(*) FROM session_create_intents) +
+                       (SELECT COUNT(*) FROM session_discovery) +
+                       (SELECT COUNT(*) FROM session_deletions) +
+                       (SELECT COUNT(*) FROM session_deletion_dependencies) +
+                       (SELECT COUNT(*) FROM output_requests) +
+                       (SELECT COUNT(*) FROM external_tool_calls) +
+                       (SELECT COUNT(*) FROM hosted_tool_calls)",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                Ok((retained, removed))
+            })
+            .await
+            .unwrap();
+        assert_eq!(counts, ((1, 1, 1), 0));
     }
 
     #[test]

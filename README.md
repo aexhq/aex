@@ -7,7 +7,7 @@
   Aex
 </h1>
 
-<p align="center"><strong>Your backend for your AI workloads.</strong></p>
+<p align="center"><strong>Minimal and extensible backend for your AI workloads.</strong></p>
 <p align="center">
   High-performance, reliable, and simple infrastructure for running AI workloads.<br />
   Start a session with your models and tools, give it work, and get back structured data.
@@ -16,8 +16,9 @@
   <a href="https://aex.dev">Website</a> ·
   <a href="docs/quickstart.md">Quickstart</a> ·
   <a href="https://aex.dev/dashboard">Dashboard</a> ·
-  <a href="https://discord.gg/Qk2YnHMHVb">Discord</a>
 </p>
+
+> This repo is under early and heavy development
 
 Aex is a session-oriented backend for AI applications, built on a minimal and extensible
 kernel ([Brain](https://github.com/aexhq/brain)). The kernel owns mechanism — durable
@@ -29,19 +30,26 @@ data.
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
+import { awsMicrovm } from "@aexhq/env-aws-microvm";
+import { pi } from "@aexhq/loop-pi";
+import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+const workspace = awsMicrovm();
 const session = await aex.sessions.create({
   model: {
     provider: "openai",
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,
   },
+  loop: pi(),
+  environments: { workspace },
+  tools: [bash(), read(), write()],
 });
 
 const reply = await session.send("Plan my day.");
@@ -54,35 +62,38 @@ and subagents.
 ## Architecture
 
 ```text
-             Database                 Storage
-                ↑                        ↑
-Your app  →   Brain       ↔       Hands       ↔       Sandbox
+Your app → Aex SDK → Brain session kernel → bound environment extensions
+                         ↑                         ↑
+                 brain extension            tool extensions
 ```
 
-- **Brain** owns the model loop, context, and recovery.
-- **Hands** run typed tool operations.
-- **Sandbox** constrains processes, files, declared secrets, and network access; the
-  [quickstart](docs/quickstart.md#where-tools-run) states the exact guest boundary.
+- **Brain extensions** implement agent-loop policy.
+- **Tool extensions** define capabilities available to the model.
+- **Environment extensions** execute bound tools and own their runtime lifecycle.
+
+Brain owns durable session mechanism, not a default loop or environment. The SDK auto-binds an
+unbound tool only when exactly one declared environment is compatible.
 
 Session journals live in the database. Files become durable only when copied to storage.
 
 ## Tool placement
 
-Tools are fixed when a session is created. Use `.client()` to keep a function in your application
-or `.server(import.meta.url)` to run it in Aex-managed compute. Closures never cross that boundary.
+Tools and bindings are fixed when a session is created. Use `tool.bind(environmentRef)` when more
+than one environment is compatible. The `app()` environment runs callbacks in your application;
+`aex tools build` prepares a computer tool with its own runtime and immutable dependencies.
 
 ## Packages
 
 | Package | Purpose |
 | --- | --- |
 | [`@aexhq/sdk`](packages/sdk) | Sessions, tools, files, storage, and structured output |
-| [`@aexhq/tools`](packages/tools) | Explicit official tool selections |
+| [`@aexhq/environment`](packages/environment) | Environment extension authoring contracts |
 | [`@aexhq/contracts`](packages/contracts) | Generated control-plane types |
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 
-[`brain`](https://github.com/aexhq/brain) owns the session API and Brain-to-Hand contract.
-[`hands`](https://github.com/aexhq/hands) implements that contract. This repository owns the public
-SDK, control plane, and hosted Aex composition.
+[`brain`](https://github.com/aexhq/brain) owns the neutral session kernel and protocols.
+[`extensions`](https://github.com/aexhq/extensions) contains official loop, tool, and environment
+extensions. This repository owns the public SDK, control plane, and hosted Aex composition.
 
 ## Development
 
