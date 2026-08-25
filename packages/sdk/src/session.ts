@@ -462,12 +462,14 @@ function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 export class Session implements SessionSummary {
   readonly #transport: Transport;
   #data: SessionData;
+  readonly sandbox: SessionSandbox;
   readonly storage: SessionStorage;
   readonly children: SessionChildren;
 
   constructor(transport: Transport, data: SessionData) {
     this.#transport = transport;
     this.#data = data;
+    this.sandbox = new SessionSandbox(transport, data.id);
     this.storage = new SessionStorage(transport, data.id);
     this.children = new SessionChildren(transport, data.id);
   }
