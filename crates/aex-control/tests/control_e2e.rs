@@ -1989,6 +1989,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let forwarded = stub_brain.last_create_body.lock().unwrap().clone().unwrap();
+    assert_eq!(forwarded["shape"], "1gb");
     assert_eq!(forwarded["tools"]["items"][0], component_subagents);
     assert_eq!(
         forwarded["tools"]["items"][1]["executor"]["capability"],

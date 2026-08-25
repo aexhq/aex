@@ -55,6 +55,7 @@ pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         }
         Some(_) => return Err(Error::Invalid("shape must be a string".into())),
     }
+    root.insert("shape".into(), Value::String("1gb".into()));
     let tools = root.entry("tools").or_insert_with(|| json!({}));
     let tools = tools
         .as_object_mut()
@@ -863,6 +864,7 @@ mod tests {
         )
         .unwrap();
         let document: Value = serde_json::from_slice(&injected).unwrap();
+        assert_eq!(document["shape"], "1gb");
         assert_eq!(document["tools"]["items"].as_array().unwrap().len(), 2);
         assert_eq!(
             document["tools"]["items"][0]["definition"]["name"],
@@ -885,10 +887,7 @@ mod tests {
         assert!(inject_output_tool(br#"{"tools":{"builtin":[]},"model":{}}"#).is_err());
         let hosted_shape = inject_output_tool(br#"{"shape":"1gb","model":{}}"#).unwrap();
         let hosted_shape: Value = serde_json::from_slice(&hosted_shape).unwrap();
-        assert!(
-            hosted_shape.get("shape").is_none(),
-            "the hosted-only shape hint must not enter Brain's neutral create contract"
-        );
+        assert_eq!(hosted_shape["shape"], "1gb");
         let unsupported = inject_output_tool(br#"{"shape":"2gb","model":{}}"#).unwrap_err();
         assert!(matches!(unsupported, Error::Unprocessable(_)));
         assert_eq!(unsupported.status(), 422);
