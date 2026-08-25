@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-const workspaces = ["contracts", "sdk", "tools", "cli"];
+const workspaces = ["contracts", "sdk", "cli"];
 const root = path.resolve(import.meta.dirname, "..");
 const npmCli = [
   process.env.npm_execpath,

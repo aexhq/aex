@@ -30,13 +30,10 @@ const pack = (directory) => {
 try {
   await mkdir(artifacts);
   await mkdir(consumer);
-  // @aexhq/tools resolves its exact released brain-tools patch from the registry; Brain itself
-  // remains the separately pinned 0.2 package source used by the SDK.
   const packages = [
     pack(path.join(brain, "packages/brain")),
     pack(path.join(root, "packages/contracts")),
     pack(path.join(root, "packages/sdk")),
-    pack(path.join(root, "packages/tools")),
     pack(path.join(root, "packages/cli")),
   ];
 
@@ -72,47 +69,40 @@ try {
     }, null, 2)}\n`,
   );
   await writeFile(
-    path.join(consumer, "custom.ts"),
-    `import { tool } from "@aexhq/sdk";
-import { z } from "zod";
-
-const custom = tool(
-  z.object({ value: z.string() }),
-  async function packageSmokeEcho(input) { return input; },
-)
-  .describe("Return the exact input.")
-  .returns(z.object({ value: z.string() }))
-  .server(import.meta.url);
-
-export default custom;
-`,
-  );
-  await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { compileTools, tool as brainTool, type Tool } from "@aexhq/brain";
-import { Aex, tool as aexTool } from "@aexhq/sdk";
-import { bash } from "@aexhq/tools";
-import custom from "./custom.js";
+import { component } from "@aexhq/brain";
+import { Aex } from "@aexhq/sdk";
 
-assert.equal(aexTool, brainTool, "Aex must re-export Brain's one Tool constructor");
-const selected: readonly Tool[] = [custom, bash()];
-const prepared = await compileTools(selected);
-assert.deepEqual(prepared.items.map((item) => item.definition.name), ["packageSmokeEcho", "bash"]);
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+const model = component("model", bytes, {}, { metadata: { name: "smoke" } });
+const agentloop = component("agentloop", bytes, {});
+const environment = component("environment", bytes, {});
+const echo = component("tool", bytes, {
+  definition: {
+    name: "echo",
+    input_schema: { type: "object" },
+    output_schema: { type: "object" },
+    contract_digest: "a".repeat(64),
+  },
+}, { grants: ["environment"] });
 
 async function typecheckAex(aex: Aex): Promise<void> {
   await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-5", apiKey: "not-used" },
-    tools: selected,
+    model: { component: model, provider: "smoke", name: "smoke", apiKey: "not-used" },
+    agentloop,
+    environments: { workspace: environment },
+    tools: [echo],
   });
 }
 void typecheckAex;
-console.log("packed Aex and Brain packages share one executable Tool identity");
+assert.equal(echo.extension, "tool");
+console.log("packed Aex consumes Brain's four component values");
 `,
   );
   run(process.execPath, [path.join(consumer, "node_modules/typescript/bin/tsc")], { cwd: consumer });
   const output = run(process.execPath, ["dist/smoke.js"], { cwd: consumer });
-  assert.match(output, /share one executable Tool identity/u);
+  assert.match(output, /four component values/u);
   process.stdout.write(`${output}\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
