@@ -73,6 +73,7 @@ const snapshot = {
   },
   storage: { session_storage_bytes: 0, upload_reserved_bytes: 0 },
   created_at: "2026-08-19T10:00:00.000Z",
+  retain_until: "2027-09-23T10:00:00.000Z",
   updated_at: "2026-08-19T10:00:00.000Z",
   turns: 0,
   last_seq: 0,
@@ -1587,6 +1588,14 @@ test("session capacity can suspend and resume before non-destructive end", async
       if (url.pathname.endsWith("/resume")) {
         return Response.json({ ...snapshot, state: "open" });
       }
+      if (url.pathname.endsWith("/retention")) {
+        const body = JSON.parse(init.body);
+        assert.deepEqual(body, {
+          retain_until: "2028-01-01T00:00:00.000Z",
+          allow_shorten: false,
+        });
+        return Response.json({ ...snapshot, retain_until: body.retain_until });
+      }
       if (url.pathname.endsWith("/end")) {
         return Response.json({ ...snapshot, state: "ending" }, { status: 202 });
       }
@@ -1629,6 +1638,7 @@ test("session capacity can suspend and resume before non-destructive end", async
   });
   assert.equal((await queued.suspend()).state, "suspended");
   assert.equal((await queued.resume()).state, "open");
+  assert.equal((await queued.setRetention("2028-01-01T00:00:00Z")).retainUntil, "2028-01-01T00:00:00.000Z");
   assert.equal((await queued.end()).state, "ending");
   await queued.delete({ queue: true });
   assert.equal(queued.state, "deleting");

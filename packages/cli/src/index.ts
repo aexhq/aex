@@ -138,6 +138,7 @@ function summary(session: SessionSummary): SessionSummary {
     model: session.model,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    retainUntil: session.retainUntil,
     metadata: session.metadata,
   };
 }

@@ -3,7 +3,7 @@ import type {
   Event,
   MessageAccepted as BrainMessageAccepted,
   ToolDefinition,
-  Session as SessionData,
+  Session as BrainSessionData,
   SessionList as SessionListData,
   SessionState,
   CreateSessionRequest,
@@ -42,6 +42,8 @@ import type {
   ToolSelection,
 } from "./tools.js";
 import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+
+type SessionData = BrainSessionData & { retain_until: string };
 
 export type SessionInput = string;
 
@@ -99,6 +101,8 @@ export interface CreateSessionOptions<Environments extends EnvironmentMap = Envi
     maxDescendants?: number;
   };
   metadata?: Record<string, string>;
+  /** Finite durable-history deadline. Omit to use the Brain deployment default. */
+  retainUntil?: Date | string;
 }
 
 export interface RequestOptions {
@@ -143,6 +147,7 @@ export interface SessionSummary {
   model: ModelSummary;
   createdAt: string;
   updatedAt: string;
+  retainUntil: string;
   metadata: Readonly<Record<string, string | undefined>>;
 }
 
@@ -213,6 +218,9 @@ export class Sessions {
       },
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.retainUntil === undefined
+        ? {}
+        : { retain_until: normalizeTimestamp(options.retainUntil, "retainUntil") }),
       ...(options.network === undefined
         ? {}
         : { network: options.network as NonNullable<CreateSessionRequest["network"]> }),
@@ -361,6 +369,9 @@ export class Sessions {
       ...(environmentComponents.length === 0 ? {} : { environments: environmentConfig }),
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.retainUntil === undefined
+        ? {}
+        : { retain_until: normalizeTimestamp(options.retainUntil, "retainUntil") }),
       ...(options.network === undefined ? {} : { network: options.network }),
       ...(options.providerRecoveryRetries === undefined
         ? {}
@@ -625,6 +636,10 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     return this.#data.updated_at;
   }
 
+  get retainUntil(): string {
+    return this.#data.retain_until;
+  }
+
   get metadata(): Readonly<Record<string, string | undefined>> {
     return this.#data.metadata;
   }
@@ -777,6 +792,25 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     return this;
   }
 
+  async setRetention(
+    value: Date | string,
+    options: Pick<RequestOptions, "signal"> & { allowShorten?: boolean } = {},
+  ): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/retention`,
+      {
+        body: {
+          retain_until: normalizeTimestamp(value, "retainUntil"),
+          allow_shorten: options.allowShorten ?? false,
+        },
+        signal: options.signal,
+        retry: true,
+      },
+    );
+    return this;
+  }
+
   async end(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
     this.#data = await this.#transport.json<SessionData>(
       "POST",
@@ -801,6 +835,12 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
 
 function isOutputOptions(options: RequestOptions | OutputOptions): options is OutputOptions {
   return "output" in options;
+}
+
+function normalizeTimestamp(value: Date | string, field: string): string {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(parsed.getTime())) throw new TypeError(`${field} must be a valid timestamp`);
+  return parsed.toISOString();
 }
 
 async function compileOutputSchema(
