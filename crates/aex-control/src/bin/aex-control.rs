@@ -10,6 +10,7 @@
 //! AEX_OPERATOR_TOKEN (enables waitlist administration); AEX_SWEEP_SECONDS (default 30);
 //! AEX_DISCOVERY_OVERLAP_SECONDS (default max(2*sweep, 120));
 //! AEX_DISCOVERY_SESSION_LIMIT (one-time bootstrap safety bound, default 100,000).
+//! AEX_DISCOVERY_PARTITIONS (stable Brain changefeed partitions, default 1, maximum 256).
 //! AEX_STORAGE_MAX_OBJECT_BYTES (default 512 MiB) and AEX_STORAGE_MAX_SESSION_BYTES
 //! (default 10 GiB) bound durable session uploads.
 //! AEX_MAX_CONCURRENT_CREATE_BODIES (default 4) bounds simultaneous 24 MiB request buffers.
@@ -102,7 +103,8 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
     };
     let db = Db::open(&cfg.db_path)?;
     let brain = BrainClient::new(cfg.brain_url.clone(), cfg.brain_token.clone())
-        .with_discovery_policy(cfg.discovery_overlap_ms, cfg.discovery_session_limit);
+        .with_discovery_policy(cfg.discovery_overlap_ms, cfg.discovery_session_limit)
+        .with_discovery_partitions(cfg.discovery_partitions);
     let admission = Admission::new(cfg.admission)?;
     tracing::info!(
         "brain: {} · db: {} · card: 1gb {}/h running",

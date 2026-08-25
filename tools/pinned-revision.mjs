@@ -3,20 +3,10 @@ import path from "node:path";
 import process from "node:process";
 
 const cargo = readFileSync(path.resolve(import.meta.dirname, "../Cargo.toml"), "utf8");
-const groups = {
-  brain: [
-    "brain-protocol",
-    "brain",
-    "brain-aws",
-    "brain-standalone",
-    "brain-loophost",
-    "brain-server",
-    "brain-providers",
-  ],
-};
+const groups = { brain: ["brain-protocol"] };
 const selected = groups[process.argv[2]];
 if (selected === undefined) {
-  throw new Error("usage: pinned-revision.mjs brain");
+  throw new Error("usage: pinned-revision.mjs brain|brain-packages");
 }
 const revisions = selected.map((name) => {
   const match = cargo.match(

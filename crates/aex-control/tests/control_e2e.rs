@@ -65,7 +65,9 @@ fn sse(events: &[Value]) -> String {
 }
 
 fn stub_doc(id: &str, state: &str, storage: Value, turns: i64, last_seq: i64) -> Value {
-    let now = aex_control::rfc3339(aex_control::now_ms());
+    let now_ms = aex_control::now_ms();
+    let now = aex_control::rfc3339(now_ms);
+    let retain_until = aex_control::rfc3339(now_ms + 86_400_000);
     json!({
         "id": id,
         "root_id": id,
@@ -75,12 +77,15 @@ fn stub_doc(id: &str, state: &str, storage: Value, turns: i64, last_seq: i64) ->
         "turn_state": "idle",
         "shape": "1gb",
         "model": {
+            "component_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "world": "aex:model/model@1.0.0",
             "provider": "anthropic",
             "name": "stub-model",
             "context_window_tokens": 32768
         },
         "storage": storage,
         "created_at": now.clone(),
+        "retain_until": retain_until,
         "updated_at": now,
         "turns": turns,
         "last_seq": last_seq,
@@ -270,6 +275,29 @@ async fn stub_handler(
                 }
             }
             respond(201, doc)
+        }
+        ("GET", ["v1", "session-changes"]) => {
+            let mut data = sessions
+                .values()
+                .map(|session| {
+                    json!({
+                        "id": format!("change:{}:{}", session.doc["id"].as_str().unwrap(), session.seq),
+                        "session": session.doc
+                    })
+                })
+                .collect::<Vec<_>>();
+            data.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
+            respond(
+                200,
+                json!({
+                    "object":"session.change.list",
+                    "partition":0,
+                    "partitions":1,
+                    "watermark_ms":aex_control::now_ms(),
+                    "data":data,
+                    "has_more":false
+                }),
+            )
         }
         ("GET", ["v1", "sessions"]) => {
             let requested_state = uri.query().and_then(|query| {

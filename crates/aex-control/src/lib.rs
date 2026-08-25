@@ -238,6 +238,7 @@ pub struct Config {
     pub sweep_seconds: u64,
     pub discovery_overlap_ms: i64,
     pub discovery_session_limit: usize,
+    pub discovery_partitions: u16,
     pub storage_limits: StorageLimits,
     pub admission: admission::AdmissionConfig,
 }
@@ -357,6 +358,10 @@ impl Config {
         if !(1..=1_000_000).contains(&discovery_session_limit) {
             anyhow::bail!("AEX_DISCOVERY_SESSION_LIMIT must be between 1 and 1000000");
         }
+        let discovery_partitions = num("AEX_DISCOVERY_PARTITIONS", 1u16)?;
+        if !(1..=256).contains(&discovery_partitions) {
+            anyhow::bail!("AEX_DISCOVERY_PARTITIONS must be between 1 and 256");
+        }
         let storage_limits = StorageLimits {
             max_object_bytes: num(
                 "AEX_STORAGE_MAX_OBJECT_BYTES",
@@ -458,6 +463,7 @@ impl Config {
             sweep_seconds,
             discovery_overlap_ms,
             discovery_session_limit,
+            discovery_partitions,
             storage_limits,
             admission,
         })

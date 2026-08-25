@@ -1,14 +1,15 @@
 import {
   MAX_INLINE_FILE_BYTES,
   SessionChildren as BrainChildren,
+  SessionSandbox as BrainSandbox,
   SessionStorage as BrainStorage,
-} from "@aexhq/session-protocol";
+} from "@aexhq/brain";
 import type {
-  EnvironmentFileEntry as BrainEnvironmentFileEntry,
+  SandboxFileEntry as BrainSandboxFileEntry,
+  SandboxStatus as BrainSandboxStatus,
   StorageObject as BrainStorageObject,
-} from "@aexhq/session-protocol";
-import type { Event, Session as BrainSession } from "@aexhq/session-protocol/session";
-import type { EnvironmentRef } from "@aexhq/environment";
+} from "@aexhq/brain";
+import type { Event, Session as BrainSession } from "@aexhq/brain/session";
 
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
@@ -40,12 +41,193 @@ export interface PageOptions extends OperationOptions {
   limit?: number;
 }
 
-export interface EnvironmentFile {
+export interface SandboxStatus {
+  state: BrainSandboxStatus["state"];
+  generation?: string;
+  reason?: string;
+  changedAt?: string;
+  expiresAt?: string;
+}
+
+export interface SandboxFile {
   path: string;
-  kind: BrainEnvironmentFileEntry["kind"];
+  kind: BrainSandboxFileEntry["kind"];
   bytes: number;
   sha256?: string;
   modifiedAt: string;
+}
+
+export interface SandboxFilePage {
+  data: SandboxFile[];
+  hasMore: boolean;
+  nextCursor?: string;
+  generation: string;
+}
+
+export interface SandboxFileOptions extends OperationOptions {
+  generation: string;
+}
+
+export interface SandboxFilePageOptions extends SandboxFileOptions, PageOptions {}
+
+export class SandboxFiles {
+  readonly #inner: BrainSandbox["files"];
+  readonly #transport: Transport;
+
+  constructor(inner: BrainSandbox["files"], transport: Transport) {
+    this.#inner = inner;
+    this.#transport = transport;
+  }
+
+  async list(path: string, options: SandboxFilePageOptions): Promise<SandboxFilePage> {
+    const page = await this.#inner.list(
+      {
+        path,
+        generation: options.generation,
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      },
+      request(options),
+    );
+    return filePage(page);
+  }
+
+  async stat(path: string, options: SandboxFileOptions): Promise<SandboxFile> {
+    return file(await this.#inner.stat({ path, generation: options.generation }, request(options)));
+  }
+
+  async download(path: string, options: SandboxFileOptions): Promise<Uint8Array> {
+    return collect(await this.downloadStream(path, options));
+  }
+
+  async downloadStream(
+    path: string,
+    options: SandboxFileOptions,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const entry = await this.#inner.stat({ path, generation: options.generation }, request(options));
+    if (entry.bytes <= MAX_INLINE_FILE_BYTES) {
+      const result = await this.#inner.readInline(
+        { path, generation: options.generation },
+        request(options),
+      );
+      return byteStream(decodeBase64(result.content_base64));
+    }
+    const ticket = await this.#inner.prepareDownload(
+      { path, generation: options.generation },
+      request(options),
+    );
+    return this.#transport.downloadTransferStream(ticket, options.signal, entry.bytes);
+  }
+
+  async upload(
+    path: string,
+    source: UploadSource,
+    options: SandboxFileOptions & { overwrite?: boolean },
+  ): Promise<SandboxFile> {
+    const base = {
+      path,
+      generation: options.generation,
+      ...(options.overwrite === undefined ? {} : { overwrite: options.overwrite }),
+    };
+    let entry: BrainSandboxFileEntry;
+    if (isStreamingSource(source)) {
+      assertStreamingSource(source);
+      entry = source.bytes <= MAX_INLINE_FILE_BYTES
+        ? await this.#inner.writeInline(
+            { ...base, content_base64: encodeBase64(await collectDeclared(source, options.signal)) },
+            request(options),
+          )
+        : await this.#uploadStream(base, source, options);
+    } else {
+      const content = await bytesOf(source);
+      entry = content.byteLength <= MAX_INLINE_FILE_BYTES
+        ? await this.#inner.writeInline(
+            { ...base, content_base64: encodeBase64(content) },
+            request(options),
+          )
+        : await this.#upload(base, content, options);
+    }
+    return file(entry);
+  }
+
+  async #upload(
+    input: { path: string; generation: string; overwrite?: boolean },
+    content: Uint8Array,
+    options: SandboxFileOptions,
+  ): Promise<BrainSandboxFileEntry> {
+    const ticket = await this.#inner.prepareUpload(
+      { ...input, bytes: content.byteLength, sha256: await sha256(content) },
+      request(options),
+    );
+    await this.#transport.uploadTransfer(ticket, content, content.byteLength, options.signal);
+    // Direct sandbox transfers are intentionally happy-path only. Do not automatically replay an
+    // ambiguous import: surface the error so the caller can inspect the generation/path and
+    // prepare a fresh transfer. Durable storage completion has separate retry-safe semantics.
+    return this.#inner.completeUpload(ticket.transfer_id, request(options));
+  }
+
+  async #uploadStream(
+    input: { path: string; generation: string; overwrite?: boolean },
+    source: StreamingUploadSource,
+    options: SandboxFileOptions,
+  ): Promise<BrainSandboxFileEntry> {
+    const ticket = await this.#inner.prepareUpload(
+      { ...input, bytes: source.bytes, sha256: source.sha256 },
+      request(options),
+    );
+    await this.#transport.uploadTransfer(ticket, () => source.stream(), source.bytes, options.signal);
+    return this.#inner.completeUpload(ticket.transfer_id, request(options));
+  }
+
+  async find(
+    input: { path: string; glob: string },
+    options: SandboxFilePageOptions,
+  ): Promise<SandboxFilePage> {
+    const page = await this.#inner.find(
+      {
+        ...input,
+        generation: options.generation,
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      },
+      request(options),
+    );
+    return filePage(page);
+  }
+
+  async grep(
+    input: { path: string; query: string },
+    options: SandboxFilePageOptions,
+  ): Promise<SandboxFilePage> {
+    const page = await this.#inner.grep(
+      {
+        ...input,
+        generation: options.generation,
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      },
+      request(options),
+    );
+    return filePage(page);
+  }
+}
+
+export class SessionSandbox {
+  readonly #inner: BrainSandbox;
+  readonly files: SandboxFiles;
+
+  constructor(transport: Transport, sessionId: string) {
+    this.#inner = new BrainSandbox(transport, sessionId);
+    this.files = new SandboxFiles(this.#inner.files, transport);
+  }
+
+  async status(options: OperationOptions = {}): Promise<SandboxStatus> {
+    return sandboxStatus(await this.#inner.status(request(options)));
+  }
+
+  async create(options: OperationOptions = {}): Promise<SandboxStatus> {
+    return sandboxStatus(await this.#inner.create(intrinsicRequest(options)));
+  }
 }
 
 export interface StorageObject {
@@ -66,16 +248,10 @@ export interface StoragePage {
 export class SessionStorage {
   readonly #inner: BrainStorage;
   readonly #transport: Transport;
-  readonly #environmentNames: ReadonlyMap<EnvironmentRef, string>;
 
-  constructor(
-    transport: Transport,
-    sessionId: string,
-    environmentNames: ReadonlyMap<EnvironmentRef, string> = new Map(),
-  ) {
+  constructor(transport: Transport, sessionId: string) {
     this.#inner = new BrainStorage(transport, sessionId);
     this.#transport = transport;
-    this.#environmentNames = environmentNames;
   }
 
   async list(options: PageOptions & { prefix?: string } = {}): Promise<StoragePage> {
@@ -160,44 +336,36 @@ export class SessionStorage {
     return this.#inner.delete(key, request(options));
   }
 
-  async copyFromEnvironment(
-    environment: EnvironmentRef,
-    input: { key: string; path: string; generation: string; overwrite?: boolean },
+  async copyFromSandbox(
+    input: { environment: string; key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
     options: OperationOptions = {},
   ): Promise<StorageObject> {
     return storageObject(await this.#inner.copyFromEnvironment(
-      this.#environmentName(environment),
+      input.environment,
       {
         key: input.key,
         path: input.path,
-        environment_generation: input.generation,
+        environment_generation: input.sandboxGeneration,
         ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
       },
       request(options),
     ));
   }
 
-  async copyToEnvironment(
-    environment: EnvironmentRef,
-    input: { key: string; path: string; generation: string; overwrite?: boolean },
+  async copyToSandbox(
+    input: { environment: string; key: string; path: string; sandboxGeneration: string; overwrite?: boolean },
     options: OperationOptions = {},
-  ): Promise<EnvironmentFile> {
-    return environmentFile(await this.#inner.copyToEnvironment(
-      this.#environmentName(environment),
+  ): Promise<SandboxFile> {
+    return file(await this.#inner.copyToEnvironment(
+      input.environment,
       {
         key: input.key,
         path: input.path,
-        environment_generation: input.generation,
+        environment_generation: input.sandboxGeneration,
         ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
       },
       request(options),
     ));
-  }
-
-  #environmentName(environment: EnvironmentRef): string {
-    const name = this.#environmentNames.get(environment);
-    if (name === undefined) throw new TypeError("EnvironmentRef does not belong to this Session");
-    return name;
   }
 }
 
@@ -330,13 +498,32 @@ function idempotentRequest(options: IdempotentOperationOptions): {
   };
 }
 
-function environmentFile(value: BrainEnvironmentFileEntry): EnvironmentFile {
+function sandboxStatus(value: BrainSandboxStatus): SandboxStatus {
+  return {
+    state: value.state,
+    ...(value.generation == null ? {} : { generation: value.generation }),
+    ...(value.reason == null ? {} : { reason: value.reason }),
+    ...(value.changed_at_ms == null ? {} : { changedAt: timestamp(value.changed_at_ms) }),
+    ...(value.expires_at_ms == null ? {} : { expiresAt: timestamp(value.expires_at_ms) }),
+  };
+}
+
+function file(value: BrainSandboxFileEntry): SandboxFile {
   return {
     path: value.path,
     kind: value.kind,
     bytes: value.bytes,
     ...(value.sha256 == null ? {} : { sha256: value.sha256 }),
     modifiedAt: timestamp(value.modified_at_ms),
+  };
+}
+
+function filePage(value: Awaited<ReturnType<BrainSandbox["files"]["list"]>>): SandboxFilePage {
+  return {
+    data: value.data.map(file),
+    hasMore: value.has_more,
+    ...(value.next_cursor === undefined ? {} : { nextCursor: value.next_cursor }),
+    generation: value.generation,
   };
 }
 

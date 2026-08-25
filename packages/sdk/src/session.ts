@@ -2,19 +2,24 @@ import type {
   ApiError,
   Event,
   MessageAccepted as BrainMessageAccepted,
-  Provider,
-  Session as SessionData,
+  ToolDefinition,
+  Session as BrainSessionData,
   SessionList as SessionListData,
   SessionState,
   CreateSessionRequest,
-} from "@aexhq/session-protocol/session";
-import { CustomerEnvironment } from "@aexhq/session-protocol";
+} from "@aexhq/brain/session";
+import {
+  CustomerEnvironment,
+  prepareComponents,
+  type ComponentExtension,
+  type SessionTool as ComponentSessionTool,
+} from "@aexhq/brain";
 import { inspectEnvironment, type EnvironmentRef, type HandleOf } from "@aexhq/environment";
 import type {
   ClientRegistration,
   NetworkPolicy,
   WebSocketFactory,
-} from "@aexhq/session-protocol";
+} from "@aexhq/brain";
 import * as z from "zod";
 
 import {
@@ -30,13 +35,15 @@ import type { OutputValidationIssue } from "./errors.js";
 import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
-import { compileTools } from "./tools.js";
+import { compileCallbacks, compileTools } from "./tools.js";
 import type {
   EnvironmentMap,
   EnvironmentValue,
   ToolSelection,
 } from "./tools.js";
-import { encodeBase64, SessionChildren, SessionStorage } from "./resources.js";
+import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+
+type SessionData = BrainSessionData & { retain_until: string };
 
 export type SessionInput = string;
 
@@ -47,7 +54,9 @@ interface MessageAccepted extends BrainMessageAccepted {
 }
 
 export interface ModelOptions {
-  provider: Provider;
+  /** Imported Model component. Omission uses the temporary pre-cut donor path. */
+  component?: ComponentExtension<"model">;
+  provider: string;
   name: string;
   apiKey: string;
   baseUrl?: string;
@@ -73,10 +82,12 @@ export interface Loop {
 export interface CreateSessionOptions<Environments extends EnvironmentMap = EnvironmentMap> {
   model: ModelOptions;
   /** The imported agent loop that drives this session and every child unless spawn overrides it. */
-  loop: Loop;
+  loop?: Loop;
+  /** Imported Agentloop component. This is the clean component path. */
+  agentloop?: ComponentExtension<"agentloop">;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
-  environments?: Environments;
-  tools?: readonly ToolSelection<EnvironmentValue<Environments>>[];
+  environments?: Environments | Readonly<Record<string, ComponentExtension<"environment">>>;
+  tools?: readonly (ToolSelection<EnvironmentValue<Environments>> | ComponentSessionTool)[];
   /** Write-only values for environment names declared by managed Tools. */
   secrets?: Record<string, string>;
   /** Maximum direct outbound network authority sealed for managed sandboxes. Omission is deny-all. */
@@ -90,6 +101,8 @@ export interface CreateSessionOptions<Environments extends EnvironmentMap = Envi
     maxDescendants?: number;
   };
   metadata?: Record<string, string>;
+  /** Finite durable-history deadline. Omit to use the Brain deployment default. */
+  retainUntil?: Date | string;
 }
 
 export interface RequestOptions {
@@ -118,7 +131,7 @@ export interface SessionList {
 }
 
 export interface ModelSummary {
-  provider: Provider;
+  provider: string;
   name: string;
   baseUrl?: string;
   contextWindowTokens: number;
@@ -134,6 +147,7 @@ export interface SessionSummary {
   model: ModelSummary;
   createdAt: string;
   updatedAt: string;
+  retainUntil: string;
   metadata: Readonly<Record<string, string | undefined>>;
 }
 
@@ -153,7 +167,7 @@ export class Sessions {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    for (const environment of this.#customerEnvironmentInstances.values()) environment.close();
+    for (const hand of this.#customerEnvironmentInstances.values()) hand.close();
     this.#customerEnvironmentInstances.clear();
     this.#customerEnvironments.clear();
   }
@@ -163,16 +177,15 @@ export class Sessions {
     request: RequestOptions = {},
   ): Promise<Session<Environments>> {
     if (this.#closed) throw new SessionError("Aex client is closed");
+    if (options.agentloop !== undefined || options.model.component !== undefined) {
+      return await this.#createComponentSession(options, request);
+    }
     if (options.loop === undefined) throw new TypeError("sessions.create requires an imported loop");
-    const compiledTools = await compileTools(options.tools, options.environments, options.secrets);
-    await Promise.all(compiledTools.layers.map((layer) =>
-      this.#transport.ensureArtifactLayer(
-        layer.checksum,
-        layer.media_type,
-        layer.content,
-        request.signal,
-      )
-    ));
+    const compiledTools = await compileTools(
+      options.tools as readonly ToolSelection[] | undefined,
+      options.environments as Environments | undefined,
+      options.secrets,
+    );
     await this.#ensureCustomerEnvironment(
       compiledTools.callbackClientId,
       compiledTools.clientRegistrations,
@@ -205,6 +218,9 @@ export class Sessions {
       },
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.retainUntil === undefined
+        ? {}
+        : { retain_until: normalizeTimestamp(options.retainUntil, "retainUntil") }),
       ...(options.network === undefined
         ? {}
         : { network: options.network as NonNullable<CreateSessionRequest["network"]> }),
@@ -241,6 +257,148 @@ export class Sessions {
       retry: true,
     });
     return new Session(this.#transport, data, compiledTools.environmentNames);
+  }
+
+  async #createComponentSession<Environments extends EnvironmentMap>(
+    options: CreateSessionOptions<Environments>,
+    request: RequestOptions,
+  ): Promise<Session<Environments>> {
+    const model = options.model.component;
+    const agentloop = options.agentloop;
+    if (model === undefined || agentloop === undefined) {
+      throw new TypeError("component sessions require model.component and agentloop");
+    }
+    const tools = [...(options.tools ?? [])];
+    const componentTools = tools.filter(isComponentTool);
+    const callbackTools = tools.filter((tool): tool is import("./tools.js").Tool => !isComponentTool(tool));
+    const environments = Object.entries(options.environments ?? {});
+    if (environments.some(([, environment]) => !isEnvironmentComponent(environment))) {
+      throw new TypeError("component sessions accept only precompiled Environment component values");
+    }
+    const environmentComponents = environments.map(([name, environment]) => {
+      if (!isEnvironmentComponent(environment)) {
+        throw new TypeError(`Environment ${JSON.stringify(name)} is not a component`);
+      }
+      return [name, environment] as const;
+    });
+    const applicationEnvironments = environmentComponents.filter(([, environment]) =>
+      isApplicationEnvironment(environment));
+    if (callbackTools.length > 0 && applicationEnvironments.length !== 1) {
+      throw new TypeError("application callback Tools require exactly one app() Environment");
+    }
+    const callbacks = await compileCallbacks(callbackTools);
+    const allComponentTools = [...componentTools, ...callbacks.components];
+    const callbackEnvironment = applicationEnvironments[0];
+    if (callbackEnvironment !== undefined) {
+      await this.#ensureCustomerEnvironment(
+        applicationEnvironmentId(callbackEnvironment[1]),
+        callbacks.registrations,
+        request.signal,
+      );
+    }
+    const prepared = await prepareComponents([
+      model,
+      agentloop,
+      ...allComponentTools,
+      ...environmentComponents.map(([, environment]) => environment),
+    ]);
+    const modelBinding = prepared.bindings[0];
+    const agentloopBinding = prepared.bindings[1];
+    if (modelBinding === undefined || agentloopBinding === undefined) {
+      throw new TypeError("component session bindings are incomplete");
+    }
+    const toolBindings = prepared.bindings.slice(2, 2 + allComponentTools.length);
+    const environmentBindings = prepared.bindings.slice(2 + allComponentTools.length);
+    const toolItems = allComponentTools.map((tool, index) => {
+      const binding = toolBindings[index];
+      if (binding === undefined) throw new TypeError("Tool component binding is missing");
+      const definition = componentToolDefinition(tool);
+      const needsEnvironment = binding.grants.includes("environment");
+      const isCallback = index >= componentTools.length;
+      if (needsEnvironment && !isCallback && environmentComponents.length !== 1) {
+        throw new TypeError(
+          "a Tool with the environment grant requires exactly one declared Environment",
+        );
+      }
+      const environmentName = isCallback
+        ? callbackEnvironment?.[0]
+        : environmentComponents[0]?.[0];
+      return {
+        definition,
+        executor: {
+          kind: "component",
+          component_digest: binding.component_digest,
+          world: binding.world,
+          config: binding.config,
+          grants: binding.grants,
+          ...(needsEnvironment ? { environment: environmentName! } : {}),
+        },
+      };
+    });
+    const environmentConfig = Object.fromEntries(environmentComponents.map(([name], index) => {
+      const binding = environmentBindings[index];
+      if (binding === undefined) {
+        throw new TypeError(`Environment component binding ${JSON.stringify(name)} is missing`);
+      }
+      return [name, {
+        component_digest: binding.component_digest,
+        world: binding.world,
+        config: binding.config,
+      }];
+    }));
+    const body = {
+      model: {
+        component_digest: modelBinding.component_digest,
+        world: modelBinding.world,
+        config: modelBinding.config,
+        provider: options.model.provider,
+        name: options.model.name,
+        api_key: options.model.apiKey,
+        ...(options.model.baseUrl === undefined ? {} : { base_url: options.model.baseUrl }),
+        ...(options.model.maxOutputTokens === undefined
+          ? {}
+          : { max_output_tokens: options.model.maxOutputTokens }),
+      },
+      agentloop: {
+        component_digest: agentloopBinding.component_digest,
+        world: agentloopBinding.world,
+        config: agentloopBinding.config,
+      },
+      component_artifacts: prepared.artifacts,
+      tools: { items: toolItems },
+      ...(environmentComponents.length === 0 ? {} : { environments: environmentConfig }),
+      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
+      ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.retainUntil === undefined
+        ? {}
+        : { retain_until: normalizeTimestamp(options.retainUntil, "retainUntil") }),
+      ...(options.network === undefined ? {} : { network: options.network }),
+      ...(options.providerRecoveryRetries === undefined
+        ? {}
+        : { provider_recovery_retries: options.providerRecoveryRetries }),
+      ...(options.children === undefined
+        ? {}
+        : {
+            children: {
+              ...(options.children.maxDepth === undefined
+                ? {}
+                : { max_depth: options.children.maxDepth }),
+              ...(options.children.maxDirectChildren === undefined
+                ? {}
+                : { max_direct_children: options.children.maxDirectChildren }),
+              ...(options.children.maxDescendants === undefined
+                ? {}
+                : { max_descendants: options.children.maxDescendants }),
+            },
+          }),
+    } as unknown as CreateSessionRequest;
+    const data = await this.#transport.json<SessionData>("POST", "/v1/sessions", {
+      body,
+      headers: { "Idempotency-Key": request.idempotencyKey ?? randomIdempotencyKey() },
+      signal: request.signal,
+      retry: true,
+    });
+    return new Session(this.#transport, data);
   }
 
   async get(id: string, options: Pick<RequestOptions, "signal"> = {}): Promise<Session> {
@@ -328,10 +486,61 @@ export class Sessions {
       await waitWithSignal(starting, signal);
       return;
     }
-    const environment = await waitWithSignal(existing, signal);
+    const hand = await waitWithSignal(existing, signal);
     if (this.#closed) throw new SessionError("Aex client is closed");
-    await waitWithSignal(environment.register(registrations), signal);
+    await waitWithSignal(hand.register(registrations), signal);
   }
+}
+
+function isApplicationEnvironment(
+  value: ComponentExtension<"environment">,
+): boolean {
+  const config = value.config;
+  return config !== null && typeof config === "object" && !Array.isArray(config) &&
+    (config as { driver?: unknown }).driver === "customer";
+}
+
+function applicationEnvironmentId(value: ComponentExtension<"environment">): string {
+  const config = value.config as { configuration?: { registration?: unknown } };
+  const id = config.configuration?.registration;
+  if (typeof id !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(id)) {
+    throw new TypeError("app() Environment registration is invalid");
+  }
+  return id;
+}
+
+type ComponentToolConfig = Readonly<Record<string, unknown>> & {
+  readonly definition: ToolDefinition;
+};
+
+function isComponentTool(
+  value: unknown,
+): value is ComponentExtension<"tool", ComponentToolConfig> {
+  return value !== null
+    && typeof value === "object"
+    && (value as { kind?: unknown }).kind === "brain.component"
+    && (value as { extension?: unknown }).extension === "tool";
+}
+
+function isEnvironmentComponent(value: unknown): value is ComponentExtension<"environment"> {
+  return value !== null
+    && typeof value === "object"
+    && (value as { kind?: unknown }).kind === "brain.component"
+    && (value as { extension?: unknown }).extension === "environment";
+}
+
+function componentToolDefinition(
+  value: ComponentExtension<"tool", ComponentToolConfig>,
+): ToolDefinition {
+  const config = value.config;
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    throw new TypeError("Tool component config must be an object containing definition");
+  }
+  const definition = config.definition;
+  if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new TypeError("Tool component config.definition is required");
+  }
+  return definition;
 }
 
 function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -367,7 +576,7 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     this.#transport = transport;
     this.#data = data;
     this.#environmentNames = environmentNames;
-    this.storage = new SessionStorage(transport, data.id, environmentNames);
+    this.storage = new SessionStorage(transport, data.id);
     this.children = new SessionChildren(transport, data.id);
   }
 
@@ -425,6 +634,10 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
 
   get updatedAt(): string {
     return this.#data.updated_at;
+  }
+
+  get retainUntil(): string {
+    return this.#data.retain_until;
   }
 
   get metadata(): Readonly<Record<string, string | undefined>> {
@@ -561,6 +774,43 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     return this;
   }
 
+  async suspend(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/suspend`,
+      { signal: options.signal, retry: true },
+    );
+    return this;
+  }
+
+  async resume(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/resume`,
+      { signal: options.signal, retry: true },
+    );
+    return this;
+  }
+
+  async setRetention(
+    value: Date | string,
+    options: Pick<RequestOptions, "signal"> & { allowShorten?: boolean } = {},
+  ): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/retention`,
+      {
+        body: {
+          retain_until: normalizeTimestamp(value, "retainUntil"),
+          allow_shorten: options.allowShorten ?? false,
+        },
+        signal: options.signal,
+        retry: true,
+      },
+    );
+    return this;
+  }
+
   async end(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
     this.#data = await this.#transport.json<SessionData>(
       "POST",
@@ -585,6 +835,12 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
 
 function isOutputOptions(options: RequestOptions | OutputOptions): options is OutputOptions {
   return "output" in options;
+}
+
+function normalizeTimestamp(value: Date | string, field: string): string {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(parsed.getTime())) throw new TypeError(`${field} must be a valid timestamp`);
+  return parsed.toISOString();
 }
 
 async function compileOutputSchema(

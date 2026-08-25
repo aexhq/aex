@@ -81,7 +81,7 @@ export default tool(z.object({ id: z.string() }), async function lookup({ id }) 
     assert.match(prepared.artifact.digest, /^[0-9a-f]{64}$/);
     const manifest = JSON.parse(await readFile(join(directory, "dist", "lookup.artifact.json"), "utf8"));
     assert.equal(manifest.profile, "computer/v1");
-    assert.equal(manifest.target, "linux-arm64");
+    assert.equal(manifest.target, "linux-amd64");
 
     const second = await exec(process.execPath, [resolve("dist/index.js"), "tools", "build"], { cwd: directory });
     assert.equal(second.stdout, first.stdout);

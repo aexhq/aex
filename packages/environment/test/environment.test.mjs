@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  callbacks,
   computer,
   defineEnvironment,
   inspectEnvironment,
@@ -34,17 +33,6 @@ test("an environment factory returns an opaque immutable typed reference", () =>
     },
     configuration: { region: "eu-west-2" },
   });
-});
-
-test("ergonomic recovery names serialize to the canonical wire vocabulary", () => {
-  const application = defineEnvironment({
-    identity: "example.callbacks",
-    protocol: "environment/v1",
-    profile: callbacks({ recovery: "replay-safe" }),
-    serialize: () => ({}),
-    handle: () => ({}),
-  });
-  assert.equal(inspectEnvironment(application()).serialized.profile.recovery, "replay_safe");
 });
 
 test("plain objects cannot impersonate environment references", () => {

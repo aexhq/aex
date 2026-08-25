@@ -3,12 +3,6 @@
   "version": "0.1.0",
   "description": "Provider-neutral Aex environment extension authoring kit",
   "license": "Apache-2.0",
-  "homepage": "https://aex.dev",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aexhq/aex.git",
-    "directory": "packages/environment"
-  },
   "type": "module",
   "engines": { "node": ">=22.0.0" },
   "publishConfig": { "access": "public", "provenance": true, "tag": "next" },

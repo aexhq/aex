@@ -6,6 +6,9 @@ import {
   type EnvironmentRef,
 } from "@aexhq/environment";
 import * as z from "zod";
+import { callback as callbackComponent } from "@aexhq/env-app";
+import type { ComponentExtension } from "@aexhq/brain";
+import type { ToolDefinition } from "@aexhq/brain/session";
 
 import { jcsSha256 } from "./json.js";
 
@@ -32,25 +35,16 @@ export interface ToolRequirements {
   readonly processes?: boolean;
   readonly network?: readonly { readonly host: string; readonly port: number }[];
   readonly streaming?: boolean;
-  readonly recovery?: "retained" | "connection" | "replay-safe";
+  readonly recovery?: "retained" | "connection" | "replay_safe";
 }
 
 export interface PreparedArtifact {
   readonly digest: string;
   readonly target: ComputerProfile["platform"];
+  readonly contentBase64: string;
   readonly bytes: number;
   readonly execute: string;
   readonly setup?: string;
-  readonly layers: readonly PreparedArtifactLayer[];
-}
-
-export interface PreparedArtifactLayer {
-  readonly digest: string;
-  readonly bytes: number;
-  readonly mediaType: "application/javascript+esm" | "application/x-xz";
-  readonly mountPath: string;
-  readonly unpack: "file" | "tar.xz";
-  readonly source: URL;
 }
 
 export interface ToolContract {
@@ -184,10 +178,7 @@ export function withPreparedArtifact<Input extends z.ZodType, Output>(
     requirements: value.requirements,
     handler: value.handler,
     ...(value.setupHandler === undefined ? {} : { setupHandler: value.setupHandler }),
-    artifact: Object.freeze({
-      ...artifact,
-      layers: Object.freeze(artifact.layers.map((layer) => Object.freeze({ ...layer }))),
-    }),
+    artifact: Object.freeze({ ...artifact }),
   });
 }
 
@@ -207,18 +198,66 @@ export interface ClientRegistration {
 export interface CompiledTools {
   readonly items: readonly unknown[];
   readonly bundles: readonly unknown[];
-  readonly layers: readonly CompiledArtifactLayer[];
   readonly clientRegistrations: readonly ClientRegistration[];
   readonly environments: Readonly<Record<string, unknown>>;
   readonly environmentNames: ReadonlyMap<EnvironmentRef, string>;
   readonly callbackClientId?: string;
 }
 
-export interface CompiledArtifactLayer {
-  readonly checksum: string;
-  readonly bytes: number;
-  readonly media_type: string;
-  readonly content: Uint8Array;
+export interface CompiledCallbacks {
+  readonly components: readonly ComponentExtension<
+    "tool",
+    Readonly<Record<string, unknown>> & { readonly definition: ToolDefinition }
+  >[];
+  readonly registrations: readonly ClientRegistration[];
+}
+
+export async function compileCallbacks(selections: readonly Tool[]): Promise<CompiledCallbacks> {
+  const components: ComponentExtension<
+    "tool",
+    Readonly<Record<string, unknown>> & { readonly definition: ToolDefinition }
+  >[] = [];
+  const registrations: ClientRegistration[] = [];
+  const names = new Set<string>();
+  for (const value of selections) {
+    assertTool(value);
+    const contract = await compileContract(value);
+    if (names.has(contract.name)) {
+      throw new TypeError(`Tool ${JSON.stringify(contract.name)} was selected twice`);
+    }
+    names.add(contract.name);
+    if (value.artifact !== undefined) {
+      throw new TypeError(
+        `Tool ${JSON.stringify(contract.name)} is prepared for a hosted runtime and cannot execute as an application callback`,
+      );
+    }
+    if (value.requirements.workspace === true || value.requirements.processes === true) {
+      throw new TypeError(
+        `Tool ${JSON.stringify(contract.name)} requires hosted workspace or process capabilities`,
+      );
+    }
+    const definition = {
+      name: contract.name,
+      ...(contract.description === undefined ? {} : { description: contract.description }),
+      input_schema: contract.inputSchema,
+      output_schema: contract.outputSchema ?? {},
+      contract_digest: contract.contractDigest,
+    };
+    const registration = `tool:${contract.contractDigest}`;
+    components.push(callbackComponent(definition, registration));
+    registrations.push(Object.freeze({
+      registration,
+      name: contract.name,
+      contractDigest: contract.contractDigest,
+      input: value.input,
+      ...(value.output === undefined ? {} : { output: value.output }),
+      handler: value.handler as ToolHandler<z.ZodType>,
+    }));
+  }
+  return {
+    components: Object.freeze(components),
+    registrations: Object.freeze(registrations),
+  };
 }
 
 export async function compileTools(
@@ -233,7 +272,6 @@ export async function compileTools(
   }
   const items: unknown[] = [];
   const bundles = new Map<string, unknown>();
-  const layers = new Map<string, CompiledArtifactLayer>();
   const registrations: ClientRegistration[] = [];
   const names = new Set<string>();
   let callbackClientId: string | undefined;
@@ -294,52 +332,12 @@ export async function compileTools(
       throw new TypeError(`Tool ${JSON.stringify(contract.name)} has no prepared computer artifact`);
     }
     assertArtifact(value.artifact);
-    const layerRefs = [];
-    for (const layer of value.artifact.layers) {
-      const bytes = await readArtifactLayer(layer);
-      const existing = layers.get(layer.digest);
-      const payload = {
-        checksum: layer.digest,
-        bytes: layer.bytes,
-        media_type: layer.mediaType,
-        content: bytes,
-      };
-      if (existing !== undefined &&
-          (existing.bytes !== payload.bytes || existing.media_type !== payload.media_type)) {
-        throw new TypeError(`Prepared artifact layer ${layer.digest} conflicts with an earlier layer`);
-      }
-      layers.set(layer.digest, payload);
-      layerRefs.push({
-        checksum: layer.digest,
-        bytes: layer.bytes,
-        media_type: layer.mediaType,
-        mount_path: layer.mountPath,
-        unpack: layer.unpack,
-      });
-    }
-    const manifest = {
+    bundles.set(value.artifact.digest, {
       checksum: value.artifact.digest,
+      content_base64: value.artifact.contentBase64,
       bytes: value.artifact.bytes,
-      target: value.artifact.target,
-      execute_path: value.artifact.execute,
-      ...(value.artifact.setup === undefined ? {} : { setup_path: value.artifact.setup }),
-      layers: layerRefs,
-    };
-    const manifestIdentity = {
-      profile: "computer/v1",
-      target: value.artifact.target,
-      execute_path: value.artifact.execute,
-      setup_path: value.artifact.setup ?? null,
-      layers: layerRefs,
-    };
-    if (await jcsSha256(manifestIdentity) !== value.artifact.digest) {
-      throw new TypeError(`Prepared artifact ${value.artifact.digest} manifest digest changed`);
-    }
-    const existingManifest = bundles.get(value.artifact.digest);
-    if (existingManifest !== undefined && JSON.stringify(existingManifest) !== JSON.stringify(manifest)) {
-      throw new TypeError(`Prepared artifact ${value.artifact.digest} conflicts with an earlier manifest`);
-    }
-    bundles.set(value.artifact.digest, manifest);
+      media_type: "application/javascript+esm",
+    });
     items.push({
       definition,
       executor: {
@@ -354,7 +352,6 @@ export async function compileTools(
   return {
     items: Object.freeze(items),
     bundles: Object.freeze([...bundles.values()]),
-    layers: Object.freeze([...layers.values()]),
     clientRegistrations: Object.freeze(registrations),
     environments: environments.serialized,
     environmentNames: environments.byRef,
@@ -427,9 +424,8 @@ function incompatibilities(
     if (value.artifact === undefined || profile.platform !== value.artifact.target) {
       reasons.push(`cannot launch target ${JSON.stringify(value.artifact?.target ?? "application-callback")}`);
     }
-  } else {
-    if (value.artifact !== undefined) reasons.push("does not run prepared artifacts");
-    if (value.setupHandler !== undefined) reasons.push("does not provide tool setup");
+  } else if (profile.kind !== "callbacks") {
+    reasons.push("does not run application callbacks");
   }
   const needs = value.requirements;
   if (needs.workspace === true && profile.kind !== "computer") reasons.push("is missing workspace");
@@ -473,9 +469,7 @@ function wireRequirements(requirements: ToolRequirements): Record<string, unknow
       ? {}
       : { network: requirements.network.map(({ host, port }) => ({ host, ports: [port], protocol: "tls" })) }),
     ...(requirements.streaming === undefined ? {} : { streaming: requirements.streaming }),
-    ...(requirements.recovery === undefined
-      ? {}
-      : { recovery: requirements.recovery === "replay-safe" ? "replay_safe" : requirements.recovery }),
+    ...(requirements.recovery === undefined ? {} : { recovery: requirements.recovery }),
   };
 }
 
@@ -526,39 +520,4 @@ function assertArtifact(artifact: PreparedArtifact): void {
   if (artifact.setup !== undefined && !artifact.setup.startsWith("/")) {
     throw new TypeError("Prepared artifact setup entrypoint must be absolute");
   }
-  if (!Array.isArray(artifact.layers) || artifact.layers.length === 0) {
-    throw new TypeError("Prepared artifact must contain at least one immutable layer");
-  }
-  let bytes = 0;
-  for (const layer of artifact.layers) {
-    if (!SHA256.test(layer.digest)) throw new TypeError("Prepared artifact layer digest must be lower-case SHA-256 hex");
-    if (!Number.isSafeInteger(layer.bytes) || layer.bytes < 1) throw new TypeError("Prepared artifact layer bytes are invalid");
-    if (!(layer.source instanceof URL)) throw new TypeError("Prepared artifact layer source must be a URL");
-    if (!layer.mountPath.startsWith("/")) throw new TypeError("Prepared artifact layer mount path must be absolute");
-    bytes += layer.bytes;
-  }
-  if (bytes !== artifact.bytes) throw new TypeError("Prepared artifact bytes do not equal its layers");
-}
-
-async function readArtifactLayer(layer: PreparedArtifactLayer): Promise<Uint8Array> {
-  let bytes: Uint8Array;
-  if (layer.source.protocol === "file:") {
-    const { readFile } = await import("node:fs/promises");
-    bytes = await readFile(layer.source);
-  } else if (layer.source.protocol === "https:" || layer.source.protocol === "data:") {
-    const response = await fetch(layer.source);
-    if (!response.ok) throw new TypeError(`Could not read artifact layer ${layer.digest}: HTTP ${response.status}`);
-    bytes = new Uint8Array(await response.arrayBuffer());
-  } else {
-    throw new TypeError(`Unsupported artifact layer source protocol ${layer.source.protocol}`);
-  }
-  if (bytes.byteLength !== layer.bytes) throw new TypeError(`Artifact layer ${layer.digest} byte length changed`);
-  const actual = await sha256(bytes);
-  if (actual !== layer.digest) throw new TypeError(`Artifact layer ${layer.digest} content digest changed`);
-  return bytes;
-}
-
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

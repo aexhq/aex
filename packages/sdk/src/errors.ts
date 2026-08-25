@@ -1,4 +1,4 @@
-import type { ApiError, ApiErrorCode } from "@aexhq/session-protocol/session";
+import type { ApiError, ApiErrorCode } from "@aexhq/brain/session";
 
 /** One Aex trusted-output validation failure, expressed as a JSON Pointer. */
 export interface OutputValidationIssue {

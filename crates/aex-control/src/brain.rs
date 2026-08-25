@@ -21,6 +21,7 @@ pub struct BrainClient {
     token: String,
     discovery_overlap_ms: i64,
     discovery_session_limit: usize,
+    discovery_partitions: u16,
 }
 
 /// The authoritative, tenant-indexed projection used by metering discovery. `last_seq` is the
@@ -44,7 +45,6 @@ pub struct BrainDeletionStatus {
     pub completed_at_ms: Option<i64>,
 }
 
-const DISCOVERY_STATES: [&str; 5] = ["open", "ending", "ended", "deleting", "failed"];
 const CUSTOMER_ENVIRONMENT_HOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Every bounded (non-streaming) Brain call carries this total deadline: a stalled
 /// established connection must not hang the sweeper, deletion worker, or /v1/balance.
@@ -71,6 +71,7 @@ impl BrainClient {
             token: token.into(),
             discovery_overlap_ms: 120_000,
             discovery_session_limit: 100_000,
+            discovery_partitions: 1,
         }
     }
 
@@ -79,6 +80,11 @@ impl BrainClient {
     pub fn with_discovery_policy(mut self, overlap_ms: i64, session_limit: usize) -> Self {
         self.discovery_overlap_ms = overlap_ms.max(1);
         self.discovery_session_limit = session_limit.max(1);
+        self
+    }
+
+    pub fn with_discovery_partitions(mut self, partitions: u16) -> Self {
+        self.discovery_partitions = partitions.clamp(1, 256);
         self
     }
 
@@ -593,10 +599,8 @@ impl BrainClient {
             .map_err(|_| Error::Upstream("tenant root-session count overflowed".into()))
     }
 
-    /// Read the changed window of Brain's reverse-updated tenant/state index. Every non-deleted
-    /// billable state is queried separately so a state transition cannot permanently hide a
-    /// session. Callers advance their durable watermark only after all returned snapshots have
-    /// been settled successfully.
+    /// Read the changed window from Brain's stable tenant changefeed partitions. Callers advance
+    /// their durable watermark only after all returned snapshots have been settled successfully.
     pub async fn discover_sessions(
         &self,
         tenant_id: &str,
@@ -608,16 +612,17 @@ impl BrainClient {
         let mut snapshots = HashMap::<String, BrainSessionSnapshot>::new();
         let mut scanned = 0usize;
 
-        for state in DISCOVERY_STATES {
+        for partition in 0..self.discovery_partitions {
             let mut cursor: Option<String> = None;
             let mut cursors = HashSet::new();
-            let mut previous_updated_ms: Option<i64> = None;
             loop {
-                let mut url = reqwest::Url::parse("https://brain.invalid/v1/sessions")
-                    .expect("static tenant-list URL");
+                let mut url = reqwest::Url::parse("https://brain.invalid/v1/session-changes")
+                    .expect("static changefeed URL");
                 {
                     let mut query = url.query_pairs_mut();
-                    query.append_pair("state", state);
+                    query.append_pair("after_ms", &threshold_ms.to_string());
+                    query.append_pair("partition", &partition.to_string());
+                    query.append_pair("partitions", &self.discovery_partitions.to_string());
                     query.append_pair("limit", "100");
                     if let Some(cursor) = &cursor {
                         query.append_pair("cursor", cursor);
@@ -640,44 +645,36 @@ impl BrainClient {
                     .await?;
                 if !response.status().is_success() {
                     return Err(Error::Upstream(format!(
-                        "GET tenant discovery ({state}) -> {}",
+                        "GET tenant changefeed partition {partition} -> {}",
                         response.status()
                     )));
                 }
                 let page: Value = response
                     .json()
                     .await
-                    .map_err(|error| Error::Upstream(format!("tenant discovery page: {error}")))?;
+                    .map_err(|error| Error::Upstream(format!("tenant changefeed page: {error}")))?;
+                if page["partition"].as_u64() != Some(u64::from(partition))
+                    || page["partitions"].as_u64() != Some(u64::from(self.discovery_partitions))
+                {
+                    return Err(Error::Upstream(
+                        "tenant changefeed returned a different partition assignment".into(),
+                    ));
+                }
                 let data = page["data"].as_array().ok_or_else(|| {
-                    Error::Upstream("tenant discovery page has no data array".into())
+                    Error::Upstream("tenant changefeed page has no data array".into())
                 })?;
-                let mut reached_watermark = false;
-                for document in data {
+                for change in data {
                     scanned = scanned.saturating_add(1);
                     if scanned > self.discovery_session_limit {
                         return Err(Error::Upstream(format!(
-                            "tenant discovery exceeded the configured {}-session safety bound",
+                            "tenant changefeed exceeded the configured {}-session safety bound",
                             self.discovery_session_limit
                         )));
                     }
-                    let snapshot = parse_session_snapshot(document.clone())?;
-                    if snapshot.document["state"].as_str() != Some(state) {
-                        return Err(Error::Upstream(format!(
-                            "tenant discovery state partition {state} returned session {} in state {}",
-                            snapshot.id,
-                            snapshot.document["state"].as_str().unwrap_or("<missing>")
-                        )));
-                    }
-                    if previous_updated_ms.is_some_and(|previous| snapshot.updated_ms > previous) {
-                        return Err(Error::Upstream(format!(
-                            "tenant discovery state {state} is not ordered newest-first"
-                        )));
-                    }
-                    previous_updated_ms = Some(snapshot.updated_ms);
-                    if snapshot.updated_ms < threshold_ms {
-                        reached_watermark = true;
-                        break;
-                    }
+                    let document = change.get("session").cloned().ok_or_else(|| {
+                        Error::Upstream("tenant changefeed item has no session".into())
+                    })?;
+                    let snapshot = parse_session_snapshot(document)?;
                     match snapshots.get(&snapshot.id) {
                         Some(existing)
                             if (existing.updated_ms, existing.last_seq)
@@ -687,14 +684,11 @@ impl BrainClient {
                         }
                     }
                 }
-                let next = page_next_cursor(&page, "tenant discovery page")?;
-                if reached_watermark {
-                    break;
-                }
+                let next = page_next_cursor(&page, "tenant changefeed page")?;
                 let Some(next) = next else { break };
                 if !cursors.insert(next.clone()) {
                     return Err(Error::Upstream(
-                        "tenant discovery repeated a pagination cursor".into(),
+                        "tenant changefeed repeated a pagination cursor".into(),
                     ));
                 }
                 cursor = Some(next);
@@ -1258,13 +1252,9 @@ mod tests {
         State(open_queries): State<Arc<AtomicUsize>>,
         uri: Uri,
     ) -> Response {
-        let state = uri.query().and_then(|query| {
-            query
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("state="))
-        });
-        let data = if state == Some("open") && open_queries.fetch_add(1, Ordering::SeqCst) > 0 {
-            vec![json!({
+        let is_changefeed = uri.path() == "/v1/session-changes";
+        let data = if is_changefeed && open_queries.fetch_add(1, Ordering::SeqCst) > 0 {
+            vec![json!({"id":"change-1", "session": {
                 "id": "ses_transition000000000001",
                 "root_id": "ses_transition000000000001",
                 "depth": 0,
@@ -1279,7 +1269,7 @@ mod tests {
                 "last_seq": 2,
                 "turns": 1,
                 "metadata": {}
-            })]
+            }})]
         } else {
             Vec::new()
         };
@@ -1287,7 +1277,15 @@ mod tests {
             .status(200)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({"object":"list", "data":data, "has_more":false}).to_string(),
+                json!({
+                    "object":"session.change.list",
+                    "partition":0,
+                    "partitions":1,
+                    "watermark_ms":crate::now_ms(),
+                    "data":data,
+                    "has_more":false
+                })
+                .to_string(),
             ))
             .unwrap()
     }

@@ -1,7 +1,7 @@
 import { Sessions } from "./session.js";
 import type { Fetch } from "./transport.js";
 import { Transport } from "./transport.js";
-import type { WebSocketFactory } from "@aexhq/session-protocol";
+import type { WebSocketFactory } from "@aexhq/brain";
 
 export {
   AbortError,
@@ -36,7 +36,6 @@ export {
 export type {
   BinarySource,
   ChildSummary,
-  EnvironmentFile,
   IdempotentOperationOptions,
   OperationOptions,
   PageOptions,
@@ -60,7 +59,7 @@ export type {
   ToolSelection,
   ToolSetupHandler,
 } from "./tools.js";
-export type { NetworkPolicy, WebSocketFactory } from "@aexhq/session-protocol";
+export type { NetworkPolicy, WebSocketFactory } from "@aexhq/brain";
 export type { EnvironmentRef, HandleOf } from "@aexhq/environment";
 
 const DEFAULT_API_URL = "https://api.aex.dev";

@@ -11,7 +11,8 @@ import {
 } from "../dist/index.js";
 import { parseEventStream, Transport } from "../dist/transport.js";
 import { compileTools, withPreparedArtifact } from "../dist/tools.js";
-import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/session-protocol";
+import { MAX_PUBLIC_EVENT_BYTES, component } from "@aexhq/brain";
+import { app as appComponent } from "@aexhq/env-app";
 import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
 
@@ -45,37 +46,14 @@ const computerEnvironment = defineEnvironment({
 });
 
 function prepared(name) {
-  const code = Buffer.from(`export default ${JSON.stringify(name)}`);
-  const layerDigest = createHash("sha256").update(code).digest("hex");
-  const layers = [{
-    checksum: layerDigest,
-    bytes: code.byteLength,
-    media_type: "application/javascript+esm",
-    mount_path: "/tool/runtime.mjs",
-    unpack: "file",
-  }];
-  const digest = createHash("sha256").update(canonicalize({
-    profile: "computer/v1",
-    target: "linux-amd64",
-    execute_path: "/tool/runtime.mjs",
-    setup_path: null,
-    layers,
-  })).digest("hex");
   return withPreparedArtifact(
     tool(async function execute() {}).named(name),
     {
-      digest,
+      digest: createHash("sha256").update(name).digest("hex"),
       target: "linux-amd64",
-      bytes: code.byteLength,
-      execute: "/tool/runtime.mjs",
-      layers: [{
-        digest: layerDigest,
-        bytes: code.byteLength,
-        mediaType: "application/javascript+esm",
-        mountPath: "/tool/runtime.mjs",
-        unpack: "file",
-        source: new URL(`data:application/javascript;base64,${code.toString("base64")}`),
-      }],
+      contentBase64: Buffer.from(`export default ${JSON.stringify(name)}`).toString("base64"),
+      bytes: Buffer.byteLength(`export default ${JSON.stringify(name)}`),
+      execute: "/artifact/execute",
     },
   );
 }
@@ -95,6 +73,7 @@ const snapshot = {
   },
   storage: { session_storage_bytes: 0, upload_reserved_bytes: 0 },
   created_at: "2026-08-19T10:00:00.000Z",
+  retain_until: "2027-09-23T10:00:00.000Z",
   updated_at: "2026-08-19T10:00:00.000Z",
   turns: 0,
   last_seq: 0,
@@ -295,8 +274,6 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
   const aex = new Aex({
     apiKey: "aex_sk_test",
     fetch: async (_input, init) => {
-      if (init.method === "HEAD") return new Response(null, { status: 404 });
-      if (init.method === "PUT") return new Response(null, { status: 201 });
       bodies.push(JSON.parse(init.body));
       return Response.json(snapshot, { status: 201 });
     },
@@ -375,6 +352,108 @@ test("create seals an imported agentloop as digest, toolchain and bytes", async 
     toolchain: "starlingmonkey-componentize-js-0.22.0",
     bundle_base64: Buffer.from(source, "utf8").toString("base64"),
   });
+});
+
+test("component create composes ordinary Model, Agentloop, Tool, and Environment values", async () => {
+  let body;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (_input, init) => {
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+  const model = component("model", bytes, { dialect: "fixture" }, { metadata: { name: "fixture" } });
+  const agentloop = component("agentloop", bytes, { policy: "sequential" });
+  const environment = component("environment", bytes, { driver: "fixture" });
+  const echo = component("tool", bytes, {
+    definition: {
+      name: "echo",
+      input_schema: { type: "object" },
+      output_schema: { type: "object" },
+      contract_digest: "a".repeat(64),
+    },
+    descriptor: { action: "echo" },
+  }, { grants: ["environment"] });
+  const task = component("tool", bytes, {
+    definition: {
+      name: "subagents",
+      input_schema: { type: "object" },
+      output_schema: {},
+      contract_digest: "b".repeat(64),
+    },
+  }, { grants: ["children"] });
+
+  await aex.sessions.create({
+    model: { component: model, provider: "fixture", name: "fixture", apiKey: "key" },
+    agentloop,
+    environments: { workspace: environment },
+    tools: [echo, task],
+  });
+
+  assert.equal(body.component_artifacts.length, 1, "identical component bytes upload once");
+  assert.equal(body.model.world, "aex:model/model@1.0.0");
+  assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
+  assert.equal(body.tools.items[0].executor.kind, "component");
+  assert.equal(body.tools.items[0].executor.environment, "workspace");
+  assert.deepEqual(body.tools.items[1].executor.grants, ["children"]);
+  assert.equal(body.tools.items[1].executor.environment, undefined);
+  assert.equal(body.environments.workspace.world, "aex:environment/environment@1.0.0");
+});
+
+test("component create keeps application callback source local and binds its Tool to app()", async () => {
+  let body;
+  const socket = new FakeWebSocket({});
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    webSocketFactory() {
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/v1/customer-environment/grants")) {
+        return Response.json({
+          url: "wss://customer-environment.example.test/connect",
+          protocol: "aex.grant.component",
+          expires_at: "2026-08-25T12:05:00Z",
+          grant_id: "grant-component",
+          observation_url:
+            "https://api.aex.dev/v1/customer-environment/observations/grant-component",
+          observation_token: "observation-component",
+        }, { status: 201 });
+      }
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+  const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+  const lookup = tool(
+    z.object({ id: z.string() }),
+    async function lookup({ id }) {
+      return { id };
+    },
+  ).returns(z.object({ id: z.string() }));
+
+  await aex.sessions.create({
+    model: {
+      component: component("model", bytes, {}, { metadata: { name: "fixture" } }),
+      provider: "fixture",
+      name: "fixture",
+      apiKey: "key",
+    },
+    agentloop: component("agentloop", bytes, {}),
+    environments: { application: appComponent({ id: "component-app" }) },
+    tools: [lookup],
+  });
+
+  assert.equal(socket.sent[1].registrations[0].name, "lookup");
+  assert.equal(body.tools.items[0].executor.kind, "component");
+  assert.equal(body.tools.items[0].executor.environment, "application");
+  assert.deepEqual(body.tools.items[0].executor.grants, ["environment"]);
+  assert.equal(body.environments.application.config.driver, "customer");
+  assert.equal(JSON.stringify(body).includes("async function lookup"), false);
+  aex.close();
 });
 
 test("create seals managed network and bounded recovery policy", async () => {
@@ -1196,13 +1275,13 @@ test("storage and durable child resources keep wire details explicit", async () 
       if (url.pathname === "/v1/sessions" && init.method === "POST") {
         return Response.json(snapshot, { status: 201 });
       }
-      if (url.pathname.endsWith("/environments/workspace") && init.method === "GET") {
+      if (url.pathname.endsWith("/sandbox") && init.method === "GET") {
         return Response.json({
           target: {
-            kind: "environment",
+            kind: "default",
             session_id: "ses_01",
             root_id: "ses_01",
-            binding_ref: "env_workspace",
+            binding_ref: "default",
           },
           state: "running",
           generation: "gen_01",
@@ -1210,24 +1289,24 @@ test("storage and durable child resources keep wire details explicit", async () 
           expires_at_ms: Date.parse("2026-08-20T12:30:00Z"),
         });
       }
-      if (url.pathname.endsWith("/environments/workspace/files/list")) {
+      if (url.pathname.endsWith("/sandbox/files/list")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/environments/workspace/files/grep")) {
+      if (url.pathname.endsWith("/sandbox/files/grep")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/environments/workspace/files/stat")) return Response.json(file);
-      if (url.pathname.endsWith("/environments/workspace/files/read-inline")) {
+      if (url.pathname.endsWith("/sandbox/files/stat")) return Response.json(file);
+      if (url.pathname.endsWith("/sandbox/files/read-inline")) {
         return Response.json({ entry: file, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/environments/workspace/files/write-inline")) return Response.json(file);
+      if (url.pathname.endsWith("/sandbox/files/write-inline")) return Response.json(file);
       if (url.pathname.endsWith("/storage/stat")) return Response.json(object);
       if (url.pathname.endsWith("/storage/write-inline")) return Response.json(object);
       if (url.pathname.endsWith("/storage/read-inline")) {
         return Response.json({ object, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/storage/copy-from-environment/workspace")) return Response.json(object);
-      if (url.pathname.endsWith("/storage/copy-to-environment/workspace")) return Response.json(file);
+      if (url.pathname.endsWith("/storage/copy-from-sandbox")) return Response.json(object);
+      if (url.pathname.endsWith("/storage/copy-to-sandbox")) return Response.json(file);
       if (url.pathname.endsWith("/children") && init.method === "POST") return Response.json(child, { status: 201 });
       if (url.pathname.endsWith("/children/ses_child") && init.method === "GET") return Response.json(child);
       if (url.pathname.endsWith("/messages")) {
@@ -1242,25 +1321,12 @@ test("storage and durable child resources keep wire details explicit", async () 
       throw new Error(`unexpected request: ${init.method} ${url.pathname}`);
     },
   });
-  const workspace = computerEnvironment();
   const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-    environments: { workspace },
   });
 
-  assert.equal((await session.environment(workspace).status()).state, "running");
   await session.storage.upload(object.key, "hello", { contentType: "text/plain" });
   assert.equal(new TextDecoder().decode(await session.storage.download(object.key)), "hello");
-  await session.storage.copyFromEnvironment(workspace, {
-    key: object.key,
-    path: file.path,
-    generation: "gen_01",
-  });
-  await session.storage.copyToEnvironment(workspace, {
-    key: object.key,
-    path: file.path,
-    generation: "gen_01",
-  });
   const childHandle = await session.children.create(
     { prompt: "Research this.", name: "research", forkTurns: "3" },
     { idempotencyKey: "child-create" },
@@ -1281,10 +1347,6 @@ test("storage and durable child resources keep wire details explicit", async () 
   const childRequest = requests.find((request) => request.path.endsWith("/children") && request.method === "POST");
   assert.deepEqual(childRequest.body, { prompt: "Research this.", name: "research", fork_turns: "3" });
   assert.equal(childRequest.idempotencyKey, "child-create");
-  assert.deepEqual(
-    requests.find((request) => request.path.endsWith("/storage/copy-from-environment/workspace")).body,
-    { key: object.key, path: file.path, environment_generation: "gen_01" },
-  );
   assert.equal(
     requests.find((request) => request.path.endsWith("/children/ses_child/messages"))
       .idempotencyKey,
@@ -1510,7 +1572,7 @@ test("streaming storage transfers keep O(1) heap and enforce length, ticket, and
   );
 });
 
-test("end is non-destructive and delete distinguishes queued acceptance from confirmation", async () => {
+test("session capacity can suspend and resume before non-destructive end", async () => {
   const paths = [];
   let strictDeleteAttempts = 0;
   let deletionPolls = 0;
@@ -1520,6 +1582,20 @@ test("end is non-destructive and delete distinguishes queued acceptance from con
       const url = new URL(String(input));
       paths.push(`${init.method} ${url.pathname}${url.search}`);
       if (url.pathname === "/v1/sessions") return Response.json(snapshot, { status: 201 });
+      if (url.pathname.endsWith("/suspend")) {
+        return Response.json({ ...snapshot, state: "suspended" });
+      }
+      if (url.pathname.endsWith("/resume")) {
+        return Response.json({ ...snapshot, state: "open" });
+      }
+      if (url.pathname.endsWith("/retention")) {
+        const body = JSON.parse(init.body);
+        assert.deepEqual(body, {
+          retain_until: "2028-01-01T00:00:00.000Z",
+          allow_shorten: false,
+        });
+        return Response.json({ ...snapshot, retain_until: body.retain_until });
+      }
       if (url.pathname.endsWith("/end")) {
         return Response.json({ ...snapshot, state: "ending" }, { status: 202 });
       }
@@ -1560,6 +1636,9 @@ test("end is non-destructive and delete distinguishes queued acceptance from con
   const queued = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
+  assert.equal((await queued.suspend()).state, "suspended");
+  assert.equal((await queued.resume()).state, "open");
+  assert.equal((await queued.setRetention("2028-01-01T00:00:00Z")).retainUntil, "2028-01-01T00:00:00.000Z");
   assert.equal((await queued.end()).state, "ending");
   await queued.delete({ queue: true });
   assert.equal(queued.state, "deleting");

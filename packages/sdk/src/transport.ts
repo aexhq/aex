@@ -1,11 +1,11 @@
-import type { ApiError, Event } from "@aexhq/session-protocol/session";
-import type { JsonRequestOptions, TransferTicket } from "@aexhq/session-protocol";
+import type { ApiError, Event } from "@aexhq/brain/session";
+import type { JsonRequestOptions, TransferTicket } from "@aexhq/brain";
 import {
   MAX_CREATE_SESSION_REQUEST_BYTES,
   MAX_CUSTOMER_OBSERVATION_BYTES,
   MAX_MESSAGE_REQUEST_BYTES,
   MAX_PUBLIC_EVENT_BYTES,
-} from "@aexhq/session-protocol";
+} from "@aexhq/brain";
 
 import { AbortError, AexError, SessionError, abortError, errorFromApi } from "./errors.js";
 
@@ -201,42 +201,6 @@ export class Transport {
         status: response.status,
       });
     }
-  }
-
-  async ensureArtifactLayer(
-    digest: string,
-    mediaType: string,
-    content: Uint8Array,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const path = `/v1/artifacts/${encodeURIComponent(digest)}`;
-    const authorization = `Bearer ${this.#apiKey}`;
-    const existing = await this.#fetch(`${this.baseUrl}${path}`, {
-      method: "HEAD",
-      redirect: "error",
-      headers: { Authorization: authorization },
-      ...(signal === undefined ? {} : { signal }),
-    });
-    if (existing.ok) {
-      const bytes = Number(existing.headers.get("content-length"));
-      const storedMediaType = existing.headers.get("content-type");
-      if (bytes !== content.byteLength || storedMediaType !== mediaType) {
-        throw new SessionError(`Uploaded Tool artifact ${digest} has conflicting metadata`);
-      }
-      return;
-    }
-    if (existing.status !== 404) throw await this.responseError(existing);
-    const uploaded = await this.#fetch(`${this.baseUrl}${path}`, {
-      method: "PUT",
-      redirect: "error",
-      headers: {
-        Authorization: authorization,
-        "Content-Type": mediaType,
-      },
-      body: arrayBufferBody(content),
-      ...(signal === undefined ? {} : { signal }),
-    });
-    if (!uploaded.ok) throw await this.responseError(uploaded);
   }
 
   async json<T>(
@@ -538,13 +502,13 @@ function validateCustomerEnvironmentGrant(
   },
 ): string {
   if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(grant.grant_id)) {
-    throw new SessionError("Aex returned an invalid customer Hand grant id");
+    throw new SessionError("Aex returned an invalid customer Environment grant id");
   }
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,2048}$/u.test(grant.protocol)) {
-    throw new SessionError("Aex returned an invalid customer Hand WebSocket protocol");
+    throw new SessionError("Aex returned an invalid customer Environment WebSocket protocol");
   }
   if (!/^[\x21-\x7e]{1,2048}$/u.test(grant.observation_token)) {
-    throw new SessionError("Aex returned an invalid customer Hand observation token");
+    throw new SessionError("Aex returned an invalid customer Environment observation token");
   }
 
   let socket: URL;
@@ -557,7 +521,7 @@ function validateCustomerEnvironmentGrant(
       `${baseUrl}/v1/customer-environment/observations/${encodeURIComponent(grant.grant_id)}`,
     );
   } catch (cause) {
-    throw new SessionError("Aex returned an invalid customer Hand URL", { cause });
+    throw new SessionError("Aex returned an invalid customer Environment URL", { cause });
   }
   const secureSocket = socket.protocol === "wss:" ||
     (socket.protocol === "ws:" && isLoopback(socket.hostname));
@@ -566,7 +530,7 @@ function validateCustomerEnvironmentGrant(
     socket.search !== "" || socket.hash !== ""
   ) {
     throw new SessionError(
-      "Aex customer Hand sockets require credential-free WSS (or loopback WS for development)",
+      "Aex customer Environment sockets require credential-free WSS (or loopback WS for development)",
     );
   }
   if (observation.href !== expectedObservation.href) {
