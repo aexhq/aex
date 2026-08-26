@@ -29,6 +29,11 @@ export type RefundId = string;
  */
 export type CreditGrantId = string;
 /**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "AccountDeletionId".
+ */
+export type AccountDeletionId = string;
+/**
  * RFC 3339, UTC.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
@@ -85,6 +90,18 @@ export type TopupStatus = "pending" | "paid" | "expired";
  * via the `definition` "RefundStatus".
  */
 export type RefundStatus = "pending" | "succeeded" | "failed";
+/**
+ * What the operator asserts about the prepaid balance the account still holds. `settled` refuses the deletion while the balance is a whole cent or more from zero in either direction, so an erasure request returns unused credit through a refund first; money never moves as a side effect of deleting an account. `written_off` deletes whatever the balance is and records it as a write-off on the ledger — the abuse-response answer, and the only one that can absorb unpaid usage.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "AccountBalanceDisposition".
+ */
+export type AccountBalanceDisposition = "settled" | "written_off";
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "AccountDeletionStatus".
+ */
+export type AccountDeletionStatus = "pending" | "succeeded";
 /**
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "ControlErrorCode".
@@ -360,6 +377,43 @@ export interface Refund {
    * Operator-facing payment-provider failure detail; present only when status is failed.
    */
   failure_reason?: string;
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreateAccountDeletionRequest".
+ */
+export interface CreateAccountDeletionRequest {
+  email: string;
+  /**
+   * Operator audit reason for this deletion.
+   */
+  reason: string;
+  balance_disposition: AccountBalanceDisposition;
+}
+/**
+ * An operator-initiated, irreversible account deletion. Accepting it destroys the account token and every API key at once, and hands each of the account's sessions to the ordinary ensured session-deletion path; the account cannot authenticate or create anything from that moment. It stays `pending` until Brain confirms every one of those sessions physically deleted, and only then is the email erased, the outstanding invitation dropped, uploaded Tool artifacts purged and the remaining balance closed out. Top-ups, refunds, credit grants and rated session lines are retained under `account_id`, which survives as a pseudonym: they are the billing record, not personal data. Retrying the same Idempotency-Key returns the same deletion.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "AccountDeletion".
+ */
+export interface AccountDeletion {
+  id: AccountDeletionId;
+  object: "account_deletion";
+  account_id: AccountId;
+  status: AccountDeletionStatus;
+  balance_disposition: AccountBalanceDisposition;
+  reason: string;
+  /**
+   * Sessions of this account that are not yet confirmed physically deleted. It reaches zero exactly when the deletion succeeds.
+   */
+  sessions_pending: number;
+  requested_at: Timestamp;
+  updated_at: Timestamp;
+  completed_at?: Timestamp;
+  /**
+   * Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point.
+   */
+  closing_balance_microusd?: string;
 }
 /**
  * The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours.

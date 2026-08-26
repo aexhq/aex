@@ -76,6 +76,79 @@ impl Account {
         Default::default()
     }
 }
+#[doc = "What the operator asserts about the prepaid balance the account still holds. `settled` refuses the deletion while the balance is a whole cent or more from zero in either direction, so an erasure request returns unused credit through a refund first; money never moves as a side effect of deleting an account. `written_off` deletes whatever the balance is and records it as a write-off on the ledger — the abuse-response answer, and the only one that can absorb unpaid usage."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"What the operator asserts about the prepaid balance the account still holds. `settled` refuses the deletion while the balance is a whole cent or more from zero in either direction, so an erasure request returns unused credit through a refund first; money never moves as a side effect of deleting an account. `written_off` deletes whatever the balance is and records it as a write-off on the ledger — the abuse-response answer, and the only one that can absorb unpaid usage.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"settled\","]
+#[doc = "    \"written_off\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountBalanceDisposition {
+    #[serde(rename = "settled")]
+    Settled,
+    #[serde(rename = "written_off")]
+    WrittenOff,
+}
+impl ::std::fmt::Display for AccountBalanceDisposition {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Settled => f.write_str("settled"),
+            Self::WrittenOff => f.write_str("written_off"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountBalanceDisposition {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "settled" => Ok(Self::Settled),
+            "written_off" => Ok(Self::WrittenOff),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountBalanceDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for AccountBalanceDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "The account token appears here and never again."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -107,6 +180,233 @@ pub struct AccountCreated {
 impl AccountCreated {
     pub fn builder() -> builder::AccountCreated {
         Default::default()
+    }
+}
+#[doc = "An operator-initiated, irreversible account deletion. Accepting it destroys the account token and every API key at once, and hands each of the account's sessions to the ordinary ensured session-deletion path; the account cannot authenticate or create anything from that moment. It stays `pending` until Brain confirms every one of those sessions physically deleted, and only then is the email erased, the outstanding invitation dropped, uploaded Tool artifacts purged and the remaining balance closed out. Top-ups, refunds, credit grants and rated session lines are retained under `account_id`, which survives as a pseudonym: they are the billing record, not personal data. Retrying the same Idempotency-Key returns the same deletion."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"An operator-initiated, irreversible account deletion. Accepting it destroys the account token and every API key at once, and hands each of the account's sessions to the ordinary ensured session-deletion path; the account cannot authenticate or create anything from that moment. It stays `pending` until Brain confirms every one of those sessions physically deleted, and only then is the email erased, the outstanding invitation dropped, uploaded Tool artifacts purged and the remaining balance closed out. Top-ups, refunds, credit grants and rated session lines are retained under `account_id`, which survives as a pseudonym: they are the billing record, not personal data. Retrying the same Idempotency-Key returns the same deletion.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"account_id\","]
+#[doc = "    \"balance_disposition\","]
+#[doc = "    \"id\","]
+#[doc = "    \"object\","]
+#[doc = "    \"reason\","]
+#[doc = "    \"requested_at\","]
+#[doc = "    \"sessions_pending\","]
+#[doc = "    \"status\","]
+#[doc = "    \"updated_at\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"account_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountId\""]
+#[doc = "    },"]
+#[doc = "    \"balance_disposition\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountBalanceDisposition\""]
+#[doc = "    },"]
+#[doc = "    \"closing_balance_microusd\": {"]
+#[doc = "      \"description\": \"The balance written off when the deletion completed, positive for unspent credit and negative for unpaid usage; present only when status is succeeded. One ledger row of the opposite sign closes the account out, so the write-off is on the billing record rather than implied by it.\","]
+#[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
+#[doc = "    },"]
+#[doc = "    \"completed_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountDeletionId\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"account_deletion\""]
+#[doc = "    },"]
+#[doc = "    \"reason\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"requested_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"sessions_pending\": {"]
+#[doc = "      \"description\": \"Sessions of this account that are not yet confirmed physically deleted. It reaches zero exactly when the deletion succeeds.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
+#[doc = "    \"status\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountDeletionStatus\""]
+#[doc = "    },"]
+#[doc = "    \"updated_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct AccountDeletion {
+    pub account_id: AccountId,
+    pub balance_disposition: AccountBalanceDisposition,
+    #[doc = "The balance written off when the deletion completed, positive for unspent credit and negative for unpaid usage; present only when status is succeeded. One ledger row of the opposite sign closes the account out, so the write-off is on the billing record rather than implied by it."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub closing_balance_microusd: ::std::option::Option<MicroUsd>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub completed_at: ::std::option::Option<Timestamp>,
+    pub id: AccountDeletionId,
+    pub object: ::serde_json::Value,
+    pub reason: ::std::string::String,
+    pub requested_at: Timestamp,
+    #[doc = "Sessions of this account that are not yet confirmed physically deleted. It reaches zero exactly when the deletion succeeds."]
+    pub sessions_pending: u64,
+    pub status: AccountDeletionStatus,
+    pub updated_at: Timestamp,
+}
+impl AccountDeletion {
+    pub fn builder() -> builder::AccountDeletion {
+        Default::default()
+    }
+}
+#[doc = "`AccountDeletionId`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^del_[A-Za-z0-9]{20,32}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct AccountDeletionId(::std::string::String);
+impl ::std::ops::Deref for AccountDeletionId {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<AccountDeletionId> for ::std::string::String {
+    fn from(value: AccountDeletionId) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for AccountDeletionId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^del_[A-Za-z0-9]{20,32}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^del_[A-Za-z0-9]{20,32}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountDeletionId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for AccountDeletionId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountDeletionId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for AccountDeletionId {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`AccountDeletionStatus`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"pending\","]
+#[doc = "    \"succeeded\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountDeletionStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+}
+impl ::std::fmt::Display for AccountDeletionStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Succeeded => f.write_str("succeeded"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountDeletionStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "succeeded" => Ok(Self::Succeeded),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountDeletionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for AccountDeletionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountDeletionStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`AccountId`"]
@@ -967,6 +1267,200 @@ pub struct ControlErrorResponse {
 impl ControlErrorResponse {
     pub fn builder() -> builder::ControlErrorResponse {
         Default::default()
+    }
+}
+#[doc = "`CreateAccountDeletionRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"balance_disposition\","]
+#[doc = "    \"email\","]
+#[doc = "    \"reason\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"balance_disposition\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountBalanceDisposition\""]
+#[doc = "    },"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 254,"]
+#[doc = "      \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "    },"]
+#[doc = "    \"reason\": {"]
+#[doc = "      \"description\": \"Operator audit reason for this deletion.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 200,"]
+#[doc = "      \"minLength\": 1"]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateAccountDeletionRequest {
+    pub balance_disposition: AccountBalanceDisposition,
+    pub email: CreateAccountDeletionRequestEmail,
+    #[doc = "Operator audit reason for this deletion."]
+    pub reason: CreateAccountDeletionRequestReason,
+}
+impl CreateAccountDeletionRequest {
+    pub fn builder() -> builder::CreateAccountDeletionRequest {
+        Default::default()
+    }
+}
+#[doc = "`CreateAccountDeletionRequestEmail`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 254,"]
+#[doc = "  \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreateAccountDeletionRequestEmail(::std::string::String);
+impl ::std::ops::Deref for CreateAccountDeletionRequestEmail {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreateAccountDeletionRequestEmail> for ::std::string::String {
+    fn from(value: CreateAccountDeletionRequestEmail) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreateAccountDeletionRequestEmail {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 254usize {
+            return Err("longer than 254 characters".into());
+        }
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateAccountDeletionRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreateAccountDeletionRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateAccountDeletionRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreateAccountDeletionRequestEmail {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Operator audit reason for this deletion."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Operator audit reason for this deletion.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 200,"]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreateAccountDeletionRequestReason(::std::string::String);
+impl ::std::ops::Deref for CreateAccountDeletionRequestReason {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreateAccountDeletionRequestReason> for ::std::string::String {
+    fn from(value: CreateAccountDeletionRequestReason) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreateAccountDeletionRequestReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 200usize {
+            return Err("longer than 200 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateAccountDeletionRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreateAccountDeletionRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateAccountDeletionRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreateAccountDeletionRequestReason {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "`CreateAccountRequest`"]
@@ -3327,6 +3821,189 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct AccountDeletion {
+        account_id: ::std::result::Result<super::AccountId, ::std::string::String>,
+        balance_disposition:
+            ::std::result::Result<super::AccountBalanceDisposition, ::std::string::String>,
+        closing_balance_microusd:
+            ::std::result::Result<::std::option::Option<super::MicroUsd>, ::std::string::String>,
+        completed_at:
+            ::std::result::Result<::std::option::Option<super::Timestamp>, ::std::string::String>,
+        id: ::std::result::Result<super::AccountDeletionId, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+        requested_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        sessions_pending: ::std::result::Result<u64, ::std::string::String>,
+        status: ::std::result::Result<super::AccountDeletionStatus, ::std::string::String>,
+        updated_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+    }
+    impl ::std::default::Default for AccountDeletion {
+        fn default() -> Self {
+            Self {
+                account_id: Err("no value supplied for account_id".to_string()),
+                balance_disposition: Err("no value supplied for balance_disposition".to_string()),
+                closing_balance_microusd: Ok(Default::default()),
+                completed_at: Ok(Default::default()),
+                id: Err("no value supplied for id".to_string()),
+                object: Err("no value supplied for object".to_string()),
+                reason: Err("no value supplied for reason".to_string()),
+                requested_at: Err("no value supplied for requested_at".to_string()),
+                sessions_pending: Err("no value supplied for sessions_pending".to_string()),
+                status: Err("no value supplied for status".to_string()),
+                updated_at: Err("no value supplied for updated_at".to_string()),
+            }
+        }
+    }
+    impl AccountDeletion {
+        pub fn account_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.account_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for account_id: {e}"));
+            self
+        }
+        pub fn balance_disposition<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountBalanceDisposition>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.balance_disposition = value.try_into().map_err(|e| {
+                format!("error converting supplied value for balance_disposition: {e}")
+            });
+            self
+        }
+        pub fn closing_balance_microusd<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::MicroUsd>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.closing_balance_microusd = value.try_into().map_err(|e| {
+                format!("error converting supplied value for closing_balance_microusd: {e}")
+            });
+            self
+        }
+        pub fn completed_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Timestamp>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.completed_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for completed_at: {e}"));
+            self
+        }
+        pub fn id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountDeletionId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+        pub fn reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reason: {e}"));
+            self
+        }
+        pub fn requested_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.requested_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for requested_at: {e}"));
+            self
+        }
+        pub fn sessions_pending<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<u64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.sessions_pending = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for sessions_pending: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountDeletionStatus>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+        pub fn updated_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.updated_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for updated_at: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<AccountDeletion> for super::AccountDeletion {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: AccountDeletion,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                account_id: value.account_id?,
+                balance_disposition: value.balance_disposition?,
+                closing_balance_microusd: value.closing_balance_microusd?,
+                completed_at: value.completed_at?,
+                id: value.id?,
+                object: value.object?,
+                reason: value.reason?,
+                requested_at: value.requested_at?,
+                sessions_pending: value.sessions_pending?,
+                status: value.status?,
+                updated_at: value.updated_at?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::AccountDeletion> for AccountDeletion {
+        fn from(value: super::AccountDeletion) -> Self {
+            Self {
+                account_id: Ok(value.account_id),
+                balance_disposition: Ok(value.balance_disposition),
+                closing_balance_microusd: Ok(value.closing_balance_microusd),
+                completed_at: Ok(value.completed_at),
+                id: Ok(value.id),
+                object: Ok(value.object),
+                reason: Ok(value.reason),
+                requested_at: Ok(value.requested_at),
+                sessions_pending: Ok(value.sessions_pending),
+                status: Ok(value.status),
+                updated_at: Ok(value.updated_at),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct AccountLimits {
         max_concurrent_sessions:
             ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
@@ -3806,6 +4483,77 @@ pub mod builder {
         fn from(value: super::ControlErrorResponse) -> Self {
             Self {
                 error: Ok(value.error),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CreateAccountDeletionRequest {
+        balance_disposition:
+            ::std::result::Result<super::AccountBalanceDisposition, ::std::string::String>,
+        email:
+            ::std::result::Result<super::CreateAccountDeletionRequestEmail, ::std::string::String>,
+        reason:
+            ::std::result::Result<super::CreateAccountDeletionRequestReason, ::std::string::String>,
+    }
+    impl ::std::default::Default for CreateAccountDeletionRequest {
+        fn default() -> Self {
+            Self {
+                balance_disposition: Err("no value supplied for balance_disposition".to_string()),
+                email: Err("no value supplied for email".to_string()),
+                reason: Err("no value supplied for reason".to_string()),
+            }
+        }
+    }
+    impl CreateAccountDeletionRequest {
+        pub fn balance_disposition<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountBalanceDisposition>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.balance_disposition = value.try_into().map_err(|e| {
+                format!("error converting supplied value for balance_disposition: {e}")
+            });
+            self
+        }
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreateAccountDeletionRequestEmail>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreateAccountDeletionRequestReason>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reason: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CreateAccountDeletionRequest> for super::CreateAccountDeletionRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CreateAccountDeletionRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                balance_disposition: value.balance_disposition?,
+                email: value.email?,
+                reason: value.reason?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CreateAccountDeletionRequest> for CreateAccountDeletionRequest {
+        fn from(value: super::CreateAccountDeletionRequest) -> Self {
+            Self {
+                balance_disposition: Ok(value.balance_disposition),
+                email: Ok(value.email),
+                reason: Ok(value.reason),
             }
         }
     }

@@ -100,6 +100,63 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/account-deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete an account and everything it can still reach
+         * @description Operator-only and irreversible; the product answer to an erasure request or an abuse
+         *     ban. Acceptance is one durable step: the account token and every API key stop working,
+         *     the outstanding invitation is dropped, and every session the account owns is handed to
+         *     the same ensured session-deletion path `DELETE /v1/sessions/{id}` uses. The deletion
+         *     stays `pending` until Brain confirms all of them physically deleted; only then is the
+         *     email erased, uploaded Tool artifacts purged, and the remaining balance closed out with
+         *     one ledger row. Nothing is destroyed piecemeal: a refused request changes nothing.
+         *
+         *     `balance_disposition` decides what happens to money the account still holds, and the
+         *     two motivating cases want different answers — see `AccountBalanceDisposition`.
+         *
+         *     Retry an uncertain response with the same Idempotency-Key; using that key for a
+         *     different account or with different fields returns 409, as does an account that already
+         *     has a deletion in progress.
+         */
+        post: operations["createAccountDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/account-deletions/{deletion_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deletion_id: components["schemas"]["AccountDeletionId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get an account deletion — the erasure receipt, and the completion poll
+         * @description The deletion record deliberately holds no email: keeping "this address was erased"
+         *     keeps the address. This id is the durable handle an operator files against the original
+         *     request.
+         */
+        get: operations["getAccountDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/accounts": {
         parameters: {
             query?: never;
@@ -405,6 +462,39 @@ export type components = {
             /** @description Operator-facing payment-provider failure detail; present only when status is failed. */
             failure_reason?: string;
         };
+        /**
+         * @description What the operator asserts about the prepaid balance the account still holds. `settled` refuses the deletion while the balance is a whole cent or more from zero in either direction, so an erasure request returns unused credit through a refund first; money never moves as a side effect of deleting an account. `written_off` deletes whatever the balance is and records it as a write-off on the ledger — the abuse-response answer, and the only one that can absorb unpaid usage.
+         * @enum {string}
+         */
+        AccountBalanceDisposition: "settled" | "written_off";
+        CreateAccountDeletionRequest: {
+            email: string;
+            /** @description Operator audit reason for this deletion. */
+            reason: string;
+            balance_disposition: components["schemas"]["AccountBalanceDisposition"];
+        };
+        AccountDeletionId: string;
+        /** @enum {string} */
+        AccountDeletionStatus: "pending" | "succeeded";
+        /** @description Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
+        MicroUsd: string;
+        /** @description An operator-initiated, irreversible account deletion. Accepting it destroys the account token and every API key at once, and hands each of the account's sessions to the ordinary ensured session-deletion path; the account cannot authenticate or create anything from that moment. It stays `pending` until Brain confirms every one of those sessions physically deleted, and only then is the email erased, the outstanding invitation dropped, uploaded Tool artifacts purged and the remaining balance closed out. Top-ups, refunds, credit grants and rated session lines are retained under `account_id`, which survives as a pseudonym: they are the billing record, not personal data. Retrying the same Idempotency-Key returns the same deletion. */
+        AccountDeletion: {
+            id: components["schemas"]["AccountDeletionId"];
+            /** @constant */
+            object: "account_deletion";
+            account_id: components["schemas"]["AccountId"];
+            status: components["schemas"]["AccountDeletionStatus"];
+            balance_disposition: components["schemas"]["AccountBalanceDisposition"];
+            reason: string;
+            /** @description Sessions of this account that are not yet confirmed physically deleted. It reaches zero exactly when the deletion succeeds. */
+            sessions_pending: number;
+            requested_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+            completed_at?: components["schemas"]["Timestamp"];
+            /** @description The balance written off when the deletion completed, positive for unspent credit and negative for unpaid usage; present only when status is succeeded. One ledger row of the opposite sign closes the account out, so the write-off is on the billing record rather than implied by it. */
+            closing_balance_microusd?: components["schemas"]["MicroUsd"];
+        };
         CreateAccountRequest: {
             email: string;
             invite_token: components["schemas"]["InvitationToken"];
@@ -458,8 +548,6 @@ export type components = {
             key: components["schemas"]["ApiKey"];
             secret: components["schemas"]["ApiKeySecret"];
         };
-        /** @description Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
-        MicroUsd: string;
         /** @description Prepaid balance = credits minus rated usage, metered up to `metered_to`. May be negative: usage is rated after the fact; new sessions and messages are refused while it is not positive. */
         Balance: {
             /** @constant */
@@ -696,6 +784,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Refund"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createAccountDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A unique key for one intended operator mutation; reuse it only to retry that request. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAccountDeletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay of an existing deletion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletion"];
+                };
+            };
+            /** @description Accepted; the account is already powerless. Poll until status is succeeded */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAccountDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deletion_id: components["schemas"]["AccountDeletionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletion"];
                 };
             };
             default: components["responses"]["Error"];

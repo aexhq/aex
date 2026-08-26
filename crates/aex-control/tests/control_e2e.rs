@@ -745,6 +745,34 @@ async fn spawn_control_without_deletion_worker(
     base
 }
 
+/// The control plane the helpers above spawn, over a store the test keeps a handle to. What an
+/// account deletion leaves behind is deliberately unreachable over HTTP — both credentials are
+/// gone — so the ledger and the tombstone are read from the store itself.
+async fn spawn_control_over_store(brain_url: &str, brain_token: &str, db: Db) -> String {
+    let brain = BrainClient::new(brain_url, brain_token);
+    let card = RateCard::default();
+    let state = AppState {
+        db: db.clone(),
+        brain: brain.clone(),
+        payments: Arc::new(FakePayments),
+        stripe_webhook: None,
+        card: card.clone(),
+        operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
+        external_executor_token_hash: None,
+        customer_environment_gateway: None,
+        web: WebRuntime::hosted(None),
+        admission: Admission::new(AdmissionConfig::default()).unwrap(),
+        create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        message_body_slots: Arc::new(tokio::sync::Semaphore::new(256)),
+        inline_session_body_slots: Arc::new(tokio::sync::Semaphore::new(64)),
+        default_limits: (10, 30),
+        max_retained_root_sessions: 100,
+        storage_limits: StorageLimits::default(),
+    };
+    tokio::spawn(run_deletion_worker(db, brain, card));
+    spawn_control_state(state).await
+}
+
 async fn spawn_control_state(state: AppState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -896,6 +924,20 @@ async fn json_of(resp: reqwest::Response, expect: u16) -> Value {
     let text = resp.text().await.unwrap();
     assert_eq!(status, expect, "body: {text}");
     serde_json::from_str(&text).unwrap()
+}
+
+async fn balance_microusd(http: &reqwest::Client, base: &str, account_token: &str) -> i64 {
+    let balance = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("Balance", &balance);
+    balance["microusd"].as_str().unwrap().parse().unwrap()
 }
 
 async fn invited_signup(http: &reqwest::Client, base: &str, email: &str) -> Value {
@@ -2977,4 +3019,472 @@ async fn retained_root_cap_requires_confirmed_physical_deletion() {
         201,
     )
     .await;
+}
+
+async fn await_account_deletion(http: &reqwest::Client, base: &str, deletion_id: &str) -> Value {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let receipt = json_of(
+            http.get(format!("{base}/v1/admin/account-deletions/{deletion_id}"))
+                .bearer_auth(OPERATOR_TOKEN)
+                .send()
+                .await
+                .unwrap(),
+            200,
+        )
+        .await;
+        control_valid("AccountDeletion", &receipt);
+        if receipt["status"] == "succeeded" {
+            return receipt;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{receipt}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_erasure_request_returns_unspent_credit_before_it_erases_the_account() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let db = Db::open_memory().unwrap();
+    let base = spawn_control_over_store(&brain_url, brain_token, db.clone()).await;
+    let http = reqwest::Client::new();
+
+    let created = invited_signup(&http, &base, "forget-me@example.com").await;
+    let account_token = created["account_token"].as_str().unwrap().to_owned();
+    let account_id = created["account"]["id"].as_str().unwrap().to_owned();
+    let key = json_of(
+        http.post(format!("{base}/v1/keys"))
+            .bearer_auth(&account_token)
+            .json(&json!({"name": "laptop"}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let api_key = key["secret"].as_str().unwrap().to_owned();
+    let topup = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(&account_token)
+            .header("Idempotency-Key", "e2e-erasure-topup")
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let topup_id = topup["id"].as_str().unwrap().to_owned();
+    json_of(
+        http.get(format!("{base}/v1/topups/{topup_id}"))
+            .bearer_auth(&account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    let session = json_of(
+        http.post(format!("{base}/v1/sessions"))
+            .bearer_auth(&api_key)
+            .header("Idempotency-Key", "e2e-erasure-session")
+            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let session_id = session["id"].as_str().unwrap().to_owned();
+    http.post(format!("{base}/v1/sessions/{session_id}/messages"))
+        .bearer_auth(&api_key)
+        .header("Idempotency-Key", "e2e-erasure-message")
+        .json(&json!({"content": "hello"}))
+        .send()
+        .await
+        .unwrap();
+
+    // The customer is owed the credit they never spent. Erasure is not a way to keep it, so a
+    // `settled` deletion is refused while the account still holds a returnable amount.
+    let request = json!({
+        "email": "forget-me@example.com",
+        "reason": "Erasure request TCK-4120",
+        "balance_disposition": "settled"
+    });
+    let holds_money = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-erasure-delete")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(holds_money.status().as_u16(), 409);
+    let holds_money: Value = holds_money.json().await.unwrap();
+    assert!(
+        holds_money["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refund"),
+        "the refusal must name the way out: {holds_money}"
+    );
+    // A refused deletion is not a half-deletion: the account is exactly as it was.
+    json_of(
+        http.get(format!("{base}/v1/account"))
+            .bearer_auth(&account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+
+    let owed = balance_microusd(&http, &base, &account_token).await;
+    json_of(
+        http.post(format!("{base}/v1/admin/refunds"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-erasure-refund")
+            .json(&json!({"topup_id": topup_id, "amount_cents": owed / 10_000}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    let residue = balance_microusd(&http, &base, &account_token).await;
+    assert!(
+        residue < 10_000,
+        "a whole cent is still returnable: {residue}"
+    );
+
+    let accepted = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-erasure-delete")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(accepted.status().as_u16(), 202);
+    let location = accepted.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let accepted: Value = accepted.json().await.unwrap();
+    control_valid("AccountDeletion", &accepted);
+    assert_eq!(accepted["account_id"], account_id);
+    assert_eq!(accepted["status"], "pending");
+    assert_eq!(accepted["sessions_pending"], 1);
+    let deletion_id = accepted["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        location,
+        format!("/v1/admin/account-deletions/{deletion_id}")
+    );
+
+    // Both credentials are already dead; nothing waits for the session to finish purging.
+    for unauthorized in [
+        http.get(format!("{base}/v1/account"))
+            .bearer_auth(&account_token)
+            .send()
+            .await
+            .unwrap(),
+        http.get(format!("{base}/v1/sessions/{session_id}"))
+            .bearer_auth(&api_key)
+            .send()
+            .await
+            .unwrap(),
+    ] {
+        assert_eq!(unauthorized.status().as_u16(), 401);
+    }
+
+    let receipt = await_account_deletion(&http, &base, &deletion_id).await;
+    assert_eq!(receipt["sessions_pending"], 0);
+    assert_eq!(receipt["closing_balance_microusd"], residue.to_string());
+    assert!(receipt["completed_at"].is_string());
+
+    // The person is gone and the ledger closes at zero, but the money that moved is still on the
+    // books under an account id that no longer names anybody.
+    assert_eq!(db.balance(account_id.clone()).await.unwrap(), 0);
+    assert_eq!(
+        db.account(account_id.clone()).await.unwrap().unwrap().email,
+        format!("deleted:{account_id}")
+    );
+    assert!(db.list_keys(account_id.clone()).await.unwrap().is_empty());
+    let topups = db.list_topups(account_id.clone()).await.unwrap();
+    assert_eq!(topups.len(), 1);
+    assert_eq!(topups[0].status, "paid");
+    assert!(
+        db.sessions_of(account_id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|row| row.is_final),
+        "an account deletion that leaves a session behind has not deleted the account"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_abusive_account_is_deleted_out_from_under_its_open_session() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let db = Db::open_memory().unwrap();
+    let base = spawn_control_over_store(&brain_url, brain_token, db.clone()).await;
+    let http = reqwest::Client::new();
+
+    let created = invited_signup(&http, &base, "abuse@example.com").await;
+    let account_token = created["account_token"].as_str().unwrap().to_owned();
+    let account_id = created["account"]["id"].as_str().unwrap().to_owned();
+    let key = json_of(
+        http.post(format!("{base}/v1/keys"))
+            .bearer_auth(&account_token)
+            .json(&json!({"name": "burner"}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let api_key = key["secret"].as_str().unwrap().to_owned();
+    let topup = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(&account_token)
+            .header("Idempotency-Key", "e2e-abuse-topup")
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    json_of(
+        http.get(format!(
+            "{base}/v1/topups/{}",
+            topup["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&account_token)
+        .send()
+        .await
+        .unwrap(),
+        200,
+    )
+    .await;
+    let session = json_of(
+        http.post(format!("{base}/v1/sessions"))
+            .bearer_auth(&api_key)
+            .header("Idempotency-Key", "e2e-abuse-session")
+            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let session_id = session["id"].as_str().unwrap().to_owned();
+    assert_eq!(session["state"], "open");
+
+    // A ban cannot wait for the abuser to retire their own session, and it does not hand their
+    // prepaid credit back either. The operator says which of those two answers this is.
+    let accepted = json_of(
+        http.post(format!("{base}/v1/admin/account-deletions"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-abuse-delete")
+            .json(&json!({
+                "email": "abuse@example.com",
+                "reason": "Abuse report ABU-77: prohibited use",
+                "balance_disposition": "written_off"
+            }))
+            .send()
+            .await
+            .unwrap(),
+        202,
+    )
+    .await;
+    control_valid("AccountDeletion", &accepted);
+    assert_eq!(accepted["balance_disposition"], "written_off");
+    assert_eq!(accepted["sessions_pending"], 1);
+    let deletion_id = accepted["id"].as_str().unwrap().to_owned();
+
+    // From this moment the abuser cannot spend, extend, or re-key anything — including the
+    // session that was open when the ban landed.
+    for refused in [
+        http.post(format!("{base}/v1/sessions/{session_id}/messages"))
+            .bearer_auth(&api_key)
+            .header("Idempotency-Key", "e2e-abuse-after-ban")
+            .json(&json!({"content": "more"}))
+            .send()
+            .await
+            .unwrap(),
+        http.post(format!("{base}/v1/keys"))
+            .bearer_auth(&account_token)
+            .json(&json!({"name": "another"}))
+            .send()
+            .await
+            .unwrap(),
+    ] {
+        assert_eq!(refused.status().as_u16(), 401);
+    }
+
+    let receipt = await_account_deletion(&http, &base, &deletion_id).await;
+    assert_eq!(receipt["sessions_pending"], 0);
+    assert_eq!(receipt["closing_balance_microusd"], "10000000");
+    assert_eq!(db.balance(account_id.clone()).await.unwrap(), 0);
+    assert_eq!(db.list_topups(account_id).await.unwrap().len(), 1);
+
+    // The waitlist entry and its invitation go with the account: no operator list still carries
+    // the address, and there is nothing left to re-invite.
+    let waitlist = json_of(
+        http.get(format!("{base}/v1/admin/waitlist"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("WaitlistEntryList", &waitlist);
+    assert!(
+        !waitlist["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["email"] == "abuse@example.com")
+    );
+    let reinvite = http
+        .post(format!("{base}/v1/admin/invitations"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .json(&json!({"email": "abuse@example.com"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reinvite.status().as_u16(), 404);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn account_deletions_are_idempotent_and_auditable() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    // No deletion worker: the record stays pending, so what acceptance itself decided is exact.
+    let base =
+        spawn_control_without_deletion_worker(&brain_url, brain_token, Db::open_memory().unwrap())
+            .await;
+    let http = reqwest::Client::new();
+    let created = invited_signup(&http, &base, "audit@example.com").await;
+    let account_id = created["account"]["id"].as_str().unwrap().to_owned();
+    let request = json!({
+        "email": "audit@example.com",
+        "reason": "Erasure request TCK-9001",
+        "balance_disposition": "settled"
+    });
+
+    let unauthenticated = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .header("Idempotency-Key", "e2e-account-delete-unauthenticated")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status().as_u16(), 401);
+
+    let missing_key = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_key.status().as_u16(), 400);
+
+    let unknown_account = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-account-delete-unknown")
+        .json(&json!({
+            "email": "nobody@example.com",
+            "reason": "Erasure request TCK-9002",
+            "balance_disposition": "settled"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_account.status().as_u16(), 404);
+
+    let accepted = json_of(
+        http.post(format!("{base}/v1/admin/account-deletions"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-account-delete-1")
+            .json(&request)
+            .send()
+            .await
+            .unwrap(),
+        202,
+    )
+    .await;
+    control_valid("AccountDeletion", &accepted);
+    assert_eq!(accepted["account_id"], account_id);
+    assert_eq!(accepted["reason"], "Erasure request TCK-9001");
+    assert!(accepted["completed_at"].is_null());
+    assert!(accepted["closing_balance_microusd"].is_null());
+    let deletion_id = accepted["id"].as_str().unwrap().to_owned();
+
+    let replay = json_of(
+        http.post(format!("{base}/v1/admin/account-deletions"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-account-delete-1")
+            .json(&request)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("AccountDeletion", &replay);
+    assert_eq!(replay["id"], deletion_id);
+
+    let mismatched_replay = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-account-delete-1")
+        .json(&json!({
+            "email": "audit@example.com",
+            "reason": "Abuse report ABU-9001",
+            "balance_disposition": "written_off"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mismatched_replay.status().as_u16(), 409);
+
+    // A second key is a second intent, and the account it names is already going away.
+    let second_intent = http
+        .post(format!("{base}/v1/admin/account-deletions"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-account-delete-2")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second_intent.status().as_u16(), 409);
+
+    let receipt = json_of(
+        http.get(format!("{base}/v1/admin/account-deletions/{deletion_id}"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("AccountDeletion", &receipt);
+    assert_eq!(receipt["id"], deletion_id);
+
+    let unknown_receipt = http
+        .get(format!(
+            "{base}/v1/admin/account-deletions/del_00000000000000000000"
+        ))
+        .bearer_auth(OPERATOR_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_receipt.status().as_u16(), 404);
 }

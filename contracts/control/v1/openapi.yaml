@@ -12,8 +12,8 @@ info:
         every customer endpoint defined in this file except the waitlist and invited signup;
       * an **API key** (`aex_sk_...`, shown once at creation) runs sessions.
       * an **operator token** (`aex_ad_...`, configured out of band) lists the waitlist,
-        creates one-time invitations, and returns unused prepaid credit. It is never a
-        customer credential.
+        creates one-time invitations, returns unused prepaid credit, and deletes accounts.
+        It is never a customer credential.
 
     Session operations are not redefined here: the control plane serves every `session/v1`
     path verbatim (same shapes, same error envelope), authorized by an API key, in front of a
@@ -144,6 +144,72 @@ paths:
           content:
             application/json:
               schema: { $ref: "schemas.json#/$defs/Refund" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/admin/account-deletions:
+    post:
+      tags: [operator]
+      operationId: createAccountDeletion
+      summary: Delete an account and everything it can still reach
+      description: |
+        Operator-only and irreversible; the product answer to an erasure request or an abuse
+        ban. Acceptance is one durable step: the account token and every API key stop working,
+        the outstanding invitation is dropped, and every session the account owns is handed to
+        the same ensured session-deletion path `DELETE /v1/sessions/{id}` uses. The deletion
+        stays `pending` until Brain confirms all of them physically deleted; only then is the
+        email erased, uploaded Tool artifacts purged, and the remaining balance closed out with
+        one ledger row. Nothing is destroyed piecemeal: a refused request changes nothing.
+
+        `balance_disposition` decides what happens to money the account still holds, and the
+        two motivating cases want different answers — see `AccountBalanceDisposition`.
+
+        Retry an uncertain response with the same Idempotency-Key; using that key for a
+        different account or with different fields returns 409, as does an account that already
+        has a deletion in progress.
+      security:
+        - operatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateAccountDeletionRequest" }
+      responses:
+        "202":
+          description: Accepted; the account is already powerless. Poll until status is succeeded
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/AccountDeletion" }
+        "200":
+          description: Idempotent replay of an existing deletion
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/AccountDeletion" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/admin/account-deletions/{deletion_id}:
+    parameters:
+      - name: deletion_id
+        in: path
+        required: true
+        schema: { $ref: "schemas.json#/$defs/AccountDeletionId" }
+    get:
+      tags: [operator]
+      operationId: getAccountDeletion
+      summary: Get an account deletion — the erasure receipt, and the completion poll
+      description: |
+        The deletion record deliberately holds no email: keeping "this address was erased"
+        keeps the address. This id is the durable handle an operator files against the original
+        request.
+      security:
+        - operatorBearer: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/AccountDeletion" }
         default: { $ref: "#/components/responses/Error" }
 
   /v1/accounts:
