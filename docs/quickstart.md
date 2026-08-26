@@ -74,9 +74,13 @@ choose or widen them. If `network` is omitted, managed compute has no outbound n
 
 ## Temporary files and durable storage
 
-The default sandbox is shared by the root session and its children. Its files are temporary:
+Every Environment is addressed by the name the session declared it under; `session.environments`
+lists them and `session.environment(name)` selects one. `session.sandbox` is shorthand for the one
+Environment a session declared. The sandbox is shared by the root session and its children, and its
+files are temporary:
 
 ```ts
+// created with environments: { workspace: awsMicrovm() }
 const state = await session.sandbox.create();
 if (!state.generation) throw new Error("sandbox has no live generation");
 const entries = await session.sandbox.files.list("/workspace", {

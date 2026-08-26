@@ -57,6 +57,7 @@ const snapshot = {
   turns: 0,
   last_seq: 0,
   metadata: {},
+  environments: ["workspace"],
 };
 
 test("errors use the Aex display name", () => {
@@ -1247,7 +1248,7 @@ test("storage and durable child resources keep wire details explicit", async () 
       if (url.pathname === "/v1/sessions" && init.method === "POST") {
         return Response.json(snapshot, { status: 201 });
       }
-      if (url.pathname.endsWith("/sandbox") && init.method === "GET") {
+      if (url.pathname.endsWith("/environments/workspace") && init.method === "GET") {
         return Response.json({
           target: {
             kind: "default",
@@ -1261,17 +1262,17 @@ test("storage and durable child resources keep wire details explicit", async () 
           expires_at_ms: Date.parse("2026-08-20T12:30:00Z"),
         });
       }
-      if (url.pathname.endsWith("/sandbox/files/list")) {
+      if (url.pathname.endsWith("/environments/workspace/files/list")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/grep")) {
+      if (url.pathname.endsWith("/environments/workspace/files/grep")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/stat")) return Response.json(file);
-      if (url.pathname.endsWith("/sandbox/files/read-inline")) {
+      if (url.pathname.endsWith("/environments/workspace/files/stat")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/read-inline")) {
         return Response.json({ entry: file, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/sandbox/files/write-inline")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/write-inline")) return Response.json(file);
       if (url.pathname.endsWith("/storage/stat")) return Response.json(object);
       if (url.pathname.endsWith("/storage/write-inline")) return Response.json(object);
       if (url.pathname.endsWith("/storage/read-inline")) {
@@ -1304,6 +1305,16 @@ test("storage and durable child resources keep wire details explicit", async () 
   const sandbox = await session.sandbox.status();
   assert.equal(sandbox.state, "running");
   assert.equal(sandbox.generation, "gen_01");
+  // Brain addresses Environments by the name the session declared; there is no unnamed default
+  // resource, so the default sandbox must resolve to the session's one declared name.
+  assert.deepEqual(session.environments, ["workspace"]);
+  assert.equal(session.sandbox.environment, "workspace");
+  assert.equal(
+    requests.find((request) => request.method === "GET" && request.path.includes("/environments/"))
+      .path,
+    "/v1/sessions/ses_01/environments/workspace",
+  );
+  assert.throws(() => session.environment("missing"), TypeError);
   assert.equal((await session.sandbox.files.list("/workspace", {
     generation: sandbox.generation,
   })).data[0].path, file.path);

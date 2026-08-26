@@ -502,16 +502,40 @@ function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 export class Session implements SessionSummary {
   readonly #transport: Transport;
   #data: SessionData;
-  readonly sandbox: SessionSandbox;
   readonly storage: SessionStorage;
   readonly children: SessionChildren;
 
   constructor(transport: Transport, data: SessionData) {
     this.#transport = transport;
     this.#data = data;
-    this.sandbox = new SessionSandbox(transport, data.id);
     this.storage = new SessionStorage(transport, data.id);
     this.children = new SessionChildren(transport, data.id);
+  }
+
+  /** The Environment names this session sealed. Only these can be addressed. */
+  get environments(): readonly string[] {
+    return this.#data.environments;
+  }
+
+  /** One sealed Environment addressed by the name the session declared it under. */
+  environment(name: string): SessionSandbox {
+    if (!this.#data.environments.includes(name)) {
+      throw new TypeError(
+        `Session ${this.#data.id} did not declare Environment ${JSON.stringify(name)}`,
+      );
+    }
+    return new SessionSandbox(this.#transport, this.#data.id, name);
+  }
+
+  /** The session's default sandbox: the one Environment it declared. */
+  get sandbox(): SessionSandbox {
+    const [only, ...rest] = this.#data.environments;
+    if (only === undefined || rest.length > 0) {
+      throw new TypeError(
+        `Session ${this.#data.id} has no default sandbox because it declared ${this.#data.environments.length} Environments; use session.environment(name)`,
+      );
+    }
+    return this.environment(only);
   }
 
   get id(): string {
