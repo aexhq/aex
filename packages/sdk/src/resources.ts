@@ -216,9 +216,14 @@ export class SessionSandbox {
   readonly #inner: BrainSandbox;
   readonly files: SandboxFiles;
 
-  constructor(transport: Transport, sessionId: string) {
-    this.#inner = new BrainSandbox(transport, sessionId);
+  constructor(transport: Transport, sessionId: string, environment: string) {
+    this.#inner = new BrainSandbox(transport, sessionId, environment);
     this.files = new SandboxFiles(this.#inner.files, transport);
+  }
+
+  /** The declared Environment name this sandbox addresses. */
+  get environment(): string {
+    return this.#inner.environment;
   }
 
   async status(options: OperationOptions = {}): Promise<SandboxStatus> {
