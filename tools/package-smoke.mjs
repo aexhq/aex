@@ -59,6 +59,26 @@ try {
     { cwd: consumer },
   );
 
+  // A workspace `overrides` entry collapses every Brain copy here but never in a customer's
+  // install, so a stale transitive pin ships a second Brain whose component contract digests
+  // reject the components this SDK builds. Judge the packed tree, which has no override.
+  const tree = JSON.parse(
+    runNpm(["ls", "@aexhq/brain", "--all", "--json"], { cwd: consumer }),
+  );
+  const resolved = new Set();
+  const walk = (node) => {
+    for (const [name, child] of Object.entries(node.dependencies ?? {})) {
+      if (name === "@aexhq/brain" && child.version !== undefined) resolved.add(child.version);
+      walk(child);
+    }
+  };
+  walk(tree);
+  assert.deepEqual(
+    [...resolved],
+    [brainVersion],
+    `the packed dependency tree must resolve exactly one @aexhq/brain, got ${[...resolved]}`,
+  );
+
   await writeFile(
     path.join(consumer, "tsconfig.json"),
     `${JSON.stringify({
