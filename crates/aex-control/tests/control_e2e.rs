@@ -77,13 +77,13 @@ fn stub_doc(id: &str, state: &str, storage: Value, turns: i64, last_seq: i64) ->
         "turn_state": "idle",
         "shape": "1gb",
         "model": {
-            "component_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "world": "aex:model/model@1.0.0",
-            "provider": "anthropic",
+            "dialect": "anthropic",
+            "base_url": "https://api.anthropic.com/v1",
             "name": "stub-model",
             "context_window_tokens": 32768
         },
         "storage": storage,
+        "environments": [],
         "created_at": now.clone(),
         "retain_until": retain_until,
         "updated_at": now,
@@ -1491,7 +1491,7 @@ async fn ambiguous_create_recovery_keeps_its_original_admission_at_zero_balance(
     let request = json!({
         "model": {
             "provider": "openai",
-            "name": "stub-model",
+            "name": "gpt-4.1-nano",
             "api_key": "provider-secret"
         },
         "metadata": {"test_ambiguous_create": "once"}
@@ -1784,7 +1784,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let unidentified = http
         .post(format!("{base}/v1/sessions"))
         .bearer_auth(&sk)
-        .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+        .json(&json!({"model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-x"}}))
         .send()
         .await
         .unwrap();
@@ -1796,7 +1796,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .post(format!("{base}/v1/sessions"))
         .bearer_auth(&sk)
         .header("Idempotency-Key", "unfunded-create")
-        .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+        .json(&json!({"model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-x"}}))
         .send()
         .await
         .unwrap();
@@ -1940,7 +1940,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .bearer_auth(&sk)
         .header("Idempotency-Key", "unsupported-shape")
         .json(&json!({
-            "model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"},
+            "model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-x"},
             "shape": "2gb"
         }))
         .send()
@@ -1975,10 +1975,8 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let create_request = json!({
         "model": {
             "provider": "anthropic",
-            "name": "m",
-            "api_key": "sk-x",
-            "component_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            "world": "aex:model/model@1.0.0"
+            "name": "claude-sonnet-5",
+            "api_key": "sk-x"
         },
         "agentloop": {
             "component_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
@@ -1988,11 +1986,6 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
             {
                 "component_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "component_base64": "eg==",
-                "bytes": 1
-            },
-            {
-                "component_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                "component_base64": "eA==",
                 "bytes": 1
             },
             {
@@ -2041,7 +2034,18 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
             "tools",
         ])
     );
-    assert_eq!(forwarded["model"], create_request["model"]);
+    assert_eq!(forwarded["model"]["dialect"], "anthropic");
+    assert_eq!(
+        forwarded["model"]["base_url"],
+        "https://api.anthropic.com/v1"
+    );
+    assert_eq!(forwarded["model"]["name"], "claude-sonnet-5");
+    assert_eq!(forwarded["model"]["api_key"], "sk-x");
+    assert!(
+        forwarded["model"].get("provider").is_none(),
+        "Brain is given a dialect and an endpoint, never a provider name"
+    );
+    assert_eq!(session["model"]["provider"], "anthropic");
     assert_eq!(forwarded["agentloop"], create_request["agentloop"]);
     assert_eq!(
         forwarded["component_artifacts"],
@@ -2091,7 +2095,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .post(format!("{base}/v1/sessions"))
         .bearer_auth(&sk)
         .header("Idempotency-Key", "same-create-request")
-        .json(&json!({"model": {"provider": "anthropic", "name": "changed", "api_key": "sk-x"}}))
+        .json(&json!({"model": {"provider": "anthropic", "name": "claude-opus-4-8", "api_key": "sk-x"}}))
         .send()
         .await
         .unwrap();
@@ -2765,7 +2769,7 @@ async fn abuse_caps_hold_concurrency_and_create_rate() {
         http.post(format!("{base}/v1/sessions"))
             .bearer_auth(&sk)
             .header("Idempotency-Key", key)
-            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .json(&json!({"model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-x"}}))
             .send()
             .await
             .unwrap()
@@ -2887,7 +2891,7 @@ async fn retained_root_cap_requires_confirmed_physical_deletion() {
     .await;
 
     let request = json!({
-        "model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}
+        "model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-x"}
     });
     let first = json_of(
         http.post(format!("{base}/v1/sessions"))

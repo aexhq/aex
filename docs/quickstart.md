@@ -4,14 +4,13 @@ Create an Aex API key in the [dashboard](https://aex.dev/dashboard), then instal
 four ordinary component packages:
 
 ```sh
-npm install @aexhq/sdk @aexhq/tools @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/model-openai zod
+npm install @aexhq/sdk @aexhq/tools @aexhq/env-aws-microvm @aexhq/loop-pi zod
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/loop-pi";
-import { openai } from "@aexhq/model-openai";
 import { bash, read, write } from "@aexhq/tools";
 import { z } from "zod";
 
@@ -20,7 +19,6 @@ const aex = new Aex({
 });
 const session = await aex.sessions.create({
   model: {
-    component: openai(),
     provider: "openai",
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,

@@ -1,0 +1,52 @@
+name: model catalog
+
+# The only writer of crates/aex-control/model-catalog.json. A models.dev fetch failure fails the
+# run and leaves the committed catalog untouched; the control-plane test bound on its generated
+# date turns a refresh that stopped running into a red build rather than an ageing provider table.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aex-model-catalog
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@v2
+      - run: python tools/generate-model-catalog.py
+      - run: cargo test -p aex-control --lib model
+      # Protected main takes the refresh through review like any other change. Actions cannot
+      # open the pull request in this organization, so the branch is pushed and linked here.
+      - name: Push the refreshed catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/aex-control/model-catalog.json; then
+            echo 'The committed catalog already matches models.dev.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B model-catalog-refresh
+          git commit -m "models: refresh the generated models.dev catalog" \
+            -- crates/aex-control/model-catalog.json
+          git push --force origin model-catalog-refresh
+          echo "Review the refresh: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/model-catalog-refresh?expand=1" \
+            >> "$GITHUB_STEP_SUMMARY"

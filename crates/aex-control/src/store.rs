@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   storage_transition_ms INTEGER NOT NULL DEFAULT 0,
   metered_to_ms INTEGER NOT NULL DEFAULT 0,
   session_storage_bytes INTEGER NOT NULL DEFAULT 0,
+  provider TEXT NOT NULL DEFAULT '',
   upload_reserved_bytes INTEGER NOT NULL DEFAULT 0,
   session_state TEXT NOT NULL DEFAULT 'open'
 );
@@ -328,6 +329,8 @@ enum RefundTransitionOutcome {
 #[derive(Debug, Clone)]
 pub struct SessionRow {
     pub id: String,
+    /// The provider name this root resolved, or empty for a row discovered without one.
+    pub provider: String,
     pub account_id: String,
     pub key_id: String,
     pub parent_id: Option<String>,
@@ -337,6 +340,33 @@ pub struct SessionRow {
     pub created_ms: i64,
     pub is_final: bool,
     pub fold: FoldState,
+}
+
+impl Db {
+    /// The provider names the given roots resolved. Rows recorded without one are omitted.
+    pub async fn session_providers(
+        &self,
+        root_ids: Vec<String>,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if root_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        self.call(move |conn| {
+            let mut providers = std::collections::HashMap::new();
+            let mut statement =
+                conn.prepare("SELECT provider FROM sessions WHERE id = ?1 AND provider <> ''")?;
+            for root_id in root_ids {
+                let provider = statement
+                    .query_row(params![&root_id], |row| row.get::<_, String>(0))
+                    .optional()?;
+                if let Some(provider) = provider {
+                    providers.insert(root_id, provider);
+                }
+            }
+            Ok(providers)
+        })
+        .await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -461,6 +491,13 @@ impl Db {
         {
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN web_search_queries INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !session_columns.iter().any(|name| name == "provider") {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
                 [],
             )
             .map_err(internal)?;
@@ -1888,9 +1925,9 @@ impl Db {
                       folded_seq, running_ms, turn_open_ms, session_storage_byte_s,
                       session_storage_byte_ms_remainder, web_search_queries,
                       storage_transition_ms, metered_to_ms, session_storage_bytes,
-                      upload_reserved_bytes, session_state)
+                      upload_reserved_bytes, session_state, provider)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                             ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                             ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                     params![
                         &row.id,
                         &row.account_id,
@@ -1912,6 +1949,7 @@ impl Db {
                         row.fold.session_storage_bytes,
                         row.fold.upload_reserved_bytes,
                         row.fold.session_state,
+                        &row.provider,
                     ],
                 )?;
                 if row.parent_id.is_none() {
@@ -3079,6 +3117,7 @@ fn insert_session_record(
 
 fn session_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
     Ok(SessionRow {
+        provider: String::new(),
         id: r.get(0)?,
         account_id: r.get(1)?,
         key_id: r.get(2)?,
@@ -3196,6 +3235,7 @@ mod tests {
             ("ses_child_b", Some("ses_root")),
         ] {
             db.insert_session(SessionRow {
+                provider: String::new(),
                 id: id.into(),
                 account_id: "acc_delete".into(),
                 key_id: "key_delete".into(),
@@ -3492,6 +3532,7 @@ mod tests {
             };
             crate::rating::accrue_storage(&mut fold, 1_001).unwrap();
             db.insert_session(SessionRow {
+                provider: String::new(),
                 id: "ses_storage".into(),
                 account_id: "acc_storage".into(),
                 key_id: "key".into(),
@@ -3578,6 +3619,7 @@ mod tests {
                 .await
                 .unwrap();
             db.insert_session(SessionRow {
+                provider: String::new(),
                 id: "ses_root".into(),
                 account_id: "acc_a".into(),
                 key_id: "key_1".into(),
@@ -3853,6 +3895,7 @@ mod tests {
             .await
             .unwrap();
         let mut row = SessionRow {
+            provider: String::new(),
             id: "ses_1".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4072,6 +4115,7 @@ mod tests {
             ("ses_g", "deleting", false),
         ] {
             let mut row = SessionRow {
+                provider: String::new(),
                 id: id.into(),
                 account_id: "acc_a".into(),
                 key_id: "key_1".into(),
@@ -4090,6 +4134,7 @@ mod tests {
                 .unwrap();
         }
         db.insert_session(SessionRow {
+            provider: String::new(),
             id: "ses_child".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4117,6 +4162,7 @@ mod tests {
             .await
             .unwrap();
         let row = SessionRow {
+            provider: String::new(),
             id: "ses_root".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4172,6 +4218,7 @@ mod tests {
             ("ses_sibling_root", None, "ses_sibling_root"),
         ] {
             db.insert_session(SessionRow {
+                provider: String::new(),
                 id: id.into(),
                 account_id: "acc_a".into(),
                 key_id: "key_1".into(),
@@ -4400,6 +4447,7 @@ mod tests {
             std::process::id()
         ));
         let session = |id: &str, parent_id: Option<&str>, depth: i64| SessionRow {
+            provider: String::new(),
             id: id.into(),
             account_id: "acc_hidden".into(),
             key_id: "key_hidden".into(),
@@ -4482,6 +4530,7 @@ mod tests {
             .await
             .unwrap();
         let hidden = SessionRow {
+            provider: String::new(),
             id: "ses_late_hidden".into(),
             account_id: "acc_delete".into(),
             key_id: "key_delete".into(),
@@ -4575,6 +4624,7 @@ mod tests {
             .await
             .unwrap();
         let row = SessionRow {
+            provider: String::new(),
             id: "ses_created".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4629,6 +4679,7 @@ mod tests {
             .await
             .unwrap();
         let root = SessionRow {
+            provider: String::new(),
             id: "ses_ended".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4708,6 +4759,7 @@ mod tests {
         );
 
         let replacement = SessionRow {
+            provider: String::new(),
             id: "ses_replacement".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
@@ -4876,6 +4928,7 @@ mod tests {
                 SessionCreateIntent::Created
             );
             let row = SessionRow {
+                provider: String::new(),
                 id: "ses_discovered".into(),
                 account_id: "acc_a".into(),
                 key_id: "key_1".into(),

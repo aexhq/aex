@@ -15,7 +15,6 @@ import { app as appComponent } from "@aexhq/env-app";
 import { z } from "zod";
 
 const componentBytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
-const testModel = component("model", componentBytes, {}, { metadata: { name: "fixture" } });
 const testAgentloop = component("agentloop", componentBytes, {});
 
 function testTool(name, grants = []) {
@@ -32,7 +31,7 @@ function testTool(name, grants = []) {
 function create(aex, options, request) {
   return aex.sessions.create({
     ...options,
-    model: { component: testModel, ...options.model },
+    model: { provider: "anthropic", ...options.model },
     agentloop: testAgentloop,
   }, request);
 }
@@ -89,7 +88,7 @@ test("session creation fails before transport without an Agentloop component", a
   });
   await assert.rejects(
     aex.sessions.create({
-      model: { component: testModel, provider: "anthropic", name: "m", apiKey: "key" },
+      model: { provider: "anthropic", name: "m", apiKey: "key" },
     }),
     /requires an imported Agentloop component/,
   );
@@ -121,7 +120,10 @@ test("create uses the production origin and maps the small camelCase surface", a
   assert.equal(body.model.name, "claude-sonnet-5");
   assert.equal(body.model.api_key, "sk-ant-test");
   assert.equal(body.model.max_output_tokens, 2048);
-  assert.equal(body.model.world, "aex:model/model@1.0.0");
+  // Aex resolves the dialect and endpoint; the create names only the provider.
+  assert.equal(body.model.dialect, undefined);
+  assert.equal(body.model.component_digest, undefined);
+  assert.equal(body.component_artifacts.length, 1, "only the Agentloop uploads bytes");
   assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
   assert.deepEqual(body.tools, { items: [] });
   assert.equal(body.component_artifacts.length, 1);
@@ -300,14 +302,13 @@ test("component create composes ordinary Model, Agentloop, Tool, and Environment
   }, { grants: ["children"] });
 
   await aex.sessions.create({
-    model: { component: model, provider: "fixture", name: "fixture", apiKey: "key" },
+    model: { provider: "fixture", name: "fixture", apiKey: "key" },
     agentloop,
     environments: { workspace: environment },
     tools: [echo, task],
   });
 
-  assert.equal(body.component_artifacts.length, 1, "identical component bytes upload once");
-  assert.equal(body.model.world, "aex:model/model@1.0.0");
+  assert.equal(body.model.provider, "fixture");
   assert.equal(body.agentloop.world, "aex:agentloop/agentloop@1.0.0");
   assert.equal(body.tools.items[0].executor.kind, "component");
   assert.equal(body.tools.items[0].executor.environment, "workspace");
@@ -350,12 +351,7 @@ test("component create keeps application callback source local and binds its Too
   ).returns(z.object({ id: z.string() }));
 
   await aex.sessions.create({
-    model: {
-      component: component("model", bytes, {}, { metadata: { name: "fixture" } }),
-      provider: "fixture",
-      name: "fixture",
-      apiKey: "key",
-    },
+    model: { provider: "fixture", name: "fixture", apiKey: "key" },
     agentloop: component("agentloop", bytes, {}),
     environments: { application: appComponent({ id: "component-app" }) },
     tools: [lookup],

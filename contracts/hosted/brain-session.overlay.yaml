@@ -2,7 +2,7 @@ overlay: 1.0.0
 info:
   title: Aex hosted policy for the Brain session API
   version: mvp
-extends: https://raw.githubusercontent.com/aexhq/brain/c94f9c21ba0cf1c181acbf10d2c9c2534c10b025/contracts/session/v1/openapi.yaml
+extends: https://raw.githubusercontent.com/aexhq/brain/5261cbe381f8cdb50fc53defd3deb1aabeaf0259/contracts/session/v1/openapi.yaml
 x-aex-brain-openapi-sha256: 49b159b9cffa76b4a431b0f3678c0aa1731395e8122f905b4f101e185c0cf7f2
 actions:
   - target: $.components.parameters.IdempotencyKey
@@ -15,11 +15,20 @@ actions:
         minLength: 1
         maxLength: 128
   - target: "$['paths']['/v1/sessions']['post']"
-    description: Record the one managed-compute shape available in hosted alpha.
+    description: Record the managed-compute shape and the model resolution hosted Aex owns.
     update:
       description: |
         Hosted Aex seals every root tree to `1gb` (0.5 vCPU and 1 GiB). SDK callers omit a shape;
         an explicit request for any other shape is rejected before neutral Brain admission.
+
+        A hosted create names its LLM API provider in `model.provider` instead of the dialect and
+        endpoint neutral Brain takes. Aex resolves that name to the wire dialect, the endpoint
+        that speaks it, and the model's context window, and refuses a provider it does not serve.
+        `model.base_url` overrides the endpoint and must be https. Every session Aex returns
+        reports the provider it resolved.
       x-aex-managed-compute:
         shape: 1gb
         selectable: false
+      x-aex-managed-model:
+        resolution: provider-name
+        dialects: [openai, anthropic]

@@ -33,9 +33,11 @@ pub enum PreparedMessage {
     },
 }
 
-/// Append Aex's stable output capability to Brain's native ordered Tool grant. Existing native
-/// Tool values remain unchanged and in the same order; the Aex capability is always last.
-pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+/// Seal the host's half of a hosted create: resolve the provider the caller named into the model
+/// configuration Brain takes, and append Aex's stable output capability to Brain's native ordered
+/// Tool grant. Existing native Tool values remain unchanged and in the same order; the Aex
+/// capability is always last. Returns the provider name for the session's read view.
+pub fn seal_create_request(body: impl AsRef<[u8]>) -> Result<(Vec<u8>, String)> {
     let mut document: Value = serde_json::from_slice(body.as_ref())
         .map_err(|error| Error::Invalid(format!("session body: {error}")))?;
     // The hosted create path passes its bounded Bytes by value. Release that 24 MiB allocation
@@ -55,6 +57,7 @@ pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         }
         Some(_) => return Err(Error::Invalid("shape must be a string".into())),
     }
+    let provider = crate::model::seal_model(root)?;
     let tools = root.entry("tools").or_insert_with(|| json!({}));
     let tools = tools
         .as_object_mut()
@@ -96,7 +99,9 @@ pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
             "capability": OUTPUT_CAPABILITY
         }
     }));
-    serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
+    let body = serde_json::to_vec(&document)
+        .map_err(|error| Error::Internal(format!("session body: {error}")))?;
+    Ok((body, provider))
 }
 
 fn normalize_managed_tool(item: &mut Value) -> Result<()> {
@@ -829,6 +834,7 @@ mod tests {
         .await
         .unwrap();
         db.insert_session(crate::store::SessionRow {
+            provider: "openai".into(),
             id: SESSION_ID.into(),
             account_id: "acc_output".into(),
             key_id: "key_output".into(),
@@ -845,11 +851,16 @@ mod tests {
         db
     }
 
+    /// Every hosted create resolves its provider before the Tool grant is sealed.
+    fn seal(body: &[u8]) -> Result<Vec<u8>> {
+        seal_create_request(body).map(|(body, _)| body)
+    }
+
     #[test]
     fn injection_appends_the_native_output_tool_without_mutating_ordinary_tools() {
-        let injected = inject_output_tool(
+        let injected = seal(
             br#"{
-                "model":{"provider":"openai"},
+                "model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},
                 "tools":{"items":[{
                     "definition":{
                         "name":"delegate",
@@ -879,18 +890,18 @@ mod tests {
         );
         assert!(document["tools"].get("external").is_none());
         assert!(
-            inject_output_tool(br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#).is_err()
+            seal(br#"{"tools":{"external":[{"name":"mine"}]},"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).is_err()
         );
-        assert!(inject_output_tool(br#"{"tools":{"external":[]},"model":{}}"#).is_err());
-        assert!(inject_output_tool(br#"{"tools":{"builtin":["bash"]},"model":{}}"#).is_err());
-        assert!(inject_output_tool(br#"{"tools":{"builtin":[]},"model":{}}"#).is_err());
-        let hosted_shape = inject_output_tool(br#"{"shape":"1gb","model":{}}"#).unwrap();
+        assert!(seal(br#"{"tools":{"external":[]},"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).is_err());
+        assert!(seal(br#"{"tools":{"builtin":["bash"]},"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).is_err());
+        assert!(seal(br#"{"tools":{"builtin":[]},"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).is_err());
+        let hosted_shape = seal(br#"{"shape":"1gb","model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).unwrap();
         let hosted_shape: Value = serde_json::from_slice(&hosted_shape).unwrap();
         assert!(hosted_shape.get("shape").is_none());
-        let unsupported = inject_output_tool(br#"{"shape":"2gb","model":{}}"#).unwrap_err();
+        let unsupported = seal(br#"{"shape":"2gb","model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).unwrap_err();
         assert!(matches!(unsupported, Error::Unprocessable(_)));
         assert_eq!(unsupported.status(), 422);
-        assert!(inject_output_tool(br#"{"shape":2,"model":{}}"#).is_err());
+        assert!(seal(br#"{"shape":2,"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"}}"#).is_err());
         assert_eq!(OUTPUT_CAPABILITY, "aex.output");
     }
 
@@ -898,9 +909,9 @@ mod tests {
     fn injection_pins_managed_web_tools_and_rejects_namespace_spoofing() {
         assert_eq!(SEARCH_CAPABILITY, "aex.web.search");
         assert_eq!(FETCH_CAPABILITY, "aex.web.fetch");
-        let injected = inject_output_tool(
+        let injected = seal(
             br#"{
-                "model":{"provider":"openai"},
+                "model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},
                 "tools":{"items":[{
                     "definition":{
                         "name":"web_search",
@@ -928,20 +939,20 @@ mod tests {
         );
 
         assert!(
-            inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.web.search"}}]}}"#
+            seal(
+                br#"{"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.web.search"}}]}}"#
             )
             .is_err()
         );
         assert!(
-            inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"web_fetch","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"aex_managed","bundle_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"preinstalled","required_env":[]}}]}}"#
+            seal(
+                br#"{"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},"tools":{"items":[{"definition":{"name":"web_fetch","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"aex_managed","bundle_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"preinstalled","required_env":[]}}]}}"#
             )
             .is_err()
         );
         assert!(
-            inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.private"}}]}}"#
+            seal(
+                br#"{"model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.private"}}]}}"#
             )
             .is_err()
         );
@@ -950,7 +961,7 @@ mod tests {
     #[test]
     fn injection_passes_component_subagents_through_verbatim() {
         let source = br#"{
-                "model":{"provider":"openai"},
+                "model":{"provider":"openai","name":"gpt-4.1-nano","api_key":"sk-test"},
                 "tools":{"items":[{
                     "definition":{
                         "name":"subagents",
@@ -969,7 +980,7 @@ mod tests {
                 }]}
             }"#;
         let source_document: Value = serde_json::from_slice(source).unwrap();
-        let injected = inject_output_tool(source).unwrap();
+        let injected = seal(source).unwrap();
         let document: Value = serde_json::from_slice(&injected).unwrap();
         let subagents = &document["tools"]["items"][0];
         assert_eq!(subagents, &source_document["tools"]["items"][0]);

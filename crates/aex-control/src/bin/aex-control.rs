@@ -152,6 +152,11 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
     };
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
     let internal_listener = tokio::net::TcpListener::bind(cfg.internal_listen).await?;
+    let (catalog_source, catalog_generated, catalog_providers) =
+        aex_control::model::catalog_provenance();
+    tracing::info!(
+        "model catalog: {catalog_providers} providers from {catalog_source} generated {catalog_generated}"
+    );
     tracing::info!("control plane listening on {}", cfg.listen);
     tracing::info!("private tool executor listening on {}", cfg.internal_listen);
     let (shutdown, mut public_shutdown) = tokio::sync::watch::channel(false);

@@ -257,6 +257,7 @@ pub async fn settle_fenced_subtree(
                 ..Default::default()
             };
             SessionRow {
+                provider: String::new(),
                 id: snapshot.id.clone(),
                 account_id: account_id.to_owned(),
                 key_id: "brain-discovered".into(),
@@ -303,6 +304,7 @@ async fn discover_changed(
                 ..Default::default()
             };
             SessionRow {
+                provider: String::new(),
                 id: snapshot.id.clone(),
                 account_id: account_id.to_owned(),
                 // The creating API key is not part of Brain's neutral child identity and is not
@@ -827,6 +829,7 @@ mod tests {
         .unwrap();
         let now = now_ms();
         let row = |id: &str, fold: crate::rating::FoldState| SessionRow {
+            provider: String::new(),
             id: id.into(),
             account_id: "acc_incremental".into(),
             key_id: "key".into(),
@@ -929,6 +932,7 @@ mod tests {
         .unwrap();
         let now = now_ms();
         let row = SessionRow {
+            provider: String::new(),
             id: "ses_stale".into(),
             account_id: "acc_stale".into(),
             key_id: "key".into(),
@@ -997,6 +1001,7 @@ mod tests {
         .await
         .unwrap();
         let row = SessionRow {
+            provider: String::new(),
             id: "ses_boundary".into(),
             account_id: "acc_boundary".into(),
             key_id: "key".into(),

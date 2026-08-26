@@ -131,5 +131,13 @@ if (
 ) {
   fail("the hosted overlay no longer records the fixed 1gb create policy");
 }
+const managedModel = shapeAction.update?.["x-aex-managed-model"];
+if (
+  managedModel?.resolution !== "provider-name" ||
+  !Array.isArray(managedModel?.dialects) ||
+  managedModel.dialects.length === 0
+) {
+  fail("the hosted overlay no longer records Aex-owned model resolution");
+}
 
 process.stdout.write(`verified hosted overlay against Brain ${revision} (${digest})\n`);

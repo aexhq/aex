@@ -30,21 +30,20 @@ data.
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/model-openai @aexhq/tools
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/loop-pi";
-import { openai } from "@aexhq/model-openai";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const workspace = awsMicrovm();
 const session = await aex.sessions.create({
   model: {
-    component: openai(),
+    provider: "openai",
     name: "gpt-5.4",
     apiKey: process.env.OPENAI_API_KEY!,
   },

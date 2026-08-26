@@ -16,6 +16,7 @@ pub mod api;
 pub mod brain;
 pub mod customer_environment;
 pub mod identity;
+pub mod model;
 pub mod outbound;
 pub mod output;
 pub mod payments;

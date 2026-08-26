@@ -1984,15 +1984,109 @@ async fn owned_session_row(
             "session HEAD identity does not match the requested resource".into(),
         ));
     }
-    let row = session_row_from_snapshot(snapshot, &account.id, key_id);
+    let row = session_row_from_snapshot(snapshot, &account.id, key_id, "");
     state.db.insert_session(row.clone()).await?;
     Ok(row)
+}
+
+/// A session document is small; this bounds the buffer the provider restoration needs.
+const MAX_SESSION_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
+
+/// Put the provider a customer named back onto every session document Brain returns. Brain was
+/// given a dialect and an endpoint and reports those; the name that chose them is Aex's record,
+/// keyed by the root whose sealed model every session in the tree shares.
+async fn restore_session_providers(state: &AppState, response: Response) -> Result<Response> {
+    let json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if !json {
+        return Ok(response);
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, MAX_SESSION_DOCUMENT_BYTES)
+        .await
+        .map_err(|error| Error::Internal(format!("session body: {error}")))?;
+    let Ok(mut document) = serde_json::from_slice::<Value>(&bytes) else {
+        return Ok(Response::from_parts(parts, Body::from(bytes)));
+    };
+    let mut roots = Vec::new();
+    collect_session_roots(&document, &mut roots);
+    if roots.is_empty() {
+        return Ok(Response::from_parts(parts, Body::from(bytes)));
+    }
+    let providers = state.db.session_providers(roots).await?;
+    if providers.is_empty() {
+        return Ok(Response::from_parts(parts, Body::from(bytes)));
+    }
+    apply_session_providers(&mut document, &providers);
+    let rewritten = serde_json::to_vec(&document)
+        .map_err(|error| Error::Internal(format!("session body: {error}")))?;
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Ok(Response::from_parts(parts, Body::from(rewritten)))
+}
+
+fn collect_session_roots(document: &Value, roots: &mut Vec<String>) {
+    match document {
+        Value::Object(object) => {
+            if object.get("object").and_then(Value::as_str) == Some("session")
+                && let Some(root) = object.get("root_id").and_then(Value::as_str)
+            {
+                roots.push(root.to_owned());
+            }
+            for value in object.values() {
+                collect_session_roots(value, roots);
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                collect_session_roots(value, roots);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_session_providers(
+    document: &mut Value,
+    providers: &std::collections::HashMap<String, String>,
+) {
+    match document {
+        Value::Object(object) => {
+            if object.get("object").and_then(Value::as_str) == Some("session")
+                && let Some(provider) = object
+                    .get("root_id")
+                    .and_then(Value::as_str)
+                    .and_then(|root| providers.get(root))
+            {
+                let provider = provider.clone();
+                crate::model::restore_provider(document, &provider);
+                if let Value::Object(object) = document {
+                    for value in object.values_mut() {
+                        apply_session_providers(value, providers);
+                    }
+                }
+                return;
+            }
+            for value in object.values_mut() {
+                apply_session_providers(value, providers);
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                apply_session_providers(value, providers);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn session_row_from_snapshot(
     snapshot: crate::brain::BrainSessionSnapshot,
     account_id: &str,
     key_id: &str,
+    provider: &str,
 ) -> SessionRow {
     // HEAD gauges cannot reconstruct storage that was both created and deleted before this first
     // lookup. Persist the zero-at-create origin; the next exact journal fold installs transitions.
@@ -2006,6 +2100,7 @@ fn session_row_from_snapshot(
         ..Default::default()
     };
     SessionRow {
+        provider: provider.to_owned(),
         id: snapshot.id,
         account_id: account_id.to_owned(),
         key_id: key_id.to_owned(),
@@ -2104,7 +2199,7 @@ async fn hydrate_delete_parent_chain(
         }
         child_depth = snapshot.depth;
         expected_parent = snapshot.parent_id.clone();
-        chain.push(session_row_from_snapshot(snapshot, &account.id, key_id));
+        chain.push(session_row_from_snapshot(snapshot, &account.id, key_id, ""));
     }
     if child_depth != 0 || expected_parent.is_some() {
         return Err(Error::Upstream(format!(
@@ -2231,7 +2326,7 @@ async fn proxy_sessions_root(
                         .enable_session_discovery(account.id.clone())
                         .await?;
                     let idempotency = create_idempotency(&headers, &account.id)?;
-                    let body = output::inject_output_tool(body)?;
+                    let (body, provider) = output::seal_create_request(body)?;
                     let body = inject_uploaded_artifact_layers(
                         &state.db,
                         &account.id,
@@ -2240,7 +2335,7 @@ async fn proxy_sessions_root(
                     .await?;
                     if body.len() > brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES {
                         return Err(Error::PayloadTooLarge(format!(
-                            "create-session request exceeds {} bytes after official Tool sealing",
+                            "create-session request exceeds {} bytes after official sealing",
                             brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES
                         )));
                     }
@@ -2369,7 +2464,7 @@ async fn proxy_sessions_root(
                         // validated and atomically installed. If local parsing/storage fails, the
                         // create remains uncertain across restart and an identical retry recovers.
                         let created = async {
-                            let (parts, resp_body) = resp.into_parts();
+                            let (mut parts, resp_body) = resp.into_parts();
                             let bytes = axum::body::to_bytes(resp_body, 16 * 1024 * 1024)
                                 .await
                                 .map_err(|e| Error::Internal(format!("create body: {e}")))?;
@@ -2381,7 +2476,8 @@ async fn proxy_sessions_root(
                                     "root create returned a child session".into(),
                                 ));
                             }
-                            let row = session_row_from_snapshot(snapshot, &account.id, &key.id);
+                            let row =
+                                session_row_from_snapshot(snapshot, &account.id, &key.id, &provider);
                             state
                                 .db
                                 .record_created_session(
@@ -2389,6 +2485,12 @@ async fn proxy_sessions_root(
                                     Some((idempotency.1.clone(), request_hash.clone(), now_ms())),
                                 )
                                 .await?;
+                            let mut document: Value = serde_json::from_slice(&bytes)
+                                .map_err(|e| Error::Upstream(format!("create body: {e}")))?;
+                            crate::model::restore_provider(&mut document, &provider);
+                            let bytes = serde_json::to_vec(&document)
+                                .map_err(|e| Error::Internal(format!("create body: {e}")))?;
+                            parts.headers.remove(header::CONTENT_LENGTH);
                             Ok::<_, Error>(Response::from_parts(parts, Body::from(bytes)))
                         }
                         .await;
@@ -2446,7 +2548,7 @@ async fn proxy_sessions_root(
                     }
                 }
                 Method::GET => {
-                    forward(
+                    let response = forward(
                         &state,
                         &account.id,
                         method,
@@ -2454,7 +2556,8 @@ async fn proxy_sessions_root(
                         &headers,
                         None,
                     )
-                    .await
+                    .await?;
+                    restore_session_providers(&state, response).await
                 }
                 _ => Err(Error::Invalid(format!(
                     "{method} not supported on /v1/sessions"
@@ -2657,7 +2760,7 @@ async fn proxy_session(
                 } else {
                     Some(body)
                 };
-                forward(
+                let response = forward(
                     &state,
                     &account.id,
                     method,
@@ -2665,7 +2768,8 @@ async fn proxy_session(
                     &headers,
                     body,
                 )
-                .await?
+                .await?;
+                restore_session_providers(&state, response).await?
             };
             if is_end && resp.status().is_success() && row.parent_id.is_none() {
                 // End is a short asynchronous acceptance. Never decrement the root count or
@@ -3043,6 +3147,7 @@ mod event_filter_tests {
         .await
         .unwrap();
         db.insert_session(SessionRow {
+            provider: String::new(),
             id: "ses_capacity".into(),
             account_id: "acc_capacity".into(),
             key_id: "key_capacity".into(),

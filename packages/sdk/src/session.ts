@@ -41,6 +41,11 @@ type SessionData = BrainSessionData & { retain_until: string };
 
 export type SessionInput = string;
 
+/** Aex resolved the provider Brain was given a dialect and an endpoint for, and reports it back. */
+type HostedSessionData = SessionData & {
+  model: SessionData["model"] & { provider: string };
+};
+
 /** Aex adds trusted-output admission identity to Brain's neutral acknowledgement. */
 interface MessageAccepted extends BrainMessageAccepted {
   output_id?: string;
@@ -48,13 +53,15 @@ interface MessageAccepted extends BrainMessageAccepted {
 }
 
 export interface ModelOptions {
-  /** Imported Model component. */
-  component: ComponentExtension<"model">;
+  /** LLM API provider id: "openai", "anthropic", "openrouter", … Aex resolves what it takes. */
   provider: string;
   name: string;
   apiKey: string;
+  /** Endpoint override. Required for a provider that publishes none, and always https. */
   baseUrl?: string;
   maxOutputTokens?: number;
+  /** Required only for a model the hosted catalog does not carry. */
+  contextWindowTokens?: number;
 }
 
 export interface CreateSessionOptions {
@@ -151,13 +158,12 @@ export class Sessions {
 
   async create(options: CreateSessionOptions, request: RequestOptions = {}): Promise<Session> {
     if (this.#closed) throw new SessionError("Aex client is closed");
-    if (options.model?.component === undefined) {
-      throw new TypeError("sessions.create requires an imported Model component");
+    if (typeof options.model?.provider !== "string" || options.model.provider === "") {
+      throw new TypeError("sessions.create requires model.provider");
     }
     if (options.agentloop === undefined) {
       throw new TypeError("sessions.create requires an imported Agentloop component");
     }
-    const model = options.model.component;
     const agentloop = options.agentloop;
     const tools = [...(options.tools ?? [])];
     const componentTools = tools.filter(isComponentTool);
@@ -196,18 +202,16 @@ export class Sessions {
       );
     }
     const prepared = await prepareComponents([
-      model,
       agentloop,
       ...allComponentTools,
       ...environmentComponents.map(([, environment]) => environment),
     ]);
-    const modelBinding = prepared.bindings[0];
-    const agentloopBinding = prepared.bindings[1];
-    if (modelBinding === undefined || agentloopBinding === undefined) {
+    const agentloopBinding = prepared.bindings[0];
+    if (agentloopBinding === undefined) {
       throw new TypeError("component session bindings are incomplete");
     }
-    const toolBindings = prepared.bindings.slice(2, 2 + allComponentTools.length);
-    const environmentBindings = prepared.bindings.slice(2 + allComponentTools.length);
+    const toolBindings = prepared.bindings.slice(1, 1 + allComponentTools.length);
+    const environmentBindings = prepared.bindings.slice(1 + allComponentTools.length);
     const toolItems = allComponentTools.map((tool, index) => {
       const binding = toolBindings[index];
       if (binding === undefined) throw new TypeError("Tool component binding is missing");
@@ -249,9 +253,6 @@ export class Sessions {
     }));
     const body = {
       model: {
-        component_digest: modelBinding.component_digest,
-        world: modelBinding.world,
-        config: modelBinding.config,
         provider: options.model.provider,
         name: options.model.name,
         api_key: options.model.apiKey,
@@ -259,6 +260,9 @@ export class Sessions {
         ...(options.model.maxOutputTokens === undefined
           ? {}
           : { max_output_tokens: options.model.maxOutputTokens }),
+        ...(options.model.contextWindowTokens === undefined
+          ? {}
+          : { context_window_tokens: options.model.contextWindowTokens }),
       },
       agentloop: {
         component_digest: agentloopBinding.component_digest,
@@ -296,7 +300,7 @@ export class Sessions {
             },
           }),
     } as unknown as CreateSessionRequest;
-    const data = await this.#transport.json<SessionData>("POST", "/v1/sessions", {
+    const data = await this.#transport.json<HostedSessionData>("POST", "/v1/sessions", {
       body,
       headers: { "Idempotency-Key": request.idempotencyKey ?? randomIdempotencyKey() },
       signal: request.signal,
@@ -306,7 +310,7 @@ export class Sessions {
   }
 
   async get(id: string, options: Pick<RequestOptions, "signal"> = {}): Promise<Session> {
-    const data = await this.#transport.json<SessionData>(
+    const data = await this.#transport.json<HostedSessionData>(
       "GET",
       `/v1/sessions/${encodeURIComponent(id)}`,
       { signal: options.signal },
@@ -501,11 +505,11 @@ function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 
 export class Session implements SessionSummary {
   readonly #transport: Transport;
-  #data: SessionData;
+  #data: HostedSessionData;
   readonly storage: SessionStorage;
   readonly children: SessionChildren;
 
-  constructor(transport: Transport, data: SessionData) {
+  constructor(transport: Transport, data: HostedSessionData) {
     this.#transport = transport;
     this.#data = data;
     this.storage = new SessionStorage(transport, data.id);
@@ -588,7 +592,7 @@ export class Session implements SessionSummary {
   }
 
   async refresh(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "GET",
       `/v1/sessions/${encodeURIComponent(this.id)}`,
       { signal: options.signal },
@@ -709,7 +713,7 @@ export class Session implements SessionSummary {
   }
 
   async cancel(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/cancel`,
       { signal: options.signal, retry: true },
@@ -718,7 +722,7 @@ export class Session implements SessionSummary {
   }
 
   async suspend(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/suspend`,
       { signal: options.signal, retry: true },
@@ -727,7 +731,7 @@ export class Session implements SessionSummary {
   }
 
   async resume(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/resume`,
       { signal: options.signal, retry: true },
@@ -739,7 +743,7 @@ export class Session implements SessionSummary {
     value: Date | string,
     options: Pick<RequestOptions, "signal"> & { allowShorten?: boolean } = {},
   ): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/retention`,
       {
@@ -755,7 +759,7 @@ export class Session implements SessionSummary {
   }
 
   async end(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
-    this.#data = await this.#transport.json<SessionData>(
+    this.#data = await this.#transport.json<HostedSessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/end`,
       { signal: options.signal, retry: true },

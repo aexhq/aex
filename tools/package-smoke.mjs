@@ -99,7 +99,6 @@ import { component } from "@aexhq/brain";
 import { Aex } from "@aexhq/sdk";
 
 const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
-const model = component("model", bytes, {}, { metadata: { name: "smoke" } });
 const agentloop = component("agentloop", bytes, {});
 const environment = component("environment", bytes, {});
 const echo = component("tool", bytes, {
@@ -113,7 +112,7 @@ const echo = component("tool", bytes, {
 
 async function typecheckAex(aex: Aex): Promise<void> {
   await aex.sessions.create({
-    model: { component: model, provider: "smoke", name: "smoke", apiKey: "not-used" },
+    model: { provider: "openai", name: "gpt-4.1-nano", apiKey: "not-used" },
     agentloop,
     environments: { workspace: environment },
     tools: [echo],
@@ -121,12 +120,12 @@ async function typecheckAex(aex: Aex): Promise<void> {
 }
 void typecheckAex;
 assert.equal(echo.extension, "tool");
-console.log("packed Aex consumes Brain's four component values");
+console.log("packed Aex composes a provider-named model with Brain's components");
 `,
   );
   run(process.execPath, [path.join(consumer, "node_modules/typescript/bin/tsc")], { cwd: consumer });
   const output = run(process.execPath, ["dist/smoke.js"], { cwd: consumer });
-  assert.match(output, /four component values/u);
+  assert.match(output, /provider-named model/u);
   process.stdout.write(`${output}\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
