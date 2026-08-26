@@ -34,8 +34,9 @@ use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{
-    AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
-    ToolArtifactLayerRow, TopupRow, WaitlistRow,
+    AccountDeletionOutcome, AccountDeletionRequest, AccountDeletionRow, AccountRow, CreditGrantRow,
+    Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow, ToolArtifactLayerRow, TopupRow,
+    WaitlistRow,
 };
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
 use crate::web::{self, WebRuntime};
@@ -241,6 +242,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/admin/invitations", post(create_invitation))
         .route("/v1/admin/credit-grants", post(create_credit_grant))
         .route("/v1/admin/refunds", post(create_refund))
+        .route("/v1/admin/account-deletions", post(create_account_deletion))
+        .route(
+            "/v1/admin/account-deletions/{deletion_id}",
+            get(get_account_deletion),
+        )
         .route("/v1/accounts", post(create_account))
         .route("/v1/account", get(get_account))
         .route("/v1/keys", post(create_key).get(list_keys))
@@ -570,6 +576,27 @@ fn refund_json(r: &RefundRow) -> Value {
         && let Some(reason) = &r.failure_reason
     {
         value["failure_reason"] = json!(reason);
+    }
+    value
+}
+
+fn account_deletion_json(row: &AccountDeletionRow) -> Value {
+    let mut value = json!({
+        "id": row.id,
+        "object": "account_deletion",
+        "account_id": row.account_id,
+        "status": row.status,
+        "balance_disposition": row.balance_disposition,
+        "reason": row.reason,
+        "sessions_pending": row.sessions_pending,
+        "requested_at": rfc3339(row.requested_ms),
+        "updated_at": rfc3339(row.updated_ms),
+    });
+    if let Some(ms) = row.completed_ms {
+        value["completed_at"] = json!(rfc3339(ms));
+    }
+    if let Some(microusd) = row.closing_balance_microusd {
+        value["closing_balance_microusd"] = json!(microusd.to_string());
     }
     value
 }
@@ -911,6 +938,109 @@ async fn create_refund(State(state): State<AppState>, headers: HeaderMap, body: 
             };
             state.admission.invalidate_balance(&refund.account_id);
             Ok(json_response(200, &refund_json(&refund)))
+        }
+        .await,
+    )
+}
+
+/// The operator answer to an erasure request or an abuse ban. Acceptance is the whole destructive
+/// step this request performs: it takes both credentials away and hands every session the account
+/// owns to the same ensured deletion path `DELETE /v1/sessions/{id}` uses. Erasure and the balance
+/// close-out wait behind that path's completion barrier, so this route can only refuse or finish.
+async fn create_account_deletion(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let request_key = idempotency_key(&headers)?;
+            let req: aex_contracts::control::CreateAccountDeletionRequest = parse_body(&body)?;
+            let reason = String::from(req.reason).trim().to_owned();
+            if reason.is_empty() {
+                return Err(Error::Invalid(
+                    "account deletion reason cannot be blank".into(),
+                ));
+            }
+            let email = normalized_email(req.email.as_str());
+
+            // Whether this deletion is allowed at all turns on the balance, so settle usage
+            // strongly first — the same reconciliation the refund path takes before it commits.
+            if let Some(account) = state.db.account_by_email(email.clone()).await? {
+                let _reconciliation = state.admission.begin_reconciliation(&account.id);
+                sweep_account(&state.db, &state.brain, &state.card, &account.id).await?;
+                state.admission.invalidate_live_root_sessions(&account.id);
+            }
+
+            let row = match state
+                .db
+                .begin_account_deletion(AccountDeletionRequest {
+                    id: identity::new_id("del"),
+                    request_key,
+                    email,
+                    reason,
+                    balance_disposition: req.balance_disposition.to_string(),
+                    requested_ms: now_ms(),
+                })
+                .await?
+            {
+                AccountDeletionOutcome::Accepted(row) => {
+                    state.admission.invalidate_balance(&row.account_id);
+                    state
+                        .admission
+                        .invalidate_live_root_sessions(&row.account_id);
+                    row
+                }
+                AccountDeletionOutcome::Existing(row) => {
+                    return Ok(json_response(200, &account_deletion_json(&row)));
+                }
+                AccountDeletionOutcome::RequestMismatch => {
+                    return Err(Error::Conflict(
+                        "Idempotency-Key was already used for a different account deletion".into(),
+                    ));
+                }
+                AccountDeletionOutcome::AlreadyDeleting => {
+                    return Err(Error::Conflict(
+                        "this account already has a deletion in progress".into(),
+                    ));
+                }
+                AccountDeletionOutcome::AccountNotFound => return Err(Error::NotFound),
+                AccountDeletionOutcome::UnsettledBalance(microusd) => {
+                    return Err(Error::Conflict(format!(
+                        "the account still holds {} USD; return unused credit with a refund, \
+                         or delete with balance_disposition \"written_off\"",
+                        usd_display(microusd)
+                    )));
+                }
+            };
+            let mut response = json_response(202, &account_deletion_json(&row));
+            response.headers_mut().insert(
+                header::LOCATION,
+                format!("/v1/admin/account-deletions/{}", row.id)
+                    .parse()
+                    .map_err(|_| Error::Internal("account deletion location".into()))?,
+            );
+            Ok(response)
+        }
+        .await,
+    )
+}
+
+async fn get_account_deletion(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(deletion_id): Path<String>,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let row = state
+                .db
+                .account_deletion(deletion_id)
+                .await?
+                .ok_or(Error::NotFound)?;
+            Ok(json_response(200, &account_deletion_json(&row)))
         }
         .await,
     )

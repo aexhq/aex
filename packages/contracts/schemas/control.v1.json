@@ -24,6 +24,10 @@
       "type": "string",
       "pattern": "^grt_[A-Za-z0-9]{20,32}$"
     },
+    "AccountDeletionId": {
+      "type": "string",
+      "pattern": "^del_[A-Za-z0-9]{20,32}$"
+    },
     "Timestamp": {
       "type": "string",
       "format": "date-time",
@@ -591,6 +595,99 @@
         "failure_reason": {
           "type": "string",
           "description": "Operator-facing payment-provider failure detail; present only when status is failed."
+        }
+      }
+    },
+    "AccountBalanceDisposition": {
+      "type": "string",
+      "enum": [
+        "settled",
+        "written_off"
+      ],
+      "description": "What the operator asserts about the prepaid balance the account still holds. `settled` refuses the deletion while the balance is a whole cent or more from zero in either direction, so an erasure request returns unused credit through a refund first; money never moves as a side effect of deleting an account. `written_off` deletes whatever the balance is and records it as a write-off on the ledger — the abuse-response answer, and the only one that can absorb unpaid usage."
+    },
+    "AccountDeletionStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "succeeded"
+      ]
+    },
+    "CreateAccountDeletionRequest": {
+      "type": "object",
+      "required": [
+        "email",
+        "reason",
+        "balance_disposition"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+          "maxLength": 254
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Operator audit reason for this deletion."
+        },
+        "balance_disposition": {
+          "$ref": "#/$defs/AccountBalanceDisposition"
+        }
+      }
+    },
+    "AccountDeletion": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "account_id",
+        "status",
+        "balance_disposition",
+        "reason",
+        "sessions_pending",
+        "requested_at",
+        "updated_at"
+      ],
+      "description": "An operator-initiated, irreversible account deletion. Accepting it destroys the account token and every API key at once, and hands each of the account's sessions to the ordinary ensured session-deletion path; the account cannot authenticate or create anything from that moment. It stays `pending` until Brain confirms every one of those sessions physically deleted, and only then is the email erased, the outstanding invitation dropped, uploaded Tool artifacts purged and the remaining balance closed out. Top-ups, refunds, credit grants and rated session lines are retained under `account_id`, which survives as a pseudonym: they are the billing record, not personal data. Retrying the same Idempotency-Key returns the same deletion.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/AccountDeletionId"
+        },
+        "object": {
+          "const": "account_deletion"
+        },
+        "account_id": {
+          "$ref": "#/$defs/AccountId"
+        },
+        "status": {
+          "$ref": "#/$defs/AccountDeletionStatus"
+        },
+        "balance_disposition": {
+          "$ref": "#/$defs/AccountBalanceDisposition"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "sessions_pending": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sessions of this account that are not yet confirmed physically deleted. It reaches zero exactly when the deletion succeeds."
+        },
+        "requested_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "closing_balance_microusd": {
+          "$ref": "#/$defs/MicroUsd",
+          "description": "The balance written off when the deletion completed, positive for unspent credit and negative for unpaid usage; present only when status is succeeded. One ledger row of the opposite sign closes the account out, so the write-off is on the billing record rather than implied by it."
         }
       }
     },

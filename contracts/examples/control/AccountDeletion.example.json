@@ -1,0 +1,13 @@
+{
+  "id": "del_01J5X8Y2K3M4N5P6Q7R8S9Y6",
+  "object": "account_deletion",
+  "account_id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0",
+  "status": "succeeded",
+  "balance_disposition": "settled",
+  "reason": "Customer erasure request TCK-4120",
+  "sessions_pending": 0,
+  "requested_at": "2026-08-18T10:05:00Z",
+  "updated_at": "2026-08-18T10:06:12Z",
+  "completed_at": "2026-08-18T10:06:12Z",
+  "closing_balance_microusd": "-3194"
+}

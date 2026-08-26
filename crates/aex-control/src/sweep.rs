@@ -581,8 +581,34 @@ async fn advance_deletion(
     }
 }
 
+/// One retryable step of an account deletion. Acceptance already handed every session the account
+/// owned to the per-session jobs above, so this only covers what discovery surfaces afterwards and
+/// then closes the account out. The final strong sweep is the erasure barrier: nothing is erased
+/// until a discovery that finds no session left to delete.
+async fn advance_account_deletion(
+    db: &Db,
+    brain: &BrainClient,
+    card: &RateCard,
+    job: crate::store::AccountDeletionRow,
+) -> Result<()> {
+    if job.sessions_pending > 0 {
+        db.accept_account_session_deletions(job.account_id, now_ms())
+            .await?;
+        return Ok(());
+    }
+    sweep_account(db, brain, card, &job.account_id).await?;
+    db.accept_account_session_deletions(job.account_id, now_ms())
+        .await?;
+    // The close-out re-reads the session count under its own transaction, so a session this
+    // sweep has just discovered postpones erasure rather than racing it.
+    db.close_account_deletion(job.id, now_ms()).await?;
+    Ok(())
+}
+
 /// Retryable, crash-safe destructive workflow. DELETE admission only inserts the small SQLite
-/// anchor; this worker ends/fences, strongly settles, accepts Brain purge, and observes completion.
+/// anchor; this worker ends/fences, strongly settles, accepts Brain purge, and observes
+/// completion. Account deletions ride the same loop because they complete only when the session
+/// jobs they enqueued have.
 pub async fn run_deletion_worker(db: Db, brain: BrainClient, card: RateCard) {
     if let Err(error) = db.clear_deletion_claims().await {
         tracing::error!("deletion worker could not recover scheduler claims: {error}");
@@ -637,6 +663,22 @@ pub async fn run_deletion_worker(db: Db, brain: BrainClient, card: RateCard) {
                 }
             })
             .await;
+
+        match db.pending_account_deletions(DELETION_JOB_BATCH).await {
+            Ok(jobs) => {
+                for job in jobs {
+                    let id = job.id.clone();
+                    if let Err(error) = advance_account_deletion(&db, &brain, &card, job).await {
+                        tracing::warn!(
+                            account_deletion = %id,
+                            error = %error,
+                            "account deletion will retry"
+                        );
+                    }
+                }
+            }
+            Err(error) => tracing::warn!("deletion worker: list account deletions: {error}"),
+        }
     }
 }
 

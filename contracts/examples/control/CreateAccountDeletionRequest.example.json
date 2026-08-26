@@ -1,0 +1,5 @@
+{
+  "email": "dev@example.com",
+  "reason": "Customer erasure request TCK-4120",
+  "balance_disposition": "settled"
+}

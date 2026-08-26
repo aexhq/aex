@@ -147,6 +147,31 @@ write(
     },
 )
 
+write(
+    "CreateAccountDeletionRequest.example.json",
+    {
+        "email": account["email"],
+        "reason": "Customer erasure request TCK-4120",
+        "balance_disposition": "settled",
+    },
+)
+write(
+    "AccountDeletion.example.json",
+    {
+        "id": "del_01J5X8Y2K3M4N5P6Q7R8S9Y6",
+        "object": "account_deletion",
+        "account_id": account["id"],
+        "status": "succeeded",
+        "balance_disposition": "settled",
+        "reason": "Customer erasure request TCK-4120",
+        "sessions_pending": 0,
+        "requested_at": "2026-08-18T10:05:00Z",
+        "updated_at": "2026-08-18T10:06:12Z",
+        "completed_at": "2026-08-18T10:06:12Z",
+        "closing_balance_microusd": "-3194",
+    },
+)
+
 rates = {
     "object": "rate_card",
     "vcpu_hour_microusd": "190000",

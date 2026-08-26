@@ -21,6 +21,11 @@ use crate::{Error, Result};
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS: i64 = 60_000;
 
+/// Prepaid money moves in whole cents, so a sub-cent balance can no longer be returned to the
+/// customer and is what a `settled` account deletion tolerates. Anything larger is an amount
+/// somebody owns, and deleting an account must not quietly absorb it in either direction.
+const SETTLED_BALANCE_TOLERANCE_MICROUSD: i64 = 10_000;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS waitlist (
   email TEXT PRIMARY KEY COLLATE NOCASE,
@@ -50,6 +55,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
   revoked_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS api_keys_account ON api_keys(account_id);
+CREATE TABLE IF NOT EXISTS account_deletions (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  account_id TEXT NOT NULL UNIQUE REFERENCES accounts(id),
+  reason TEXT NOT NULL,
+  balance_disposition TEXT NOT NULL CHECK (balance_disposition IN ('settled', 'written_off')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded')),
+  closing_balance_microusd INTEGER,
+  requested_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL,
+  completed_ms INTEGER
+);
 CREATE TABLE IF NOT EXISTS topups (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -239,6 +256,42 @@ pub struct DeletionRow {
     pub claimed_ms: Option<i64>,
     pub attempts: i64,
     pub next_attempt_ms: i64,
+}
+
+/// One operator-initiated account deletion. `sessions_pending` is derived on every read, so the
+/// record cannot claim a completion its sessions have not reached.
+#[derive(Debug, Clone)]
+pub struct AccountDeletionRow {
+    pub id: String,
+    pub account_id: String,
+    pub reason: String,
+    pub balance_disposition: String,
+    pub status: String,
+    pub closing_balance_microusd: Option<i64>,
+    pub sessions_pending: i64,
+    pub requested_ms: i64,
+    pub updated_ms: i64,
+    pub completed_ms: Option<i64>,
+}
+
+/// One intended deletion, named by the customer's email and keyed by the operator's
+/// Idempotency-Key.
+pub struct AccountDeletionRequest {
+    pub id: String,
+    pub request_key: String,
+    pub email: String,
+    pub reason: String,
+    pub balance_disposition: String,
+    pub requested_ms: i64,
+}
+
+pub enum AccountDeletionOutcome {
+    Accepted(AccountDeletionRow),
+    Existing(AccountDeletionRow),
+    RequestMismatch,
+    AlreadyDeleting,
+    AccountNotFound,
+    UnsettledBalance(i64),
 }
 
 #[derive(Debug, Clone)]
@@ -1006,6 +1059,19 @@ impl Db {
         .await
     }
 
+    pub async fn account_by_email(&self, email: String) -> Result<Option<AccountRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
+                 FROM accounts WHERE email = ?1 COLLATE NOCASE",
+                params![email],
+                account_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
     pub async fn account(&self, account_id: String) -> Result<Option<AccountRow>> {
         self.call(move |c| {
             c.query_row(
@@ -1116,6 +1182,226 @@ impl Db {
                 params![key_id, account_id, now_ms],
             )?;
             Ok(n > 0)
+        })
+        .await
+    }
+
+    // ---- account deletion ----
+
+    /// Accept one irreversible account deletion. A single transaction strips the account of every
+    /// way to act — the account token and all API keys stop working, the outstanding invitation
+    /// is dropped — and hands every session it still owns to the ensured session-deletion path.
+    /// Nothing else is destroyed here: erasure and the balance close-out wait for Brain to
+    /// confirm those sessions physically gone, and a refusal leaves the account untouched.
+    pub async fn begin_account_deletion(
+        &self,
+        request: AccountDeletionRequest,
+    ) -> Result<AccountDeletionOutcome> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let target = transaction
+                .query_row(
+                    "SELECT id FROM accounts WHERE email = ?1 COLLATE NOCASE",
+                    params![&request.email],
+                    |record| record.get::<_, String>(0),
+                )
+                .optional()?;
+            if let Some(existing) = transaction
+                .query_row(
+                    &format!("{ACCOUNT_DELETION_COLS} WHERE d.request_key = ?1"),
+                    params![&request.request_key],
+                    account_deletion_row,
+                )
+                .optional()?
+            {
+                // This operation destroys the account it names, so a replay is the same request
+                // only while the email still resolves to the same one — or no longer resolves at
+                // all, which is what a completed deletion leaves behind.
+                let same_account = target.is_none_or(|id| id == existing.account_id);
+                if !same_account
+                    || existing.reason != request.reason
+                    || existing.balance_disposition != request.balance_disposition
+                {
+                    return Ok(AccountDeletionOutcome::RequestMismatch);
+                }
+                return Ok(AccountDeletionOutcome::Existing(existing));
+            }
+            let Some(account_id) = target else {
+                return Ok(AccountDeletionOutcome::AccountNotFound);
+            };
+            if transaction
+                .query_row(
+                    "SELECT 1 FROM account_deletions WHERE account_id = ?1",
+                    params![&account_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            {
+                return Ok(AccountDeletionOutcome::AlreadyDeleting);
+            }
+            let balance: i64 = transaction.query_row(
+                "SELECT COALESCE(SUM(microusd), 0) FROM ledger WHERE account_id = ?1",
+                params![&account_id],
+                |record| record.get(0),
+            )?;
+            if request.balance_disposition == "settled"
+                && balance.saturating_abs() >= SETTLED_BALANCE_TOLERANCE_MICROUSD
+            {
+                return Ok(AccountDeletionOutcome::UnsettledBalance(balance));
+            }
+            transaction.execute(
+                "DELETE FROM api_keys WHERE account_id = ?1",
+                params![&account_id],
+            )?;
+            // The tombstone is not a SHA-256 digest, so no presented token can hash to it, and it
+            // stays unique per account under the column's index.
+            transaction.execute(
+                "UPDATE accounts SET token_hash = 'deleted:' || id WHERE id = ?1",
+                params![&account_id],
+            )?;
+            // The invitation is the other way back in: an unspent invite token, or the joined row
+            // that `reinvite_lost_account` reopens.
+            transaction.execute(
+                "DELETE FROM waitlist WHERE email = ?1 COLLATE NOCASE",
+                params![&request.email],
+            )?;
+            transaction.execute(
+                "INSERT INTO account_deletions
+                   (id, request_key, account_id, reason, balance_disposition, status,
+                    requested_ms, updated_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?6)",
+                params![
+                    &request.id,
+                    &request.request_key,
+                    &account_id,
+                    &request.reason,
+                    &request.balance_disposition,
+                    request.requested_ms
+                ],
+            )?;
+            accept_uncovered_subtrees(&transaction, &account_id, request.requested_ms)?;
+            let accepted = transaction.query_row(
+                &format!("{ACCOUNT_DELETION_COLS} WHERE d.id = ?1"),
+                params![&request.id],
+                account_deletion_row,
+            )?;
+            transaction.commit()?;
+            Ok(AccountDeletionOutcome::Accepted(accepted))
+        })
+        .await
+    }
+
+    pub async fn account_deletion(&self, id: String) -> Result<Option<AccountDeletionRow>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    &format!("{ACCOUNT_DELETION_COLS} WHERE d.id = ?1"),
+                    params![id],
+                    account_deletion_row,
+                )
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn pending_account_deletions(&self, limit: usize) -> Result<Vec<AccountDeletionRow>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(&format!(
+                "{ACCOUNT_DELETION_COLS} WHERE d.status = 'pending'
+                 ORDER BY d.updated_ms, d.requested_ms, d.id LIMIT ?1"
+            ))?;
+            statement
+                .query_map(
+                    params![i64::try_from(limit).unwrap_or(i64::MAX)],
+                    account_deletion_row,
+                )?
+                .collect()
+        })
+        .await
+    }
+
+    /// Hand any still-uncovered session of a deleting account to the ensured session-deletion
+    /// path. Acceptance already covered everything the account owned; this closes the window in
+    /// which a session created just before it is only discovered afterwards.
+    pub async fn accept_account_session_deletions(
+        &self,
+        account_id: String,
+        accepted_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            accept_uncovered_subtrees(&transaction, &account_id, accepted_ms)?;
+            transaction.commit()
+        })
+        .await
+    }
+
+    /// Complete a deletion once every session it retired is confirmed physically gone. Erasure
+    /// and the close-out ledger row commit together: before them the account is powerless but
+    /// still whole, after them nothing links the retained billing record to a person. Returns
+    /// `None` while any session remains, so the caller simply retries.
+    pub async fn close_account_deletion(
+        &self,
+        id: String,
+        now_ms: i64,
+    ) -> Result<Option<AccountDeletionRow>> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let pending = transaction
+                .query_row(
+                    &format!("{ACCOUNT_DELETION_COLS} WHERE d.id = ?1 AND d.status = 'pending'"),
+                    params![&id],
+                    account_deletion_row,
+                )
+                .optional()?
+                .filter(|pending| pending.sessions_pending == 0);
+            let Some(pending) = pending else {
+                return Ok(None);
+            };
+            let balance: i64 = transaction.query_row(
+                "SELECT COALESCE(SUM(microusd), 0) FROM ledger WHERE account_id = ?1",
+                params![&pending.account_id],
+                |record| record.get(0),
+            )?;
+            // The write-off is a ledger row of its own rather than a silence: the account closes
+            // at zero and the billing record still says what it closed from.
+            transaction.execute(
+                "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
+                 VALUES ('closeout:' || ?1, ?2, ?3, ?4)",
+                params![&id, &pending.account_id, balance.saturating_neg(), now_ms],
+            )?;
+            transaction.execute(
+                "UPDATE accounts SET email = 'deleted:' || id WHERE id = ?1",
+                params![&pending.account_id],
+            )?;
+            // Uploaded Tool artifacts are customer content; the create-request keys and the
+            // discovery watermark are the last per-account traces of how it was used.
+            for table in [
+                "tool_artifact_layers",
+                "session_create_requests",
+                "session_create_intents",
+                "session_discovery",
+            ] {
+                transaction.execute(
+                    &format!("DELETE FROM {table} WHERE account_id = ?1"),
+                    params![&pending.account_id],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE account_deletions
+                 SET status = 'succeeded', closing_balance_microusd = ?2, updated_ms = ?3,
+                     completed_ms = ?3
+                 WHERE id = ?1",
+                params![&id, balance, now_ms],
+            )?;
+            let closed = transaction.query_row(
+                &format!("{ACCOUNT_DELETION_COLS} WHERE d.id = ?1"),
+                params![&id],
+                account_deletion_row,
+            )?;
+            transaction.commit()?;
+            Ok(Some(closed))
         })
         .await
     }
@@ -2180,115 +2466,7 @@ impl Db {
                     ));
                 }
             }
-            transaction.execute(
-                "WITH RECURSIVE subtree(id) AS (
-                   SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
-                   UNION ALL
-                   SELECT child.id FROM sessions child JOIN subtree parent
-                     ON child.parent_id = parent.id
-                   WHERE child.account_id = ?2
-                 )
-                 UPDATE sessions SET session_state = 'deleting'
-                 WHERE id IN (SELECT id FROM subtree) AND final = 0",
-                params![&session_id, &account_id],
-            )?;
-            if transaction
-                .query_row(
-                    "SELECT 1 FROM session_deletions WHERE session_id = ?1",
-                    params![&session_id],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some()
-            {
-                transaction.commit()?;
-                return Ok(());
-            }
-
-            // A later descendant request is a durable status alias when an ancestor purge
-            // already covers it. Resolve through an existing alias to the executable anchor.
-            let ancestor_anchor = transaction
-                .query_row(
-                    "WITH RECURSIVE ancestors(id, parent_id, distance) AS (
-                       SELECT id, parent_id, 0 FROM sessions
-                        WHERE id = ?1 AND account_id = ?2
-                       UNION ALL
-                       SELECT parent.id, parent.parent_id, child.distance + 1
-                         FROM sessions parent JOIN ancestors child ON parent.id = child.parent_id
-                        WHERE parent.account_id = ?2
-                     )
-                     SELECT deletion.anchor_id, anchor.phase, anchor.completed_ms
-                       FROM ancestors
-                       JOIN session_deletions deletion ON deletion.session_id = ancestors.id
-                       JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
-                      WHERE ancestors.id != ?1
-                      ORDER BY ancestors.distance
-                      LIMIT 1",
-                    params![&session_id, &account_id],
-                    |record| {
-                        Ok((
-                            record.get::<_, String>(0)?,
-                            record.get::<_, String>(1)?,
-                            record.get::<_, Option<i64>>(2)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            let (anchor_id, phase, completed_ms) = match ancestor_anchor {
-                Some((anchor_id, phase, completed_ms)) if phase == "succeeded" => {
-                    (anchor_id, "succeeded", completed_ms)
-                }
-                Some((anchor_id, _, _)) => (anchor_id, "ending", None),
-                None => (session_id.clone(), "ending", None),
-            };
-            transaction.execute(
-                "INSERT INTO session_deletions
-                   (session_id, account_id, anchor_id, phase, accepted_ms, updated_ms,
-                    completed_ms, next_attempt_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?5)",
-                params![
-                    &session_id,
-                    &account_id,
-                    &anchor_id,
-                    phase,
-                    accepted_ms,
-                    completed_ms
-                ],
-            )?;
-
-            if anchor_id == session_id && phase != "succeeded" {
-                // A newly accepted ancestor waits behind every already-active descendant anchor.
-                // This also covers descendants that were claimed immediately before acceptance.
-                let dependencies = {
-                    let mut statement = transaction.prepare(
-                        "WITH RECURSIVE subtree(id) AS (
-                           SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
-                           UNION ALL
-                           SELECT child.id FROM sessions child JOIN subtree parent
-                             ON child.parent_id = parent.id
-                            WHERE child.account_id = ?2
-                         )
-                         SELECT DISTINCT deletion.anchor_id
-                           FROM subtree
-                           JOIN session_deletions deletion ON deletion.session_id = subtree.id
-                           JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
-                          WHERE subtree.id != ?1 AND anchor.phase != 'succeeded'
-                            AND deletion.anchor_id != ?1",
-                    )?;
-                    statement
-                        .query_map(params![&session_id, &account_id], |record| {
-                            record.get::<_, String>(0)
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?
-                };
-                for dependency_id in dependencies {
-                    transaction.execute(
-                        "INSERT OR IGNORE INTO session_deletion_dependencies
-                           (session_id, dependency_id) VALUES (?1, ?2)",
-                        params![&session_id, dependency_id],
-                    )?;
-                }
-            }
+            accept_subtree_deletion(&transaction, &account_id, &session_id, accepted_ms)?;
             transaction.commit()
         })
         .await
@@ -2950,6 +3128,12 @@ const CREDIT_GRANT_COLS: &str = "SELECT g.id, g.request_key, g.account_id, a.ema
     g.amount_cents, g.reason, g.created_ms
     FROM credit_grants g JOIN accounts a ON a.id = g.account_id";
 
+const ACCOUNT_DELETION_COLS: &str = "SELECT d.id, d.account_id, d.reason, d.balance_disposition,
+    d.status, d.closing_balance_microusd,
+    (SELECT COUNT(*) FROM sessions s WHERE s.account_id = d.account_id AND s.final = 0),
+    d.requested_ms, d.updated_ms, d.completed_ms
+    FROM account_deletions d";
+
 const OUTPUT_COLS: &str = "SELECT id, session_id, schema_hash, schema_json, max_attempts,
     attempts, status, turn_id, accepted_json, result_json, error_json, idempotency_key_hash,
     request_hash, created_ms FROM output_requests";
@@ -3015,6 +3199,21 @@ fn refund_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RefundRow> {
     })
 }
 
+fn account_deletion_row(record: &rusqlite::Row<'_>) -> rusqlite::Result<AccountDeletionRow> {
+    Ok(AccountDeletionRow {
+        id: record.get(0)?,
+        account_id: record.get(1)?,
+        reason: record.get(2)?,
+        balance_disposition: record.get(3)?,
+        status: record.get(4)?,
+        closing_balance_microusd: record.get(5)?,
+        sessions_pending: record.get(6)?,
+        requested_ms: record.get(7)?,
+        updated_ms: record.get(8)?,
+        completed_ms: record.get(9)?,
+    })
+}
+
 fn credit_grant_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CreditGrantRow> {
     Ok(CreditGrantRow {
         id: r.get(0)?,
@@ -3025,6 +3224,163 @@ fn credit_grant_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CreditGrantRow> {
         reason: r.get(5)?,
         created_ms: r.get(6)?,
     })
+}
+
+/// Sessions this account still owns that no deletion job covers, outermost first. A descendant of
+/// a covered session is already inside that job's subtree; a session whose parent is not local is
+/// a forest root here, which is what makes a Brain-native child impossible to leave behind.
+fn uncovered_forest_roots(
+    connection: &Connection,
+    account_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection.prepare(
+        "WITH RECURSIVE covered(id) AS (
+           SELECT session_id FROM session_deletions WHERE account_id = ?1
+           UNION
+           SELECT child.id FROM sessions child JOIN covered ON child.parent_id = covered.id
+            WHERE child.account_id = ?1
+         )
+         SELECT id FROM sessions
+          WHERE account_id = ?1 AND final = 0
+            AND id NOT IN (SELECT id FROM covered)
+            AND (parent_id IS NULL
+                 OR parent_id NOT IN (SELECT id FROM sessions WHERE account_id = ?1))
+          ORDER BY depth, created_ms, id",
+    )?;
+    statement
+        .query_map(params![account_id], |record| record.get(0))?
+        .collect()
+}
+
+fn accept_uncovered_subtrees(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    accepted_ms: i64,
+) -> rusqlite::Result<()> {
+    for session_id in uncovered_forest_roots(transaction, account_id)? {
+        accept_subtree_deletion(transaction, account_id, &session_id, accepted_ms)?;
+    }
+    Ok(())
+}
+
+/// Durably accept one subtree deletion inside a caller's transaction. Session DELETE accepts one
+/// of these; an account deletion accepts one per uncovered local forest root in the same
+/// transaction that strips the account's authority.
+fn accept_subtree_deletion(
+    transaction: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    session_id: &str,
+    accepted_ms: i64,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        "WITH RECURSIVE subtree(id) AS (
+           SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+           UNION ALL
+           SELECT child.id FROM sessions child JOIN subtree parent
+             ON child.parent_id = parent.id
+           WHERE child.account_id = ?2
+         )
+         UPDATE sessions SET session_state = 'deleting'
+         WHERE id IN (SELECT id FROM subtree) AND final = 0",
+        params![session_id, account_id],
+    )?;
+    if transaction
+        .query_row(
+            "SELECT 1 FROM session_deletions WHERE session_id = ?1",
+            params![session_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    // A later descendant request is a durable status alias when an ancestor purge
+    // already covers it. Resolve through an existing alias to the executable anchor.
+    let ancestor_anchor = transaction
+        .query_row(
+            "WITH RECURSIVE ancestors(id, parent_id, distance) AS (
+               SELECT id, parent_id, 0 FROM sessions
+                WHERE id = ?1 AND account_id = ?2
+               UNION ALL
+               SELECT parent.id, parent.parent_id, child.distance + 1
+                 FROM sessions parent JOIN ancestors child ON parent.id = child.parent_id
+                WHERE parent.account_id = ?2
+             )
+             SELECT deletion.anchor_id, anchor.phase, anchor.completed_ms
+               FROM ancestors
+               JOIN session_deletions deletion ON deletion.session_id = ancestors.id
+               JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
+              WHERE ancestors.id != ?1
+              ORDER BY ancestors.distance
+              LIMIT 1",
+            params![session_id, account_id],
+            |record| {
+                Ok((
+                    record.get::<_, String>(0)?,
+                    record.get::<_, String>(1)?,
+                    record.get::<_, Option<i64>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let (anchor_id, phase, completed_ms) = match ancestor_anchor {
+        Some((anchor_id, phase, completed_ms)) if phase == "succeeded" => {
+            (anchor_id, "succeeded", completed_ms)
+        }
+        Some((anchor_id, _, _)) => (anchor_id, "ending", None),
+        None => (session_id.to_owned(), "ending", None),
+    };
+    transaction.execute(
+        "INSERT INTO session_deletions
+           (session_id, account_id, anchor_id, phase, accepted_ms, updated_ms,
+            completed_ms, next_attempt_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?5)",
+        params![
+            session_id,
+            account_id,
+            &anchor_id,
+            phase,
+            accepted_ms,
+            completed_ms
+        ],
+    )?;
+
+    if anchor_id == session_id && phase != "succeeded" {
+        // A newly accepted ancestor waits behind every already-active descendant anchor.
+        // This also covers descendants that were claimed immediately before acceptance.
+        let dependencies = {
+            let mut statement = transaction.prepare(
+                "WITH RECURSIVE subtree(id) AS (
+                   SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                   UNION ALL
+                   SELECT child.id FROM sessions child JOIN subtree parent
+                     ON child.parent_id = parent.id
+                    WHERE child.account_id = ?2
+                 )
+                 SELECT DISTINCT deletion.anchor_id
+                   FROM subtree
+                   JOIN session_deletions deletion ON deletion.session_id = subtree.id
+                   JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
+                  WHERE subtree.id != ?1 AND anchor.phase != 'succeeded'
+                    AND deletion.anchor_id != ?1",
+            )?;
+            statement
+                .query_map(params![session_id, account_id], |record| {
+                    record.get::<_, String>(0)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for dependency_id in dependencies {
+            transaction.execute(
+                "INSERT OR IGNORE INTO session_deletion_dependencies
+                   (session_id, dependency_id) VALUES (?1, ?2)",
+                params![session_id, dependency_id],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn insert_session_record(
