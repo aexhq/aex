@@ -64,7 +64,4 @@ test("exact integer strings are canonical and numeric fields are bounded", () =>
   assert.equal(topup({ amount_cents: 999 }), false);
   assert.equal(topup({ amount_cents: 100_001 }), false);
 
-  const storage = ajv.getSchema("root#/$defs/StorageMeters");
-  assert.equal(storage({ session_storage_bytes: 10_737_418_240, upload_reserved_bytes: 0 }), true);
-  assert.equal(storage({ session_storage_bytes: 10_737_418_241, upload_reserved_bytes: 0 }), false);
 });

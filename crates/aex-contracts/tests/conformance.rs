@@ -176,14 +176,4 @@ fn exact_integer_strings_are_canonical_and_numeric_fields_are_bounded() {
     assert!(topup.is_valid(&serde_json::json!({"amount_cents": 100_000})));
     assert!(!topup.is_valid(&serde_json::json!({"amount_cents": 999})));
     assert!(!topup.is_valid(&serde_json::json!({"amount_cents": 100_001})));
-
-    let storage = validator("StorageMeters");
-    assert!(storage.is_valid(&serde_json::json!({
-        "session_storage_bytes": 10_737_418_240u64,
-        "upload_reserved_bytes": 0
-    })));
-    assert!(!storage.is_valid(&serde_json::json!({
-        "session_storage_bytes": 10_737_418_241u64,
-        "upload_reserved_bytes": 0
-    })));
 }

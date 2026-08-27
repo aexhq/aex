@@ -118,6 +118,15 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
 CREATE INDEX IF NOT EXISTS sessions_open_turn ON sessions(account_id, final, turn_open_ms);
 CREATE INDEX IF NOT EXISTS sessions_meter_due ON sessions(account_id, final, metered_to_ms);
+CREATE TABLE IF NOT EXISTS session_model_usage (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  folded_sequence INTEGER NOT NULL DEFAULT 0,
+  gateway_cost_nano_usd INTEGER NOT NULL DEFAULT 0,
+  model_calls INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  updated_ms INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS session_create_requests (
   account_id TEXT NOT NULL REFERENCES accounts(id),
   request_key_hash TEXT NOT NULL,
@@ -339,6 +348,16 @@ pub struct SessionRow {
     pub fold: FoldState,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelUsageRow {
+    pub folded_sequence: i64,
+    pub gateway_cost_nano_usd: i64,
+    pub model_calls: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub updated_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionCreateRow {
     pub request_hash: String,
@@ -365,6 +384,15 @@ pub enum SessionCreateIntent {
     Existing,
     Conflict,
     RetainedRootLimit,
+    CreateRateLimit,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionCreateLimits {
+    pub now_ms: i64,
+    pub max_retained_roots: i64,
+    pub create_window_start_ms: i64,
+    pub max_creates_in_window: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -1609,6 +1637,86 @@ impl Db {
         .await
     }
 
+    pub async fn model_usage(&self, session_id: String) -> Result<ModelUsageRow> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT folded_sequence, gateway_cost_nano_usd, model_calls,
+                            input_tokens, output_tokens, updated_ms
+                     FROM session_model_usage WHERE session_id = ?1",
+                    params![session_id],
+                    |row| {
+                        Ok(ModelUsageRow {
+                            folded_sequence: row.get(0)?,
+                            gateway_cost_nano_usd: row.get(1)?,
+                            model_calls: row.get(2)?,
+                            input_tokens: row.get(3)?,
+                            output_tokens: row.get(4)?,
+                            updated_ms: row.get(5)?,
+                        })
+                    },
+                )
+                .optional()
+                .map(|row| row.unwrap_or_default())
+        })
+        .await
+    }
+
+    pub async fn apply_model_usage(
+        &self,
+        session_id: String,
+        account_id: String,
+        usage: ModelUsageRow,
+    ) -> Result<bool> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let current_sequence = transaction
+                .query_row(
+                    "SELECT folded_sequence FROM session_model_usage WHERE session_id = ?1",
+                    params![&session_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            if usage.folded_sequence < current_sequence {
+                transaction.commit()?;
+                return Ok(false);
+            }
+            transaction.execute(
+                "INSERT INTO session_model_usage
+                   (session_id, folded_sequence, gateway_cost_nano_usd, model_calls,
+                    input_tokens, output_tokens, updated_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                   folded_sequence = excluded.folded_sequence,
+                   gateway_cost_nano_usd = excluded.gateway_cost_nano_usd,
+                   model_calls = excluded.model_calls,
+                   input_tokens = excluded.input_tokens,
+                   output_tokens = excluded.output_tokens,
+                   updated_ms = excluded.updated_ms",
+                params![
+                    &session_id,
+                    usage.folded_sequence,
+                    usage.gateway_cost_nano_usd,
+                    usage.model_calls,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.updated_ms,
+                ],
+            )?;
+            let microusd = usage.gateway_cost_nano_usd / 1_000;
+            transaction.execute(
+                "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
+                 VALUES ('usage:' || ?1, ?2, ?3, ?4)
+                 ON CONFLICT(ref) DO UPDATE SET microusd = ?3, updated_ms = ?4",
+                params![session_id, account_id, -microusd, usage.updated_ms],
+            )?;
+            transaction.commit()?;
+            Ok(true)
+        })
+        .await
+    }
+
     // ---- sessions and metering ----
 
     pub async fn insert_session(&self, row: SessionRow) -> Result<()> {
@@ -1679,6 +1787,27 @@ impl Db {
         now_ms: i64,
         max_retained_roots: i64,
     ) -> Result<SessionCreateIntent> {
+        self.ensure_session_create_admission(
+            account_id,
+            request_key_hash,
+            request_hash,
+            SessionCreateLimits {
+                now_ms,
+                max_retained_roots,
+                create_window_start_ms: i64::MIN,
+                max_creates_in_window: i64::MAX,
+            },
+        )
+        .await
+    }
+
+    pub async fn ensure_session_create_admission(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+        request_hash: String,
+        limits: SessionCreateLimits,
+    ) -> Result<SessionCreateIntent> {
         self.call(move |connection| {
             let transaction = connection.transaction()?;
             let existing = transaction
@@ -1709,16 +1838,29 @@ impl Db {
                         params![&account_id],
                         |record| record.get(0),
                     )?;
-                    if retained >= max_retained_roots.max(1) {
+                    if retained >= limits.max_retained_roots.max(1) {
                         transaction.commit()?;
                         return Ok(SessionCreateIntent::RetainedRootLimit);
+                    }
+                    let recent_creates: i64 = transaction.query_row(
+                        "SELECT
+                           (SELECT COUNT(*) FROM sessions
+                            WHERE account_id = ?1 AND parent_id IS NULL AND created_ms >= ?2) +
+                           (SELECT COUNT(*) FROM session_create_intents
+                            WHERE account_id = ?1 AND created_ms >= ?2)",
+                        params![&account_id, limits.create_window_start_ms],
+                        |record| record.get(0),
+                    )?;
+                    if recent_creates >= limits.max_creates_in_window.max(1) {
+                        transaction.commit()?;
+                        return Ok(SessionCreateIntent::CreateRateLimit);
                     }
                     transaction.execute(
                         "INSERT INTO session_create_intents
                            (account_id, request_key_hash, request_hash, state,
                             covered_session_id, created_ms, updated_ms)
                          VALUES (?1, ?2, ?3, 'dispatching', NULL, ?4, ?4)",
-                        params![account_id, request_key_hash, request_hash, now_ms],
+                        params![account_id, request_key_hash, request_hash, limits.now_ms],
                     )?;
                     SessionCreateIntent::Created
                 }
@@ -2010,6 +2152,22 @@ impl Db {
             ))?;
             let rows = stmt.query_map(params![account_id], session_row)?;
             rows.collect()
+        })
+        .await
+    }
+
+    pub async fn forget_session(&self, account_id: String, session_id: String) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "DELETE FROM session_create_requests WHERE account_id = ?1 AND session_id = ?2",
+                params![&account_id, &session_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM sessions WHERE account_id = ?1 AND id = ?2",
+                params![account_id, session_id],
+            )?;
+            transaction.commit()
         })
         .await
     }
@@ -4797,6 +4955,63 @@ mod tests {
         }
         assert_eq!((created, limited), (10, 90));
         assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 10);
+    }
+
+    #[tokio::test]
+    async fn create_rate_admission_counts_unique_pending_identities_in_one_transaction() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.ensure_session_create_admission(
+                "acc_a".into(),
+                "key-a".into(),
+                "request-a".into(),
+                SessionCreateLimits {
+                    now_ms: 1_000,
+                    max_retained_roots: 10,
+                    create_window_start_ms: 0,
+                    max_creates_in_window: 1,
+                },
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::Created
+        );
+        assert_eq!(
+            db.ensure_session_create_admission(
+                "acc_a".into(),
+                "key-a".into(),
+                "request-a".into(),
+                SessionCreateLimits {
+                    now_ms: 1_001,
+                    max_retained_roots: 10,
+                    create_window_start_ms: 0,
+                    max_creates_in_window: 1,
+                },
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::Existing,
+            "a retry must not consume a second create slot"
+        );
+        assert_eq!(
+            db.ensure_session_create_admission(
+                "acc_a".into(),
+                "key-b".into(),
+                "request-b".into(),
+                SessionCreateLimits {
+                    now_ms: 1_002,
+                    max_retained_roots: 10,
+                    create_window_start_ms: 0,
+                    max_creates_in_window: 1,
+                },
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::CreateRateLimit
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

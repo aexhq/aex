@@ -149,28 +149,17 @@ write(
 
 rates = {
     "object": "rate_card",
-    "vcpu_hour_microusd": "190000",
-    "gb_hour_microusd": "25000",
-    "session_storage_gb_month_microusd": "30000",
-    "web_search_query_microusd": "3000",
-    "month_hours": 730,
+    "model_gateway": "pass_through",
 }
 write("RateCard.example.json", rates)
 session_usage = {
     "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
-    "shape": "1gb",
-    "state": "open",
-    "running_ms": "322000",
-    "session_storage_byte_milliseconds": "3600000000000000",
-    "web_search_queries": 2,
-    "compute_microusd": "10733",
-    "storage_microusd": "41",
-    "web_search_microusd": "6000",
-    "total_microusd": "16774",
-    "storage": {
-        "session_storage_bytes": 500000000,
-        "upload_reserved_bytes": 0,
-    },
+    "state": "idle",
+    "model_calls": 2,
+    "input_tokens": "12450",
+    "output_tokens": "980",
+    "model_microusd": "129",
+    "total_microusd": "129",
     "metered_to": "2026-08-18T09:45:00Z",
 }
 write("SessionUsage.example.json", session_usage)
@@ -179,8 +168,8 @@ write(
     {
         "object": "usage",
         "account_id": account["id"],
-        "balance_microusd": "9983226",
-        "total_microusd": "16774",
+        "balance_microusd": "9999871",
+        "total_microusd": "129",
         "sessions": [session_usage],
         "rates": rates,
         "metered_to": "2026-08-18T09:45:00Z",

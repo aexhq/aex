@@ -274,7 +274,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** The bill — every session's rated line on the public rate card, storage meters included */
+        /** Exact model-gateway cost and token usage folded from Brain session events */
         get: operations["getUsage"];
         put?: never;
         post?: never;
@@ -291,7 +291,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** The active rate card (public) */
+        /** The public pass-through model-gateway rate policy */
         get: operations["getRates"];
         put?: never;
         post?: never;
@@ -494,43 +494,24 @@ export type components = {
         };
         /** @description Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
         UnsignedDecimalInteger: string;
-        /** @description Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published. */
-        StorageMeters: {
-            session_storage_bytes: number;
-            upload_reserved_bytes: number;
-        };
-        /** @description One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal. */
+        /** @description One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts. */
         SessionUsage: {
             session_id: string;
-            /**
-             * @description The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB.
-             * @constant
-             */
-            shape: "1gb";
-            /** @description Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection. */
+            /** @description The latest session state observed by the Aex control plane. */
             state: string;
-            /** @description Cumulative running milliseconds as an exact canonical unsigned decimal string. */
-            running_ms: components["schemas"]["UnsignedDecimalInteger"];
-            /** @description Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000)). */
-            session_storage_byte_milliseconds: components["schemas"]["UnsignedDecimalInteger"];
-            /** @description Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe. */
-            web_search_queries: number;
-            compute_microusd: components["schemas"]["MicroUsd"];
-            storage_microusd: components["schemas"]["MicroUsd"];
-            web_search_microusd: components["schemas"]["MicroUsd"];
+            model_calls: number;
+            input_tokens: components["schemas"]["UnsignedDecimalInteger"];
+            output_tokens: components["schemas"]["UnsignedDecimalInteger"];
+            model_microusd: components["schemas"]["MicroUsd"];
             total_microusd: components["schemas"]["MicroUsd"];
-            storage: components["schemas"]["StorageMeters"];
             metered_to: components["schemas"]["Timestamp"];
         };
-        /** @description The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours. */
+        /** @description The hosted model gateway is billed at the exact cost reported by the upstream AI Gateway receipt, with no Aex markup. */
         RateCard: {
             /** @constant */
             object: "rate_card";
-            vcpu_hour_microusd: components["schemas"]["MicroUsd"];
-            gb_hour_microusd: components["schemas"]["MicroUsd"];
-            session_storage_gb_month_microusd: components["schemas"]["MicroUsd"];
-            web_search_query_microusd: components["schemas"]["MicroUsd"];
-            month_hours: number;
+            /** @constant */
+            model_gateway: "pass_through";
         };
         /** @description The bill: every session's rated line, the account balance after them, and the rate card they were rated on. */
         Usage: {

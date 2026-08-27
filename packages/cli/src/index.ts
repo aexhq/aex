@@ -2,11 +2,10 @@
 
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 
-import { Aex, AexError, type SessionSummary } from "@aexhq/sdk";
-import * as z from "zod";
+import { Aex, AexError } from "@aexhq/sdk";
 
 const HELP = `Aex — the session backend for AI apps
 
@@ -16,9 +15,9 @@ Usage:
   aex session list
   aex session get <session-id>
   aex session send <session-id> <message>
-  aex session output <session-id> --schema <schema.json> <message>
   aex session events <session-id>
   aex session cancel <session-id>
+  aex session end <session-id>
   aex session delete <session-id>
 
 The API defaults to https://api.aex.dev.`;
@@ -39,7 +38,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const aex = await client();
   if (command === "doctor") {
-    await aex.sessions.list({ limit: 1 });
+    await aex.sessions.list();
     process.stdout.write("Aex API: ok\n");
     return;
   }
@@ -52,16 +51,12 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
   switch (command) {
     case "list": {
       const list = await aex.sessions.list();
-      print({
-        data: list.data.map(summary),
-        hasMore: list.hasMore,
-        ...(list.nextCursor === undefined ? {} : { nextCursor: list.nextCursor }),
-      });
+      print(list.map((session) => session.state));
       return;
     }
     case "get": {
       requireId(id, command);
-      print(summary(await aex.sessions.get(id)));
+      print((await aex.sessions.get(id)).state);
       return;
     }
     case "send": {
@@ -69,20 +64,7 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
       const message = tail.join(" ").trim();
       if (message === "") usage("session send requires a message");
       const session = await aex.sessions.get(id);
-      process.stdout.write(`${await session.send(message)}\n`);
-      return;
-    }
-    case "output": {
-      requireId(id, command);
-      const { value: schemaPath, rest } = takeFlag(tail, "--schema");
-      if (schemaPath === undefined) usage("session output requires --schema <schema.json>");
-      const document = JSON.parse(await readFile(resolve(schemaPath), "utf8")) as z.core.JSONSchema.JSONSchema;
-      const schema = z.fromJSONSchema(document);
-      const input = rest.join(" ").trim();
-      if (input === "") usage("session output requires a message");
-      const session = await aex.sessions.get(id);
-      const result = await session.send(input, { output: schema });
-      print(result);
+      print(await session.send(message));
       return;
     }
     case "events": {
@@ -91,7 +73,7 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
       const controller = new AbortController();
       process.once("SIGINT", () => controller.abort());
       try {
-        for await (const event of session.events({ signal: controller.signal })) {
+        for await (const event of session.events()) {
           process.stdout.write(`${JSON.stringify(event)}\n`);
         }
       } catch (error) {
@@ -103,7 +85,13 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
       requireId(id, command);
       const session = await aex.sessions.get(id);
       await session.cancel();
-      print(summary(session));
+      print(session.state);
+      return;
+    }
+    case "end": {
+      requireId(id, command);
+      const session = await aex.sessions.get(id);
+      print(await session.end());
       return;
     }
     case "delete": {
@@ -115,22 +103,6 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
     default:
       usage(command === undefined ? "Missing session command" : `Unknown session command: ${command}`);
   }
-}
-
-function summary(session: SessionSummary): SessionSummary {
-  return {
-    id: session.id,
-    parentId: session.parentId,
-    rootId: session.rootId,
-    depth: session.depth,
-    state: session.state,
-    turnState: session.turnState,
-    model: session.model,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    retainUntil: session.retainUntil,
-    metadata: session.metadata,
-  };
 }
 
 async function client(): Promise<Aex> {
@@ -217,13 +189,6 @@ async function readSecret(prompt: string): Promise<string> {
     };
     process.stdin.on("data", onData);
   });
-}
-
-function takeFlag(argv: string[], name: string): { value: string | undefined; rest: string[] } {
-  const index = argv.indexOf(name);
-  if (index === -1) return { value: undefined, rest: argv };
-  const value = argv[index + 1];
-  return { value, rest: argv.filter((_, itemIndex) => itemIndex !== index && itemIndex !== index + 1) };
 }
 
 function requireId(id: string | undefined, command: string): asserts id is string {

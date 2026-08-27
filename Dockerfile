@@ -1,6 +1,6 @@
-# The control-plane image: identity, prepaid billing, session authority, rated usage — one
-# process in front of one brain. Payments default to the loud fake; AEX_PAYMENTS=stripe +
-# STRIPE_SECRET_KEY is real billing. The SQLite ledger lives on /data: MOUNT IT DURABLY —
+# The control-plane image: identity, prepaid billing, session ownership, and exact model usage — one
+# process in front of one brain. AEX_PAYMENTS must explicitly select fake or Stripe. The SQLite
+# ledger lives on /data: MOUNT IT DURABLY —
 # accounts and money do not belong on ephemeral container storage.
 FROM rust:1.97-bookworm AS build
 WORKDIR /src
