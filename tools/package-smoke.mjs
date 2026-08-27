@@ -96,22 +96,19 @@ try {
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import type { CreateSessionRequest } from "@aexhq/brain";
-import { Aex } from "@aexhq/sdk";
+import { defineAgentLoop } from "@aexhq/brain";
+import { Aex, type CreateSessionOptions } from "@aexhq/sdk";
 
-const request: CreateSessionRequest = {
-  agentloop_digest: "a".repeat(64),
-  model: { binding_id: "gateway", model: "openai/gpt-5-mini" },
-  presentation: { system: "smoke", tools: [] },
-  environments: [],
-  tool_bindings: [],
+const options: CreateSessionOptions = {
+  model: { provider: "vercel-ai-gateway", name: "openai/gpt-5-mini", apiKey: "test-key" },
+  agentLoop: defineAgentLoop(new Uint8Array([1])),
 };
 
 async function typecheckAex(aex: Aex): Promise<void> {
-  await aex.sessions.create(request);
+  await aex.createSession(options);
 }
 void typecheckAex;
-assert.equal(request.tool_bindings.length, 0);
+assert.equal(options.model.provider, "vercel-ai-gateway");
 console.log("packed Aex consumes Brain's neutral session contract");
 `,
   );
