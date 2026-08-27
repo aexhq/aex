@@ -26,10 +26,11 @@ Brain journals every external intent before dispatch and its terminal result bef
 Agentloop activation. Stable operation IDs make redelivery detectable, but do not claim exactly-once
 effects. An ambiguous remote outcome remains ambiguous.
 
-Durable consumers read session events by journal cursor and acknowledge into their own queue before
-advancing that cursor, producing at-least-once delivery. Logs, traces, metrics, and low-latency event
-wakeups use Brain Telemetry's bounded in-memory queue. Telemetry retries briefly and drops under
-sustained pressure; it cannot block a session or grow without bound.
+Clients read session events by journal cursor and may forward them into their own queues. Brain does
+not own that integration, its consumer cursor, or an at-least-once delivery guarantee. Logs, traces,
+metrics, and live event projections use Brain Telemetry's bounded in-memory queue. Telemetry retries
+briefly, emits a best-effort terminal-drop record after retry exhaustion, and drops under sustained
+pressure; it cannot block a session or grow without bound.
 
 The Aex control service authenticates public account and session keys, records which account owns a
 session, and forwards the neutral Brain HTTP surface. It does not reinterpret Agentloop, model,
