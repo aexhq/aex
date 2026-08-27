@@ -224,7 +224,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=79602a5595d8ab5c335f30c98cb23e2976d870f6#79602a5595d8ab5c335f30c98cb23e2976d870f6"
+source = "git+https://github.com/aexhq/brain.git?rev=71096f1131ab0b06c07660ef25fc6ad9bc22c4eb#71096f1131ab0b06c07660ef25fc6ad9bc22c4eb"
 dependencies = [
  "hex",
  "serde",
