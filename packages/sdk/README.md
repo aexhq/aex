@@ -1,24 +1,29 @@
 # @aexhq/sdk
 
-The hosted Aex client wraps the neutral `@aexhq/brain` HTTP SDK with an Aex API key and the
-`https://api.aex.dev` base URL.
+The hosted Aex client uses the neutral Brain composition API with the `https://api.aex.dev` base
+URL and an Aex API key.
 
 ```ts
 import { Aex } from "@aexhq/sdk";
+import { awsMicroVm } from "@aexhq/env-aws-microvm";
+import { pi } from "@aexhq/loop-pi";
+import { bash, read } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const session = await aex.sessions.create({
-  agentloop_digest,
-  model: { binding_id: "vercel-ai-gateway", model: "openai/gpt-5.4" },
-  presentation,
-  environments,
-  tool_bindings,
+const workspace = awsMicroVm({ region: "eu-west-2" });
+const session = await aex.createSession({
+  model: {
+    provider: "vercel-ai-gateway",
+    name: "openai/gpt-5-mini",
+    apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
+  },
+  agentLoop: pi(),
+  tools: [read().runIn(workspace), bash().runIn(workspace)],
 });
 
 await session.send("Inspect the workspace.");
 for await (const event of session.events()) console.log(event);
 ```
 
-Admit Agentloop packages through `aex.brain.admitAgentloop(...)`. Tool implementations remain in
-their bound remote Environment; the SDK sends definitions and binding requests, not implementation
-code.
+Aex supplies hosted authentication and policy. Agentloop admission, Tool placement, Environment
+requirements, operation keys, and event cursors are handled by the shared Brain SDK.

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { defineAgentLoop } from "@aexhq/brain";
 import { Aex } from "../dist/index.js";
 
-test("uses the hosted base URL and API key through the neutral Brain API", async () => {
+test("uses the hosted credential with the neutral typed Brain API", async () => {
   const requests = [];
   const state = {
     session_id: "ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -11,7 +12,6 @@ test("uses the hosted base URL and API key through the neutral Brain API", async
     status: "idle",
     through_sequence: 1,
     presentation_digest: "a".repeat(64),
-    metadata: {},
   };
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -19,13 +19,15 @@ test("uses the hosted base URL and API key through the neutral Brain API", async
     fetch: async (input, init) => {
       const request = new Request(input, init);
       requests.push(request);
-      if (request.url.endsWith("/v1/sessions") && request.method === "GET") return Response.json({ sessions: [state] });
+      if (request.url.endsWith("/v1/agentloops")) return Response.json({ digest: "b".repeat(64), status: "admitted" });
       return Response.json(state);
     },
   });
-  const sessions = await aex.sessions.list();
-  assert.equal(sessions[0].id, state.session_id);
-  await sessions[0].send("hello", { idempotencyKey: "message-one" });
+  const session = await aex.createSession({
+    model: { provider: "vercel-ai-gateway", name: "openai/gpt-5-mini", apiKey: "provider-key" },
+    agentLoop: defineAgentLoop(new Uint8Array([1])),
+  });
+  await session.send("hello", { idempotencyKey: "message-one" });
   assert.equal(requests[0].headers.get("authorization"), "Bearer aex_sk_test");
   assert.equal(requests[2].headers.get("idempotency-key"), "message-one");
 });

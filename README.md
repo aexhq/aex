@@ -33,33 +33,29 @@ npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
 
 ```ts
 import { Aex } from "@aexhq/sdk";
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { awsMicrovm } from "@aexhq/env-aws-microvm";
-import { packageUrl as piPackage } from "@aexhq/loop-pi";
-import { definitions } from "@aexhq/tools";
+import { awsMicroVm } from "@aexhq/env-aws-microvm";
+import { pi } from "@aexhq/loop-pi";
+import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const loop = await aex.brain.admitAgentloop(await readFile(piPackage), randomUUID());
-const session = await aex.sessions.create({
-  agentloop_digest: loop.digest,
-  model: { binding_id: "vercel-ai-gateway", model: "openai/gpt-5.4" },
-  presentation: {
-    system: "Work carefully and verify changes.",
-    tools: [definitions.bash, definitions.read, definitions.write].map((tool) => tool.definition),
+const workspace = awsMicroVm({ region: "eu-west-2" });
+const session = await aex.createSession({
+  model: {
+    provider: "vercel-ai-gateway",
+    name: "openai/gpt-5-mini",
+    apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  environments: [awsMicrovm({ id: "workspace" })],
-  tool_bindings: ["bash", "read", "write"].map((name) => ({
-    name, environment_id: "workspace", remote_tool_id: name, grant: {},
-  })),
+  agentLoop: pi(),
+  system: "Work carefully and verify changes.",
+  tools: [bash().runIn(workspace), read().runIn(workspace), write().runIn(workspace)],
 });
 
-const reply = await session.send("Plan my day.");
-console.log(reply);
+await session.send("Inspect the workspace.");
+for await (const event of session.events()) console.log(event);
 ```
 
-The [TypeScript quickstart](docs/quickstart.md) covers Agentloop admission, remote Tool bindings,
-idempotency, and durable event cursors.
+The [TypeScript quickstart](docs/quickstart.md) covers typed Agentloop, Tool, and Environment
+composition, operation keys, and durable event cursors.
 
 ## Architecture
 

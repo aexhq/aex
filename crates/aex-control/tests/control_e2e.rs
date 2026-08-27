@@ -109,11 +109,10 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
             "create-one",
             json!({
                 "agentloop_digest":"a".repeat(64),
-                "model":{"binding_id":"gateway","model":"openai/test"},
+                "model":{"provider":"vercel-ai-gateway","name":"openai/test","api_key":"test-key"},
                 "presentation":{"system":"test","tools":[]},
                 "environments":[],
-                "tool_bindings":[],
-                "metadata":{}
+                "tool_bindings":[]
             }),
         )),
     )
@@ -225,7 +224,6 @@ fn session() -> Session {
         status: SessionStatus::Idle,
         through_sequence: 1,
         presentation_digest: "a".repeat(64),
-        metadata: json!({}),
     }
 }
 

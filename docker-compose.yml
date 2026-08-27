@@ -35,7 +35,6 @@ services:
       BRAIN_DATA_DIR: /data
       BRAIN_LISTEN: 0.0.0.0:8700
       BRAIN_API_TOKEN: ${AEX_LOCAL_BRAIN_TOKEN:-dev-local-brain-token}
-      BRAIN_MODEL_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:?set VERCEL_AI_GATEWAY_API_KEY in the workspace-root .env}
     volumes:
       - brain-data:/data
 

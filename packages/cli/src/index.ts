@@ -38,7 +38,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const aex = await client();
   if (command === "doctor") {
-    await aex.sessions.list();
+    await aex.listSessions();
     process.stdout.write("Aex API: ok\n");
     return;
   }
@@ -50,26 +50,25 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
   const [command, id, ...tail] = argv;
   switch (command) {
     case "list": {
-      const list = await aex.sessions.list();
-      print(list.map((session) => session.state));
+      print(await aex.listSessions());
       return;
     }
     case "get": {
       requireId(id, command);
-      print((await aex.sessions.get(id)).state);
+      print((await aex.getSession(id)).state);
       return;
     }
     case "send": {
       requireId(id, command);
       const message = tail.join(" ").trim();
       if (message === "") usage("session send requires a message");
-      const session = await aex.sessions.get(id);
+      const session = await aex.getSession(id);
       print(await session.send(message));
       return;
     }
     case "events": {
       requireId(id, command);
-      const session = await aex.sessions.get(id);
+      const session = await aex.getSession(id);
       const controller = new AbortController();
       process.once("SIGINT", () => controller.abort());
       try {
@@ -83,20 +82,20 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
     }
     case "cancel": {
       requireId(id, command);
-      const session = await aex.sessions.get(id);
+      const session = await aex.getSession(id);
       await session.cancel();
       print(session.state);
       return;
     }
     case "end": {
       requireId(id, command);
-      const session = await aex.sessions.get(id);
+      const session = await aex.getSession(id);
       print(await session.end());
       return;
     }
     case "delete": {
       requireId(id, command);
-      const session = await aex.sessions.get(id);
+      const session = await aex.getSession(id);
       await session.delete();
       return;
     }
