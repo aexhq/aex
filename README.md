@@ -22,39 +22,39 @@
 
 Aex is the hosted composition around [Brain](https://github.com/aexhq/brain), an ephemeral,
 topology-neutral execution kernel. Brain keeps current context in memory, journals execution to
-disk, runs one universal Agentloop Component format, calls a remote model gateway, and routes Tool
+disk, runs one universal Brain Component format, calls a remote model gateway, and routes Tool
 operations to remote Environments. Aex adds identity, shared resources, placement, and deployment.
 
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/brain-pi @aexhq/tools
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/loop-pi";
+import { pi } from "@aexhq/brain-pi";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const workspace = awsMicroVm({ region: "eu-west-2" });
-const session = await aex.createSession({
+const session = await aex.sessions.create({
   model: {
     provider: "vercel-ai-gateway",
     name: "openai/gpt-5-mini",
     apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  agentLoop: pi(),
+  brain: pi(),
   system: "Work carefully and verify changes.",
-  tools: [bash().runIn(workspace), read().runIn(workspace), write().runIn(workspace)],
+  tools: [bash().useIn(workspace), read().useIn(workspace), write().useIn(workspace)],
 });
 
 await session.send("Inspect the workspace.");
 for await (const event of session.events()) console.log(event);
 ```
 
-The [TypeScript quickstart](docs/quickstart.md) covers typed Agentloop, Tool, and Environment
+The [TypeScript quickstart](docs/quickstart.md) covers typed Brain, Tool, and Environment
 composition, operation keys, and durable event cursors.
 
 ## Architecture
@@ -62,12 +62,12 @@ composition, operation keys, and durable event cursors.
 ```text
 Your app → Aex SDK → Aex control → Brain Server → remote Environment
                                       │                 │
-                              Agentloop Component   Tool execution
+                                Brain Component   Tool execution
                                       │
                                remote model gateway
 ```
 
-- **Agentloop Components** use one capability-pure Wasm contract.
+- **Brain Components** use one deterministic Wasm contract.
 - **Models** are trusted remote bindings shared by Brain Server.
 - **Tool definitions** are stable model presentation; implementations run in Environments.
 - **Environment adapters** own setup, attachment, execution, cancellation, and teardown.
@@ -90,7 +90,7 @@ bind to the same logical Environment across Brain Server tasks.
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 
 [`brain`](https://github.com/aexhq/brain) owns the neutral session kernel and protocols.
-[`extensions`](https://github.com/aexhq/extensions) contains official Agentloop, Tool, and Environment
+[`extensions`](https://github.com/aexhq/extensions) contains official Brain, Tool, and Environment
 extensions. This repository owns the public SDK, control plane, and hosted Aex composition.
 
 ## Development

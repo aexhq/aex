@@ -48,7 +48,6 @@ try {
   runNpm(
     [
       "install",
-      "--no-package-lock",
       "--no-audit",
       "--no-fund",
       ...packages,
@@ -59,6 +58,7 @@ try {
     ],
     { cwd: consumer },
   );
+  runNpm(["audit", "--audit-level=high"], { cwd: consumer });
 
   // A workspace `overrides` entry collapses every Brain copy here but never in a customer's
   // install, so a stale transitive pin ships a second Brain whose component contract digests
@@ -96,16 +96,20 @@ try {
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { defineAgentLoop } from "@aexhq/brain";
+import { brain, installExtensionIdentity } from "@aexhq/brain";
 import { Aex, type CreateSessionOptions } from "@aexhq/sdk";
 
+const diagnostic = brain((author) => {
+  author.on.message((_message, turn) => turn.done());
+});
+installExtensionIdentity(diagnostic, "diagnostic", new Uint8Array([1]));
 const options: CreateSessionOptions = {
   model: { provider: "vercel-ai-gateway", name: "openai/gpt-5-mini", apiKey: "test-key" },
-  agentLoop: defineAgentLoop(new Uint8Array([1])),
+  brain: diagnostic(),
 };
 
 async function typecheckAex(aex: Aex): Promise<void> {
-  await aex.createSession(options);
+  await aex.sessions.create(options);
 }
 void typecheckAex;
 assert.equal(options.model.provider, "vercel-ai-gateway");

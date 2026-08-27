@@ -109,6 +109,7 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
             "create-one",
             json!({
                 "agentloop_digest":"a".repeat(64),
+                "brain_configuration":{},
                 "model":{"provider":"vercel-ai-gateway","name":"openai/test","api_key":"test-key"},
                 "presentation":{"system":"test","tools":[]},
                 "environments":[],
