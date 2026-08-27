@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate Aex-owned control-plane contracts. Neutral session and Brain↔Hand contracts are
+# Regenerate Aex-owned control-plane contracts. Neutral session, Agentloop, and Environment contracts are
 # generated and published by aexhq/brain.
 set -euo pipefail
 cd "$(dirname "$0")/.."

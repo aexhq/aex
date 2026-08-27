@@ -20,80 +20,81 @@
 
 > This repo is under early and heavy development
 
-Aex is a session-oriented backend for AI applications, built on a minimal and extensible
-kernel ([Brain](https://github.com/aexhq/brain)). The kernel owns mechanism — durable
-sessions, journaled effects, recovery; your agent's behavior is extension policy. It keeps
-the model loop and context durable, then starts isolated compute only when a tool needs it.
-Bring your own model key, choose the tools a session can use, and receive text or validated
-data.
+Aex is the hosted composition around [Brain](https://github.com/aexhq/brain), an ephemeral,
+topology-neutral execution kernel. Brain keeps current context in memory, journals execution to
+disk, runs one universal Agentloop Component format, calls a remote model gateway, and routes Tool
+operations to remote Environments. Aex adds identity, shared resources, placement, and deployment.
 
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/model-openai @aexhq/tools
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/loop-pi @aexhq/tools
 ```
 
 ```ts
 import { Aex } from "@aexhq/sdk";
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { awsMicrovm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/loop-pi";
-import { openai } from "@aexhq/model-openai";
-import { bash, read, write } from "@aexhq/tools";
+import { packageUrl as piPackage } from "@aexhq/loop-pi";
+import { definitions } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const workspace = awsMicrovm();
+const loop = await aex.brain.admitAgentloop(await readFile(piPackage), randomUUID());
 const session = await aex.sessions.create({
-  model: {
-    component: openai(),
-    name: "gpt-5.4",
-    apiKey: process.env.OPENAI_API_KEY!,
+  agentloop_digest: loop.digest,
+  model: { binding_id: "vercel-ai-gateway", model: "openai/gpt-5.4" },
+  presentation: {
+    system: "Work carefully and verify changes.",
+    tools: [definitions.bash, definitions.read, definitions.write].map((tool) => tool.definition),
   },
-  agentloop: pi(),
-  environments: { workspace },
-  tools: [bash(), read(), write()],
+  environments: [awsMicrovm({ id: "workspace" })],
+  tool_bindings: ["bash", "read", "write"].map((name) => ({
+    name, environment_id: "workspace", remote_tool_id: name, grant: {},
+  })),
 });
 
 const reply = await session.send("Plan my day.");
 console.log(reply);
 ```
 
-The [TypeScript quickstart](docs/quickstart.md) covers tools, structured output, files, storage,
-and subagents.
+The [TypeScript quickstart](docs/quickstart.md) covers Agentloop admission, remote Tool bindings,
+idempotency, and durable event cursors.
 
 ## Architecture
 
 ```text
-Your app → Aex SDK → Brain session kernel → bound environment extensions
-                         ↑                         ↑
-                 Agentloop + Model          Tool + Environment
+Your app → Aex SDK → Aex control → Brain Server → remote Environment
+                                      │                 │
+                              Agentloop Component   Tool execution
+                                      │
+                               remote model gateway
 ```
 
-- **Agentloop components** implement agent-loop policy.
-- **Model components** adapt model providers behind the neutral stream contract.
-- **Tool components** define capabilities available to the model.
-- **Environment components** execute bound tools and own their runtime lifecycle.
+- **Agentloop Components** use one capability-pure Wasm contract.
+- **Models** are trusted remote bindings shared by Brain Server.
+- **Tool definitions** are stable model presentation; implementations run in Environments.
+- **Environment adapters** own setup, attachment, execution, cancellation, and teardown.
 
-Brain owns durable session mechanism, not a default loop or environment. A Tool component that
-requests the Environment capability is bound to the session's one declared Environment in the MVP.
-
-Session journals live in the database. Files become durable only when copied to storage.
+Brain's standalone executable stores its journal on disk and current context in memory. Hosted
+durability, Environment identity, session placement, and queue bridges are downstream Aex concerns.
 
 ## Tool placement
 
-Tools and bindings are fixed when a session is created. Import hosted Tool components from an
-extension package. The `app()` Environment runs `tool()` callbacks in your application without
-uploading their source or captured state.
+Definitions and bindings are sealed at session creation. Tool implementations never run inside
+Brain: an Environment may be a MicroVM, browser, sandbox, or user process, and several sessions may
+bind to the same logical Environment across Brain Server tasks.
 
 ## Packages
 
 | Package | Purpose |
 | --- | --- |
-| [`@aexhq/sdk`](packages/sdk) | Sessions, tools, files, storage, and structured output |
+| [`@aexhq/sdk`](packages/sdk) | Hosted authentication and the neutral Brain session API |
 | [`@aexhq/contracts`](packages/contracts) | Generated control-plane types |
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 
 [`brain`](https://github.com/aexhq/brain) owns the neutral session kernel and protocols.
-[`extensions`](https://github.com/aexhq/extensions) contains official Agentloop, Tool, Environment, and Model
+[`extensions`](https://github.com/aexhq/extensions) contains official Agentloop, Tool, and Environment
 extensions. This repository owns the public SDK, control plane, and hosted Aex composition.
 
 ## Development

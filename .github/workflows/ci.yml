@@ -102,7 +102,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: workspace-debug
-      - run: cargo test --workspace
+      - run: cargo test --workspace --all-targets
 
   npm:
     runs-on: ubuntu-latest

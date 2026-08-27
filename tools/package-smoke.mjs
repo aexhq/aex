@@ -13,6 +13,7 @@ if (!/^\d+\.\d+\.\d+$/u.test(brainVersion)) {
 }
 const npmCli = process.env.npm_execpath;
 if (npmCli === undefined) throw new Error("run package-smoke through npm so its CLI is discoverable");
+const brainPackage = process.env.BRAIN_PACKAGE_ARCHIVE ?? `@aexhq/brain@${brainVersion}`;
 const temporary = await mkdtemp(path.join(tmpdir(), "aex-package-smoke-"));
 const artifacts = path.join(temporary, "artifacts");
 const consumer = path.join(temporary, "consumer");
@@ -51,7 +52,7 @@ try {
       "--no-audit",
       "--no-fund",
       ...packages,
-      `@aexhq/brain@${brainVersion}`,
+      brainPackage,
       "@types/node@24.3.0",
       "typescript@5.9.2",
       "zod@4.4.3",
@@ -95,38 +96,28 @@ try {
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { component } from "@aexhq/brain";
+import type { CreateSessionRequest } from "@aexhq/brain";
 import { Aex } from "@aexhq/sdk";
 
-const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
-const model = component("model", bytes, {}, { metadata: { name: "smoke" } });
-const agentloop = component("agentloop", bytes, {});
-const environment = component("environment", bytes, {});
-const echo = component("tool", bytes, {
-  definition: {
-    name: "echo",
-    input_schema: { type: "object" },
-    output_schema: { type: "object" },
-    contract_digest: "a".repeat(64),
-  },
-}, { grants: ["environment"] });
+const request: CreateSessionRequest = {
+  agentloop_digest: "a".repeat(64),
+  model: { binding_id: "gateway", model: "openai/gpt-5-mini" },
+  presentation: { system: "smoke", tools: [] },
+  environments: [],
+  tool_bindings: [],
+};
 
 async function typecheckAex(aex: Aex): Promise<void> {
-  await aex.sessions.create({
-    model: { component: model, provider: "smoke", name: "smoke", apiKey: "not-used" },
-    agentloop,
-    environments: { workspace: environment },
-    tools: [echo],
-  });
+  await aex.sessions.create(request);
 }
 void typecheckAex;
-assert.equal(echo.extension, "tool");
-console.log("packed Aex consumes Brain's four component values");
+assert.equal(request.tool_bindings.length, 0);
+console.log("packed Aex consumes Brain's neutral session contract");
 `,
   );
   run(process.execPath, [path.join(consumer, "node_modules/typescript/bin/tsc")], { cwd: consumer });
   const output = run(process.execPath, ["dist/smoke.js"], { cwd: consumer });
-  assert.match(output, /four component values/u);
+  assert.match(output, /neutral session contract/u);
   process.stdout.write(`${output}\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });

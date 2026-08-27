@@ -362,31 +362,17 @@ export interface Refund {
   failure_reason?: string;
 }
 /**
- * The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours.
+ * The hosted model gateway is billed at the exact cost reported by the upstream AI Gateway receipt, with no Aex markup.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "RateCard".
  */
 export interface RateCard {
   object: "rate_card";
-  vcpu_hour_microusd: MicroUsd;
-  gb_hour_microusd: MicroUsd;
-  session_storage_gb_month_microusd: MicroUsd;
-  web_search_query_microusd: MicroUsd;
-  month_hours: number;
+  model_gateway: "pass_through";
 }
 /**
- * Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published.
- *
- * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
- * via the `definition` "StorageMeters".
- */
-export interface StorageMeters {
-  session_storage_bytes: number;
-  upload_reserved_bytes: number;
-}
-/**
- * One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal.
+ * One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "SessionUsage".
@@ -394,30 +380,14 @@ export interface StorageMeters {
 export interface SessionUsage {
   session_id: string;
   /**
-   * The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB.
-   */
-  shape: "1gb";
-  /**
-   * Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection.
+   * The latest session state observed by the Aex control plane.
    */
   state: string;
-  /**
-   * Cumulative running milliseconds as an exact canonical unsigned decimal string.
-   */
-  running_ms: string;
-  /**
-   * Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000)).
-   */
-  session_storage_byte_milliseconds: string;
-  /**
-   * Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe.
-   */
-  web_search_queries: number;
-  compute_microusd: MicroUsd;
-  storage_microusd: MicroUsd;
-  web_search_microusd: MicroUsd;
+  model_calls: number;
+  input_tokens: UnsignedDecimalInteger;
+  output_tokens: UnsignedDecimalInteger;
+  model_microusd: MicroUsd;
   total_microusd: MicroUsd;
-  storage: StorageMeters;
   metered_to: Timestamp;
 }
 /**

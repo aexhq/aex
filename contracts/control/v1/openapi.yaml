@@ -334,7 +334,7 @@ paths:
     get:
       tags: [billing]
       operationId: getUsage
-      summary: The bill — every session's rated line on the public rate card, storage meters included
+      summary: Exact model-gateway cost and token usage folded from Brain session events
       responses:
         "200":
           description: OK
@@ -347,7 +347,7 @@ paths:
     get:
       tags: [billing]
       operationId: getRates
-      summary: The active rate card (public)
+      summary: The public pass-through model-gateway rate policy
       security: []
       responses:
         "200":

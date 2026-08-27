@@ -9,8 +9,7 @@
     "package-smoke": "node tools/package-smoke.mjs"
   },
   "devDependencies": {
-    "@aexhq/brain": "0.5.0",
-    "@aexhq/env-app": "0.3.2",
+    "@aexhq/brain": "0.6.0",
     "yaml": "2.9.0"
   },
   "overrides": {
