@@ -11,7 +11,7 @@ client → Aex identity proxy → Brain Server task
 ```
 
 Brain's public executable is independently runnable with a disk journal and in-memory current
-context. The first hosted release intentionally runs one stateful Brain replica on EFS. The kernel
+context. The first hosted release intentionally runs one stateful Brain replica on EFS. The runtime
 has explicit journal and session-ownership ports so a later placement service can shard sessions
 across tasks, but the local SQLite adapter is not presented as a multi-writer database. The Aex
 control service and stateless Environment adapters may scale independently.
