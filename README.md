@@ -21,7 +21,7 @@
 > This repo is under early and heavy development
 
 Aex is the hosted composition around [Brain](https://github.com/aexhq/brain), an ephemeral,
-topology-neutral execution kernel. Brain keeps current context in memory, journals execution to
+topology-neutral execution runtime. Brain keeps current context in memory, journals execution to
 disk, runs one universal Brain Component format, calls a remote model gateway, and routes Tool
 operations to remote Environments. Aex adds identity, shared resources, placement, and deployment.
 
@@ -89,7 +89,7 @@ bind to the same logical Environment across Brain Server tasks.
 | [`@aexhq/contracts`](packages/contracts) | Generated control-plane types |
 | [`@aexhq/cli`](packages/cli) | Command-line workflows |
 
-[`brain`](https://github.com/aexhq/brain) owns the neutral session kernel and protocols.
+[`brain`](https://github.com/aexhq/brain) owns the neutral session runtime and protocols.
 [`extensions`](https://github.com/aexhq/extensions) contains official Brain, Tool, and Environment
 extensions. This repository owns the public SDK, control plane, and hosted Aex composition.
 
