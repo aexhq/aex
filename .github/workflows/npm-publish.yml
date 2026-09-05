@@ -172,7 +172,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: aex-npm-release-${{ github.sha }}
           path: ${{ runner.temp }}/aex-npm-release
@@ -208,7 +208,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: aex-npm-release-${{ github.sha }}
           path: ${{ runner.temp }}/aex-npm-release
@@ -238,7 +238,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: aex-npm-release-${{ github.sha }}
           path: ${{ runner.temp }}/aex-npm-release
