@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.66.0",
+  "version": "0.66.1",
   "description": "TypeScript SDK for Aex sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
@@ -34,7 +34,7 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.16.0"
+    "@aexhq/brain": "0.16.1"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
