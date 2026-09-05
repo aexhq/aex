@@ -434,7 +434,7 @@ async fn proxy_session(
                 .ok_or(Error::NotFound)?;
             let suffix = rest.strip_prefix(session_id).unwrap_or_default();
             let body = match (method.clone(), suffix) {
-                (Method::GET, "") | (Method::GET, "/events") => None,
+                (Method::GET, "") | (Method::GET, "/events") | (Method::GET, "/transcript") => None,
                 (Method::POST, "/messages") => {
                     required_idempotency_key(&headers)?;
                     billing::reconcile_session(&state.db, &state.brain, &row).await?;
