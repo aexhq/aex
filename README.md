@@ -20,21 +20,21 @@
 
 > This repo is under early and heavy development
 
-Aex is the hosted composition around [Brain](https://github.com/aexhq/brain), an ephemeral,
-topology-neutral execution runtime. Brain keeps current context in memory, journals execution to
-disk, runs one universal Brain Component format, calls a remote model gateway, and routes Tool
-operations to remote Environments. Aex adds identity, shared resources, placement, and deployment.
+Aex is the hosted composition around [Brain](https://github.com/aexhq/brain), a topology-neutral
+session engine. Brain keeps one ordered journal on disk, derives the model transcript from it, calls
+model providers, and routes Agentloops and Tools to their declared Environments. Aex adds identity,
+billing, hosted policy, and deployment.
 
 ## Quickstart
 
 ```sh
-npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/brain-pi @aexhq/tools
+npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/agentloop-pi @aexhq/tools
 ```
 
 ```ts
-import { Aex } from "@aexhq/sdk";
+import { Aex, brainWasm } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/brain-pi";
+import { pi } from "@aexhq/agentloop-pi";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
@@ -45,9 +45,9 @@ const session = await aex.sessions.create({
     name: "openai/gpt-5-mini",
     apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  brain: pi(),
+  agentloop: pi({ env: brainWasm() }),
   system: "Work carefully and verify changes.",
-  tools: [bash().useIn(workspace), read().useIn(workspace), write().useIn(workspace)],
+  tools: [bash({ env: workspace }), read({ env: workspace }), write({ env: workspace })],
 });
 
 await session.send("Inspect the workspace.");
@@ -60,26 +60,26 @@ composition, operation keys, and durable event cursors.
 ## Architecture
 
 ```text
-Your app → Aex SDK → Aex control → Brain Server → remote Environment
-                                      │                 │
-                                Brain Component   Tool execution
-                                      │
-                               remote model gateway
+Your app → Aex SDK → Aex control → Brain → model provider
+                                      ├── Wasmtime Component
+                                      ├── resident Tool in your app
+                                      └── remote Environment
 ```
 
-- **Brain Components** use one deterministic Wasm contract.
-- **Models** are trusted remote bindings shared by Brain Server.
-- **Tool definitions** are stable model presentation; implementations run in Environments.
+- **Agentloops** own model-call and context policy and run where their binding places them.
+- **Native execution** runs WebAssembly Components in Brain with explicit filesystem, network, and
+  secret capabilities.
+- **Resident Tools** stay in the application; placed Tools run in a selected Environment.
 - **Environment adapters** own setup, attachment, execution, cancellation, and teardown.
 
-Brain's standalone executable stores its journal on disk and current context in memory. Hosted
-durability, Environment identity, session placement, and queue bridges are downstream Aex concerns.
+Brain's standalone executable stores the canonical journal on local disk. External journal stores
+and durable hosted placement are roadmap items; applications can persist the ordered event feed.
 
 ## Tool placement
 
-Definitions and bindings are sealed at session creation. Tool implementations never run inside
-Brain: an Environment may be a MicroVM, browser, sandbox, or user process, and several sessions may
-bind to the same logical Environment across Brain Server tasks.
+Definitions and bindings are fixed at session creation. A Tool may run in the application, in
+Brain's Wasmtime Environment, or in a remote Environment such as a MicroVM, browser, sandbox,
+Lambda, or HTTP service.
 
 ## Packages
 

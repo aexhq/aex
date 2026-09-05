@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, delete, get, post},
 };
-use brain_protocol::{CreateSessionRequest, Session, SessionList};
+use brain_protocol::{CreateSessionRequest, SessionList, SessionSummary};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 
@@ -67,7 +67,10 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_CONTROL_BODY_BYTES));
     let brain = Router::new()
         .route("/v1/agentloops", any(proxy_agentloop_root))
-        .route("/v1/agentloops/{digest}", any(proxy_agentloop))
+        .route("/v1/agentloops/{identity}", any(proxy_agentloop))
+        .route("/v1/tools", any(proxy_tool_root))
+        .route("/v1/hosts", any(proxy_host_root))
+        .route("/v1/hosts/{*rest}", any(proxy_host))
         .route("/v1/sessions", any(proxy_sessions))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .layer(DefaultBodyLimit::max(MAX_BRAIN_BODY_BYTES));
@@ -86,7 +89,7 @@ async fn live() -> StatusCode {
 async fn ready(State(state): State<AppState>) -> StatusCode {
     match state
         .brain
-        .forward(Method::GET, "/health/ready", None, None, None)
+        .forward(Method::GET, "/health/ready", None, None, None, None)
         .await
     {
         Ok(response) if response.status().is_success() => StatusCode::NO_CONTENT,
@@ -130,6 +133,84 @@ async fn proxy_agentloop(
                 ));
             }
             forward(&state, method, &uri, &headers, None).await
+        }
+        .await,
+    )
+}
+
+async fn proxy_tool_root(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    respond(
+        async {
+            auth_key(&state, &headers).await?;
+            if method != Method::POST {
+                return Err(Error::Invalid("only POST is supported on /v1/tools".into()));
+            }
+            forward(&state, method, &uri, &headers, Some(body)).await
+        }
+        .await,
+    )
+}
+
+async fn proxy_host_root(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    respond(
+        async {
+            auth_key(&state, &headers).await?;
+            if method != Method::POST {
+                return Err(Error::Invalid("only POST is supported on /v1/hosts".into()));
+            }
+            forward(&state, method, &uri, &headers, None).await
+        }
+        .await,
+    )
+}
+
+async fn proxy_host(
+    State(state): State<AppState>,
+    Path(rest): Path<String>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    respond(
+        async {
+            let token = identity::bearer(&headers).ok_or(Error::Unauthorized)?;
+            let operation = rest.rsplit('/').next().unwrap_or_default();
+            let body = match (method.clone(), operation) {
+                (Method::GET, "commands") => None,
+                (Method::POST, "events" | "results") => Some(bounded(body).await?),
+                _ => return Err(Error::NotFound),
+            };
+            let content_type = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok());
+            let accept = headers
+                .get(header::ACCEPT)
+                .and_then(|value| value.to_str().ok());
+            let response = state
+                .brain
+                .forward_as(
+                    token,
+                    method,
+                    uri.path_and_query()
+                        .map_or(uri.path(), |value| value.as_str()),
+                    content_type,
+                    accept,
+                    body,
+                )
+                .await?;
+            proxy_response(response).await
         }
         .await,
     )
@@ -223,6 +304,7 @@ async fn proxy_sessions(
                             Method::POST,
                             "/v1/sessions",
                             Some("application/json"),
+                            None,
                             Some(idempotency_key),
                             Some(bytes),
                         )
@@ -262,9 +344,10 @@ async fn proxy_sessions(
                         }
                     };
                     if status.is_success() {
-                        let session: Session = serde_json::from_slice(&bytes).map_err(|error| {
-                            Error::Upstream(format!("Brain create response: {error}"))
-                        })?;
+                        let session: SessionSummary =
+                            serde_json::from_slice(&bytes).map_err(|error| {
+                                Error::Upstream(format!("Brain create response: {error}"))
+                            })?;
                         let id = session.session_id.to_string();
                         let created_ms = now_ms();
                         state
@@ -358,6 +441,10 @@ async fn proxy_session(
                     require_positive_balance(&state, &account.id).await?;
                     Some(body)
                 }
+                (Method::POST, suffix) if environment_call_suffix(suffix) => {
+                    required_idempotency_key(&headers)?;
+                    Some(body)
+                }
                 (Method::POST, "/cancel") | (Method::POST, "/end") => {
                     required_idempotency_key(&headers)?;
                     None
@@ -395,6 +482,9 @@ async fn forward(
     let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok());
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok());
     let response = state
         .brain
         .forward(
@@ -402,6 +492,7 @@ async fn forward(
             uri.path_and_query()
                 .map_or(uri.path(), |value| value.as_str()),
             content_type,
+            accept,
             idempotency_key,
             body,
         )
@@ -410,8 +501,50 @@ async fn forward(
 }
 
 async fn proxy_response(response: reqwest::Response) -> Result<Response> {
+    if response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"))
+    {
+        let status = response.status();
+        let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
+        let cache_control = response.headers().get(header::CACHE_CONTROL).cloned();
+        let mut downstream = Response::builder().status(status);
+        if let Some(value) = content_type {
+            downstream = downstream.header(header::CONTENT_TYPE, value);
+        }
+        if let Some(value) = cache_control {
+            downstream = downstream.header(header::CACHE_CONTROL, value);
+        }
+        return downstream
+            .body(Body::from_stream(response.bytes_stream()))
+            .map_err(|error| Error::Internal(format!("streaming response: {error}")));
+    }
     let (status, headers, body) = read_upstream(response).await?;
     Ok(upstream_response(status, &headers, body))
+}
+
+fn environment_call_suffix(suffix: &str) -> bool {
+    let mut parts = suffix.split('/');
+    matches!(
+        (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ),
+        (
+            Some(""),
+            Some("environments"),
+            Some(_),
+            Some("calls"),
+            Some(_),
+            None
+        )
+    )
 }
 
 async fn read_upstream(

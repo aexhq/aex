@@ -494,7 +494,7 @@ export type components = {
         };
         /** @description Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
         UnsignedDecimalInteger: string;
-        /** @description One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts. */
+        /** @description One session's model usage, folded exactly once from Brain's ordered model_call_ended Events and their provider cost receipts. */
         SessionUsage: {
             session_id: string;
             /** @description The latest session state observed by the Aex control plane. */

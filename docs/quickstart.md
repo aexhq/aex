@@ -3,13 +3,13 @@
 Install the hosted SDK and the extensions your session uses:
 
 ```sh
-npm install @aexhq/sdk @aexhq/brain-pi @aexhq/tools @aexhq/env-aws-microvm
+npm install @aexhq/sdk @aexhq/agentloop-pi @aexhq/tools @aexhq/env-aws-microvm
 ```
 
 ```ts
-import { Aex } from "@aexhq/sdk";
+import { Aex, brainWasm } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/brain-pi";
+import { pi } from "@aexhq/agentloop-pi";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
@@ -20,14 +20,15 @@ const session = await aex.sessions.create({
     name: "openai/gpt-5-mini",
     apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  brain: pi(),
-  tools: [read().useIn(workspace), write().useIn(workspace), bash().useIn(workspace)],
+  agentloop: pi({ env: brainWasm() }),
+  tools: [read({ env: workspace }), write({ env: workspace }), bash({ env: workspace })],
 });
 
 await session.send("Inspect the workspace.");
 for await (const event of session.events()) console.log(event);
 ```
 
-Brain packages contain policy only. Tool implementations execute in their selected remote
-Environment, never in Brain. Mutating methods generate operation keys automatically; pass an
-explicit `idempotencyKey` only when retrying from caller-owned durable work.
+The Agentloop owns model and compaction policy. Each Tool declares its execution Environment:
+resident Tools stay in the app, native Components run in Brain, and packages such as these run in a
+remote Environment. Mutating methods generate operation keys automatically; pass an explicit
+`idempotencyKey` when the caller owns a stable operation identity.

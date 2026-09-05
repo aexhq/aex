@@ -4,9 +4,9 @@ The hosted Aex client uses the neutral Brain composition API with the `https://a
 URL and an Aex API key.
 
 ```ts
-import { Aex } from "@aexhq/sdk";
+import { Aex, brainWasm } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/brain-pi";
+import { pi } from "@aexhq/agentloop-pi";
 import { bash, read } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
@@ -17,8 +17,8 @@ const session = await aex.sessions.create({
     name: "openai/gpt-5-mini",
     apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  brain: pi(),
-  tools: [read().useIn(workspace), bash().useIn(workspace)],
+  agentloop: pi({ env: brainWasm() }),
+  tools: [read({ env: workspace }), bash({ env: workspace })],
 });
 
 await session.send("Inspect the workspace.");

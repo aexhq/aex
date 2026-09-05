@@ -622,7 +622,7 @@
         "total_microusd",
         "metered_to"
       ],
-      "description": "One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts.",
+      "description": "One session's model usage, folded exactly once from Brain's ordered model_call_ended Events and their provider cost receipts.",
       "properties": {
         "session_id": {
           "type": "string",

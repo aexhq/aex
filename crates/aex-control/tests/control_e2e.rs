@@ -18,7 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::any,
 };
-use brain_protocol::{JournalId, Session, SessionId, SessionStatus};
+use brain_protocol::{SessionId, SessionStatus, SessionSummary};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -28,7 +28,10 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
     let brain = Router::new()
         .route("/health/ready", any(|| async { StatusCode::NO_CONTENT }))
         .route("/v1/agentloops", any(fake_brain))
-        .route("/v1/agentloops/{digest}", any(fake_brain))
+        .route("/v1/agentloops/{identity}", any(fake_brain))
+        .route("/v1/tools", any(fake_brain))
+        .route("/v1/hosts", any(fake_brain))
+        .route("/v1/hosts/{*rest}", any(fake_brain))
         .route("/v1/sessions", any(fake_brain))
         .route("/v1/sessions/{*rest}", any(fake_brain))
         .with_state(deleted.clone());
@@ -85,6 +88,15 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
 
     let unauthorized = call(&app, Method::GET, "/v1/sessions", None, None).await;
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    let standalone_environments = call(
+        &app,
+        Method::GET,
+        "/v1/environments",
+        Some(&key_secret.secret),
+        None,
+    )
+    .await;
+    assert_eq!(standalone_environments.status(), StatusCode::NOT_FOUND);
 
     let oversized_control = app
         .clone()
@@ -108,12 +120,25 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
         Some((
             "create-one",
             json!({
-                "agentloop_digest":"a".repeat(64),
-                "brain_configuration":{},
+                "agentloop": {
+                    "identity":"a".repeat(64),
+                    "configuration":{},
+                    "environment_id":"env_agentloop"
+                },
                 "model":{"provider":"vercel-ai-gateway","name":"openai/test","api_key":"test-key"},
-                "presentation":{"system":"test","tools":[]},
-                "environments":[],
-                "tool_bindings":[]
+                "system":"test",
+                "tools":[],
+                "environments":[{
+                    "environment_id":"env_agentloop",
+                    "configuration":{
+                        "driver":"brain_wasm",
+                        "network":{"allow":[]},
+                        "filesystem":{"workspace":true},
+                        "secrets":[]
+                    },
+                    "managed":true,
+                    "bindings":{}
+                }]
             }),
         )),
     )
@@ -140,6 +165,73 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
         1
     );
 
+    let tool = call(
+        &app,
+        Method::POST,
+        "/v1/tools",
+        Some(&key_secret.secret),
+        Some(("tool-one", json!({"component":"bytes"}))),
+    )
+    .await;
+    assert_eq!(json_body(tool).await["status"], "admitted");
+
+    let host = call(
+        &app,
+        Method::POST,
+        "/v1/hosts",
+        Some(&key_secret.secret),
+        None,
+    )
+    .await;
+    assert_eq!(json_body(host).await["token"], "host-secret");
+    let commands = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/hosts/host_aaaaaaaaaaaaaaaaaaaa/commands")
+                .header("authorization", "Bearer host-secret")
+                .header("accept", "text/event-stream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(commands.headers()["content-type"], "text/event-stream");
+    assert!(
+        String::from_utf8(to_bytes(commands.into_body(), 1024).await.unwrap().to_vec())
+            .unwrap()
+            .contains("event: command")
+    );
+
+    let session_events = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/sessions/{}/events", session().session_id))
+                .header("authorization", format!("Bearer {}", key_secret.secret))
+                .header("accept", "text/event-stream")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        session_events.headers()["content-type"],
+        "text/event-stream"
+    );
+    assert!(
+        String::from_utf8(
+            to_bytes(session_events.into_body(), 1024)
+                .await
+                .unwrap()
+                .to_vec()
+        )
+        .unwrap()
+        .contains("event: turn_ended")
+    );
+
     let missing_key = call(
         &app,
         Method::POST,
@@ -155,7 +247,12 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
         (
             Method::POST,
             "/messages",
-            Some(("message-one", json!({"content":"hello"}))),
+            Some(("message-one", json!({"input":{"message":"hello"}}))),
+        ),
+        (
+            Method::POST,
+            "/environments/env_agentloop/calls/ping",
+            Some(("call-one", json!({"input":{}}))),
         ),
         (Method::GET, "/events", None),
         (Method::POST, "/cancel", Some(("cancel-one", json!({})))),
@@ -200,9 +297,49 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
 async fn fake_brain(State(deleted): State<Arc<AtomicBool>>, request: Request<Body>) -> Response {
     let path = request.uri().path();
     if path == "/v1/agentloops" {
-        return axum::Json(json!({"digest":"a".repeat(64),"status":"admitted"})).into_response();
+        return axum::Json(json!({"identity":"a".repeat(64),"status":"admitted"})).into_response();
+    }
+    if path == "/v1/tools" {
+        return axum::Json(json!({"identity":"b".repeat(64),"status":"admitted"})).into_response();
+    }
+    if path == "/v1/hosts" {
+        return axum::Json(json!({"host_id":"host_aaaaaaaaaaaaaaaaaaaa","token":"host-secret"}))
+            .into_response();
+    }
+    if path.starts_with("/v1/hosts/") {
+        let authorized = request
+            .headers()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            == Some("Bearer host-secret");
+        if !authorized {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        if path.ends_with("/commands") {
+            return (
+                [
+                    ("content-type", "text/event-stream"),
+                    ("cache-control", "no-cache"),
+                ],
+                "event: command\ndata: {}\n\n",
+            )
+                .into_response();
+        }
+        return StatusCode::NO_CONTENT.into_response();
     }
     if path.contains("/events") {
+        if request
+            .headers()
+            .get("accept")
+            .and_then(|value| value.to_str().ok())
+            == Some("text/event-stream")
+        {
+            return (
+                [("content-type", "text/event-stream")],
+                "event: turn_ended\ndata: {}\n\n",
+            )
+                .into_response();
+        }
         return axum::Json(json!({"events":[],"next_cursor":0})).into_response();
     }
     if request.method() == Method::DELETE {
@@ -218,13 +355,11 @@ async fn fake_brain(State(deleted): State<Arc<AtomicBool>>, request: Request<Bod
     axum::Json(session()).into_response()
 }
 
-fn session() -> Session {
-    Session {
+fn session() -> SessionSummary {
+    SessionSummary {
         session_id: SessionId::new("ses_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        journal_id: JournalId::new("jrn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         status: SessionStatus::Idle,
-        through_sequence: 1,
-        presentation_digest: "a".repeat(64),
+        last_sequence: 1,
     }
 }
 

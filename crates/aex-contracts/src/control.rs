@@ -2309,13 +2309,13 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
         value.parse()
     }
 }
-#[doc = "One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts."]
+#[doc = "One session's model usage, folded exactly once from Brain's ordered model_call_ended Events and their provider cost receipts."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts.\","]
+#[doc = "  \"description\": \"One session's model usage, folded exactly once from Brain's ordered model_call_ended Events and their provider cost receipts.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"input_tokens\","]
