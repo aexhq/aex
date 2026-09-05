@@ -41,7 +41,7 @@ jobs:
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - name: cache cargo-typify
         id: typify-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-typify
           key: cargo-typify-0.7.0-${{ runner.os }}
