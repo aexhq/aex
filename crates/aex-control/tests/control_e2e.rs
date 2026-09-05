@@ -77,6 +77,33 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
     })
     .await
     .unwrap();
+    let outsider_secret = identity::mint_secret("sk");
+    let outsider = AccountRow {
+        id: identity::new_id("acc"),
+        email: "other@example.com".into(),
+        ..account.clone()
+    };
+    db.create_account(
+        outsider.clone(),
+        outsider.email.clone(),
+        identity::mint_secret("at").hash,
+    )
+    .await
+    .unwrap();
+    db.create_key(
+        KeyRow {
+            id: identity::new_id("key"),
+            account_id: outsider.id,
+            name: "other".into(),
+            prefix: outsider_secret.prefix,
+            created_ms: 1,
+            last_used_ms: None,
+            revoked_ms: None,
+        },
+        outsider_secret.hash,
+    )
+    .await
+    .unwrap();
     let app = router(AppState {
         db,
         brain: BrainClient::new(format!("http://{address}"), "operator").unwrap(),
@@ -136,7 +163,6 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
                         "filesystem":{"workspace":true},
                         "secrets":[]
                     },
-                    "managed":true,
                     "bindings":{}
                 }]
             }),
@@ -232,6 +258,30 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
         .contains("event: turn_ended")
     );
 
+    let transcript_path = format!("/v1/sessions/{}/transcript", session().session_id);
+    let transcript = call(
+        &app,
+        Method::GET,
+        &transcript_path,
+        Some(&key_secret.secret),
+        None,
+    )
+    .await;
+    assert_eq!(transcript.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(transcript).await,
+        json!({"messages": [], "through_sequence": 7})
+    );
+    let forbidden = call(
+        &app,
+        Method::GET,
+        &transcript_path,
+        Some(&outsider_secret.secret),
+        None,
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::NOT_FOUND);
+
     let missing_key = call(
         &app,
         Method::POST,
@@ -326,6 +376,9 @@ async fn fake_brain(State(deleted): State<Arc<AtomicBool>>, request: Request<Bod
                 .into_response();
         }
         return StatusCode::NO_CONTENT.into_response();
+    }
+    if path.ends_with("/transcript") {
+        return axum::Json(json!({"messages": [], "through_sequence": 7})).into_response();
     }
     if path.contains("/events") {
         if request
