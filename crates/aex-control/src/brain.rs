@@ -1,6 +1,6 @@
 use std::{net::IpAddr, time::Duration};
 
-use brain_protocol::{EventPage, Session, SessionId};
+use brain_protocol::{EventPage, SessionId, SessionSummary};
 
 use crate::{Error, Result};
 
@@ -11,6 +11,13 @@ pub struct BrainClient {
     http: reqwest::Client,
     base: reqwest::Url,
     token: String,
+}
+
+struct ForwardOptions<'a> {
+    content_type: Option<&'a str>,
+    accept: Option<&'a str>,
+    idempotency_key: Option<&'a str>,
+    body: Option<bytes::Bytes>,
 }
 
 impl BrainClient {
@@ -50,8 +57,53 @@ impl BrainClient {
         method: reqwest::Method,
         path_and_query: &str,
         content_type: Option<&str>,
+        accept: Option<&str>,
         idempotency_key: Option<&str>,
         body: Option<bytes::Bytes>,
+    ) -> Result<reqwest::Response> {
+        self.send(
+            &self.token,
+            method,
+            path_and_query,
+            ForwardOptions {
+                content_type,
+                accept,
+                idempotency_key,
+                body,
+            },
+        )
+        .await
+    }
+
+    pub async fn forward_as(
+        &self,
+        token: &str,
+        method: reqwest::Method,
+        path_and_query: &str,
+        content_type: Option<&str>,
+        accept: Option<&str>,
+        body: Option<bytes::Bytes>,
+    ) -> Result<reqwest::Response> {
+        self.send(
+            token,
+            method,
+            path_and_query,
+            ForwardOptions {
+                content_type,
+                accept,
+                idempotency_key: None,
+                body,
+            },
+        )
+        .await
+    }
+
+    async fn send(
+        &self,
+        token: &str,
+        method: reqwest::Method,
+        path_and_query: &str,
+        options: ForwardOptions<'_>,
     ) -> Result<reqwest::Response> {
         if !path_and_query.starts_with("/v1/")
             && path_and_query != "/v1/sessions"
@@ -63,18 +115,20 @@ impl BrainClient {
             .base
             .join(path_and_query.trim_start_matches('/'))
             .map_err(|error| Error::Internal(format!("Brain URL: {error}")))?;
-        let mut request = self
-            .http
-            .request(method, target)
-            .bearer_auth(&self.token)
-            .timeout(REQUEST_TIMEOUT);
-        if let Some(content_type) = content_type {
+        let mut request = self.http.request(method, target).bearer_auth(token);
+        if !options.accept.is_some_and(wants_event_stream) {
+            request = request.timeout(REQUEST_TIMEOUT);
+        }
+        if let Some(content_type) = options.content_type {
             request = request.header(reqwest::header::CONTENT_TYPE, content_type);
         }
-        if let Some(key) = idempotency_key {
+        if let Some(accept) = options.accept {
+            request = request.header(reqwest::header::ACCEPT, accept);
+        }
+        if let Some(key) = options.idempotency_key {
             request = request.header("Idempotency-Key", key);
         }
-        if let Some(body) = body {
+        if let Some(body) = options.body {
             request = request.body(body);
         }
         request
@@ -83,12 +137,13 @@ impl BrainClient {
             .map_err(|error| Error::Upstream(error.to_string()))
     }
 
-    pub async fn session(&self, session_id: &str) -> Result<Option<Session>> {
+    pub async fn session(&self, session_id: &str) -> Result<Option<SessionSummary>> {
         let id = SessionId::new(session_id.to_owned());
         let response = self
             .forward(
                 reqwest::Method::GET,
                 &format!("/v1/sessions/{id}"),
+                None,
                 None,
                 None,
                 None,
@@ -118,6 +173,7 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                None,
             )
             .await?;
         if !response.status().is_success() {
@@ -131,6 +187,12 @@ impl BrainClient {
             .await
             .map_err(|error| Error::Upstream(format!("Brain event response: {error}")))
     }
+}
+
+fn wants_event_stream(value: &str) -> bool {
+    value
+        .split(',')
+        .any(|media| media.trim().starts_with("text/event-stream"))
 }
 
 #[cfg(test)]

@@ -372,7 +372,7 @@ export interface RateCard {
   model_gateway: "pass_through";
 }
 /**
- * One session's model usage, folded exactly once from Brain's ordered model-result events and their AI Gateway receipts.
+ * One session's model usage, folded exactly once from Brain's ordered model_call_ended Events and their provider cost receipts.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "SessionUsage".

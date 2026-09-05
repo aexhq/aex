@@ -65,36 +65,30 @@ fn fold_events(usage: &mut ModelUsageRow, events: &[Event]) -> Result<()> {
         if sequence <= usage.folded_sequence {
             continue;
         }
-        if event.event_type == "model_result" {
+        if event.event_type == "model_call_ended" {
             let receipt = &event.data["result"]["usage"];
-            let gateway_cost = receipt.get("gateway_cost").ok_or_else(|| {
-                Error::Upstream("model result has no AI Gateway cost receipt".into())
+            let provider_cost = receipt.get("provider_cost_usd").ok_or_else(|| {
+                Error::Upstream("model result has no provider cost receipt".into())
             })?;
-            let cost = match gateway_cost {
-                serde_json::Value::Number(value) => value.to_string(),
-                serde_json::Value::String(value) => value.clone(),
-                _ => {
-                    return Err(Error::Upstream(
-                        "model result has an invalid AI Gateway cost receipt".into(),
-                    ));
-                }
-            };
+            let cost = provider_cost.as_str().ok_or_else(|| {
+                Error::Upstream("model result has an invalid provider cost receipt".into())
+            })?;
             let gateway_cost_nano_usd = usage
                 .gateway_cost_nano_usd
-                .checked_add(decimal_usd_to_nano(&cost)?)
+                .checked_add(decimal_usd_to_nano(cost)?)
                 .ok_or_else(|| Error::Internal("model cost exceeds the billing range".into()))?;
             let model_calls = usage.model_calls.checked_add(1).ok_or_else(|| {
                 Error::Internal("model-call count exceeds the billing range".into())
             })?;
             let input_tokens = checked_counter(
                 usage.input_tokens,
-                receipt.get("prompt_tokens"),
-                "prompt token",
+                receipt.get("input_tokens"),
+                "input token",
             )?;
             let output_tokens = checked_counter(
                 usage.output_tokens,
-                receipt.get("completion_tokens"),
-                "completion token",
+                receipt.get("output_tokens"),
+                "output token",
             )?;
             usage.gateway_cost_nano_usd = gateway_cost_nano_usd;
             usage.model_calls = model_calls;
@@ -122,7 +116,7 @@ fn decimal_usd_to_nano(value: &str) -> Result<i64> {
     let value = value.trim();
     if value.is_empty() || value.starts_with('-') || value.starts_with('+') {
         return Err(Error::Upstream(
-            "AI Gateway cost is not a non-negative decimal".into(),
+            "provider cost is not a non-negative decimal".into(),
         ));
     }
     let (coefficient, exponent) =
@@ -131,7 +125,7 @@ fn decimal_usd_to_nano(value: &str) -> Result<i64> {
             .map_or(Ok((value, 0i32)), |(coefficient, exponent)| {
                 let exponent = exponent
                     .parse::<i32>()
-                    .map_err(|_| Error::Upstream("AI Gateway cost exponent is invalid".into()))?;
+                    .map_err(|_| Error::Upstream("provider cost exponent is invalid".into()))?;
                 Ok((coefficient, exponent))
             })?;
     let (whole, fraction) = coefficient.split_once('.').unwrap_or((coefficient, ""));
@@ -139,27 +133,27 @@ fn decimal_usd_to_nano(value: &str) -> Result<i64> {
         || !whole.bytes().all(|byte| byte.is_ascii_digit())
         || !fraction.bytes().all(|byte| byte.is_ascii_digit())
     {
-        return Err(Error::Upstream("AI Gateway cost is not a decimal".into()));
+        return Err(Error::Upstream("provider cost is not a decimal".into()));
     }
     let digits = format!("{whole}{fraction}");
     let unscaled = digits
         .parse::<i128>()
-        .map_err(|_| Error::Upstream("AI Gateway cost exceeds the billing range".into()))?;
+        .map_err(|_| Error::Upstream("provider cost exceeds the billing range".into()))?;
     let scale = exponent
         .checked_sub(i32::try_from(fraction.len()).map_err(|_| {
-            Error::Upstream("AI Gateway cost precision exceeds the billing range".into())
+            Error::Upstream("provider cost precision exceeds the billing range".into())
         })?)
         .and_then(|scale| scale.checked_add(9))
-        .ok_or_else(|| Error::Upstream("AI Gateway cost scale is invalid".into()))?;
+        .ok_or_else(|| Error::Upstream("provider cost scale is invalid".into()))?;
     let nano = if scale >= 0 {
         unscaled
             .checked_mul(power_of_ten(scale as u32))
-            .ok_or_else(|| Error::Upstream("AI Gateway cost exceeds the billing range".into()))?
+            .ok_or_else(|| Error::Upstream("provider cost exceeds the billing range".into()))?
     } else {
         unscaled / power_of_ten(scale.unsigned_abs())
     };
     i64::try_from(nano)
-        .map_err(|_| Error::Upstream("AI Gateway cost exceeds the billing range".into()))
+        .map_err(|_| Error::Upstream("provider cost exceeds the billing range".into()))
 }
 
 fn power_of_ten(exponent: u32) -> i128 {
@@ -173,7 +167,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn gateway_decimal_costs_convert_without_float_rounding() {
+    fn provider_decimal_costs_convert_without_float_rounding() {
         assert_eq!(decimal_usd_to_nano("0.00012925").unwrap(), 129_250);
         assert_eq!(decimal_usd_to_nano("2.925E-05").unwrap(), 29_250);
         assert_eq!(decimal_usd_to_nano("1").unwrap(), 1_000_000_000);
@@ -187,11 +181,11 @@ mod tests {
             event_id: EventId::new("evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             sequence: 2,
             recorded_at_ms: 10,
-            event_type: "model_result".into(),
+            event_type: "model_call_ended".into(),
             data: json!({"result":{"usage":{
-                "gateway_cost":"0.00012925",
-                "prompt_tokens":12,
-                "completion_tokens":3
+                "provider_cost_usd":"0.00012925",
+                "input_tokens":12,
+                "output_tokens":3
             }}}),
         };
         let mut usage = ModelUsageRow::default();
@@ -207,10 +201,11 @@ mod tests {
             event_id: EventId::new("evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             sequence: 3,
             recorded_at_ms: 11,
-            event_type: "model_result".into(),
+            event_type: "model_call_ended".into(),
             data: json!({"result":{"usage":{
-                "gateway_cost":"1",
-                "prompt_tokens":1
+                "provider_cost_usd":1,
+                "input_tokens":1,
+                "output_tokens":1
             }}}),
         };
         assert!(fold_events(&mut usage, &[malformed]).is_err());

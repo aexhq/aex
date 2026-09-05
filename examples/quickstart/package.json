@@ -5,8 +5,9 @@
   "engines": { "node": ">=22.0.0" },
   "scripts": { "start": "node quickstart.mjs" },
   "dependencies": {
-    "@aexhq/sdk": "0.57.5",
-    "@aexhq/tools": "0.2.6",
-    "zod": "^4.1.5"
+    "@aexhq/agentloop-pi": "2.0.0",
+    "@aexhq/env-aws-microvm": "2.0.0",
+    "@aexhq/sdk": "0.66.0",
+    "@aexhq/tools": "2.0.0"
   }
 }
