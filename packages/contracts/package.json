@@ -41,6 +41,6 @@
     "ajv-formats": "^3.0.1",
     "json-schema-to-typescript": "^15.0.4",
     "openapi-typescript": "^7.6.1",
-    "typescript": "^5.9.2"
+    "typescript": "^7.0.2"
   }
 }
