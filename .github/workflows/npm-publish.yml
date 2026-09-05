@@ -186,7 +186,7 @@ jobs:
       - name: Require the staged external dependency set
         shell: bash
         run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" next
-      - name: Publish once with provenance under next
+      - name: Publish once under next with trusted publishing
         shell: bash
         env:
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
