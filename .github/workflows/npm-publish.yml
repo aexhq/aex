@@ -156,7 +156,7 @@ jobs:
             echo
             node tools/npm-release.mjs markdown "$release_dir/manifest.json"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: aex-npm-release-${{ github.sha }}
           path: ${{ runner.temp }}/aex-npm-release
