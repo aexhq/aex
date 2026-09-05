@@ -85,7 +85,6 @@ if (operation === "bootstrap") {
         "public",
         "--tag",
         "next",
-        "--provenance",
       ],
       "inherit",
     );
@@ -115,7 +114,6 @@ if (operation === "bootstrap") {
           "public",
           "--tag",
           "next",
-          "--provenance",
         ],
         "inherit",
       );

@@ -15,7 +15,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true,
+    "provenance": false,
     "tag": "next"
   },
   "exports": {
