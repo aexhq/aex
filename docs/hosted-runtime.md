@@ -12,7 +12,8 @@ client → Aex identity proxy → Brain Server task
 ```
 
 Brain's public executable is independently runnable with one canonical local-disk journal. The
-first hosted release intentionally runs one stateful Brain replica on EFS. The store is behind an
+first hosted release intentionally runs one Brain writer on EFS. Execution is released at turn
+end by default; startup and transcript reads do not activate saved sessions. The store is behind an
 interface so an external implementation can follow later; the MVP does not claim multi-writer
 durability. The Aex control service and stateless Environment adapters may scale independently.
 
@@ -23,6 +24,10 @@ scoped SSE connection; remote Tools execute through their Environment adapter.
 Brain commits an effect's start Event before dispatch and commits its terminal Event before the
 next Agentloop activation. Brain does not retry model, Tool, or Environment effects. An ambiguous
 remote outcome remains ambiguous so the Agentloop and model can decide what to do.
+
+Clients read current transcripts through the ownership-checked `/v1/sessions/{id}/transcript` route,
+even while execution is suspended. Environment providers own physical expiry, and a persisted
+binding does not restore a lost browser or sandbox.
 
 Clients read session Events by sequence and may persist or forward them into their own systems.
 The journal is the complete history; the model transcript is derived from it. Operational logs are
