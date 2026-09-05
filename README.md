@@ -113,3 +113,9 @@ the trusted local composition.
 [Control API](contracts/control/v1/openapi.yaml)
 
 Licensed under [Apache 2.0](LICENSE).
+
+Brain is a standalone runtime consumed through its public contracts. Its default turn-end
+suspension releases execution while transcripts and recorded Events remain readable. Aex owns
+account, admission, billing, and future platform durability; Environment providers own physical
+resource TTL. Tool/environment failures and interrupted turns remain explicit observations, with
+no automatic effect replay in Brain.
