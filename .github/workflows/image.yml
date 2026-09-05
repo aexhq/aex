@@ -182,7 +182,7 @@ jobs:
             echo
             printf 'Platforms: `linux/amd64@%s`, `linux/arm64@%s`\n' "$amd" "$arm"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: aex-control-image-${{ env.SOURCE_SHA }}
           path: ${{ runner.temp }}/image-release.json
