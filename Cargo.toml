@@ -19,7 +19,7 @@ regress = "0.12"
 sha2 = "0.10"
 serde_jcs = "0.2"
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 ipnet = "2"
 jsonschema = { version = "0.52", default-features = false }
 anyhow = "1"
