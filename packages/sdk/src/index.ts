@@ -1,10 +1,10 @@
 import { Brain, type BrainOptions } from "@aexhq/brain";
 
 export { BrainError as AexError } from "@aexhq/brain";
-export { agentloop, brainWasm, component, environment, tool } from "@aexhq/brain";
+export { agentloop, brainEnv, component, environment, hostEnv, tool } from "@aexhq/brain";
 export type {
-  AgentloopBinding,
-  BrainWasmOptions,
+  PlacedAgentloop,
+  BrainEnvOptions,
   Component,
   CreateSessionOptions,
   CustomProviderModel,
@@ -19,8 +19,6 @@ export type {
   ModelUsage,
   OperationOptions,
   Outcome,
-  ResourceName,
-  Resources,
   Schema,
   SchemaInput,
   SchemaOutput,
@@ -28,7 +26,7 @@ export type {
   SessionState,
   SessionStreamEvent,
   SessionTool,
-  ToolBinding,
+  PlacedTool,
   ToolDefinition,
   VercelAiGatewayModel,
 } from "@aexhq/brain";

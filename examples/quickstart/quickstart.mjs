@@ -1,5 +1,5 @@
 // AEX_API_KEY and VERCEL_AI_GATEWAY_API_KEY are required.
-import { Aex, brainWasm } from "@aexhq/sdk";
+import { Aex, brainEnv } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/agentloop-pi";
 import { bash, read, write } from "@aexhq/tools";
@@ -11,14 +11,14 @@ const required = (name) => {
 };
 
 const aex = new Aex({ apiKey: required("AEX_API_KEY") });
-const workspace = awsMicroVm({ region: "eu-west-2" });
+const workspace = awsMicroVm({ name: "sandbox", url: required("ENVIRONMENT_URL"), token: required("ENVIRONMENT_TOKEN"), region: "eu-west-2" });
 const session = await aex.sessions.create({
   model: {
     provider: "vercel-ai-gateway",
     name: process.env.MODEL_NAME ?? "openai/gpt-5-mini",
     apiKey: required("VERCEL_AI_GATEWAY_API_KEY"),
   },
-  agentloop: pi({ env: brainWasm() }),
+  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
   system: "Work carefully and verify changes.",
   tools: [bash({ env: workspace }), read({ env: workspace }), write({ env: workspace })],
 });

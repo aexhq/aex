@@ -11,7 +11,7 @@ repository = "https://github.com/aexhq/aex"
 [workspace.dependencies]
 aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
-brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "682ce03104991f5815de0655165509510f07dbb6" }
+brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "8fcfa8d9b0c9b58e09664fa6b739d80de952e708" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
