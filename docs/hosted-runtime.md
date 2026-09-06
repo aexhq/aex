@@ -5,7 +5,8 @@ Aex is a downstream hosted composition of Brain. It does not add a second sessio
 ```text
 client → Aex identity proxy → Brain Server task
                               ├─ EFS-backed disk journal
-                              ├─ Wasmtime Component worker
+                              ├─ brain-sessions: session ownership and lifecycle
+                              ├─ brain-env: Wasmtime worker process pool
                               ├─ model providers
                               ├─ resident application hosts
                               └─ Environment adapter → remote Tool runtime
@@ -18,7 +19,7 @@ interface so an external implementation can follow later; the MVP does not claim
 durability. The Aex control service and stateless Environment adapters may scale independently.
 
 Agentloop and Tool placement is explicit in the session request. Native Agentloops and Tools are
-WebAssembly Components instantiated in a bounded worker; resident Tools receive commands over a
+WebAssembly Components instantiated in fresh Stores across a bounded pool of worker processes; hostEnv Tools receive commands over a
 scoped SSE connection; remote Tools execute through their Environment adapter.
 
 Brain commits an effect's start Event before dispatch and commits its terminal Event before the
@@ -26,8 +27,10 @@ next Agentloop activation. Brain does not retry model, Tool, or Environment effe
 remote outcome remains ambiguous so the Agentloop and model can decide what to do.
 
 Clients read current transcripts through the ownership-checked `/v1/sessions/{id}/transcript` route,
-even while execution is suspended. Environment providers own physical expiry, and a persisted
-binding does not restore a lost browser or sandbox.
+even while execution is suspended. Callers choose Environment lifetime; providers implement
+lifecycle operations and enforce physical resource ceilings. A persisted declaration does not
+restore a lost browser or sandbox. Each Tool may have several authorized named placements, and
+model presentation does not widen their permissions.
 
 Clients read session Events by sequence and may persist or forward them into their own systems.
 The journal is the complete history; the model transcript is derived from it. Operational logs are

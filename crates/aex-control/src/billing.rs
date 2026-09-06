@@ -163,7 +163,6 @@ fn power_of_ten(exponent: u32) -> i128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use brain_protocol::EventId;
     use serde_json::json;
 
     #[test]
@@ -178,7 +177,6 @@ mod tests {
     #[test]
     fn model_receipts_fold_once_and_malformed_events_do_not_partially_mutate_usage() {
         let event = Event {
-            event_id: EventId::new("evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             sequence: 2,
             recorded_at_ms: 10,
             event_type: "model_call_ended".into(),
@@ -198,7 +196,6 @@ mod tests {
 
         let before = usage.clone();
         let malformed = Event {
-            event_id: EventId::new("evt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             sequence: 3,
             recorded_at_ms: 11,
             event_type: "model_call_ended".into(),

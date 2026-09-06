@@ -14,7 +14,7 @@ assert.match(sdk, /from "@aexhq\/brain"/u);
 assert.doesNotMatch(sdk, /interface Session\b/u);
 
 const sessionContracts = await readFile(
-  path.join(root, "../brain/contracts/session/v1/openapi.yaml"),
+  path.join(root, "../brain/crates/brain-http/generated/contract/session/v1/openapi.yaml"),
   "utf8",
 );
 assert.match(sessionContracts, /title: Brain HTTP API/u);

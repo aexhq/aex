@@ -32,20 +32,20 @@ npm install @aexhq/sdk @aexhq/env-aws-microvm @aexhq/agentloop-pi @aexhq/tools
 ```
 
 ```ts
-import { Aex, brainWasm } from "@aexhq/sdk";
+import { Aex, brainEnv } from "@aexhq/sdk";
 import { awsMicroVm } from "@aexhq/env-aws-microvm";
 import { pi } from "@aexhq/agentloop-pi";
 import { bash, read, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const workspace = awsMicroVm({ region: "eu-west-2" });
+const workspace = awsMicroVm({ name: "sandbox", url: process.env.ENVIRONMENT_URL, token: process.env.ENVIRONMENT_TOKEN, region: "eu-west-2" });
 const session = await aex.sessions.create({
   model: {
     provider: "vercel-ai-gateway",
     name: "openai/gpt-5-mini",
     apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
   },
-  agentloop: pi({ env: brainWasm() }),
+  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
   system: "Work carefully and verify changes.",
   tools: [bash({ env: workspace }), read({ env: workspace }), write({ env: workspace })],
 });
@@ -61,16 +61,17 @@ composition, operation keys, and durable event cursors.
 
 ```text
 Your app → Aex SDK → Aex control → Brain → model provider
-                                      ├── Wasmtime Component
-                                      ├── resident Tool in your app
+                                      ├── brain-sessions → session semantics
+                                      ├── brain-env → Component worker pool
+                                      ├── hostEnv → Tool in your app
                                       └── remote Environment
 ```
 
 - **Agentloops** own model-call and context policy and run where their binding places them.
 - **Native execution** runs WebAssembly Components in Brain with explicit filesystem, network, and
   secret capabilities.
-- **Resident Tools** stay in the application; placed Tools run in a selected Environment.
-- **Environment adapters** own setup, attachment, execution, cancellation, and teardown.
+- **Application Tools** use hostEnv, through the same session Environment abstraction.
+- **Environment adapters** implement setup, execution, cancellation, detach, and teardown; callers choose their lifetime.
 
 Brain's standalone executable stores the canonical journal on local disk. External journal stores
 and durable hosted placement are roadmap items; applications can persist the ordered event feed.
@@ -79,7 +80,8 @@ and durable hosted placement are roadmap items; applications can persist the ord
 
 Definitions and bindings are fixed at session creation. A Tool may run in the application, in
 Brain's Wasmtime Environment, or in a remote Environment such as a MicroVM, browser, sandbox,
-Lambda, or HTTP service.
+Lambda, or HTTP service. Declare a factory in several named Environments to authorize each pair.
+An Agentloop can select a fixed placement or present authorized choices to the model.
 
 ## Packages
 
@@ -109,13 +111,13 @@ Change schemas before generated files, then run `tools/gen.sh`. Use `docker comp
 the trusted local composition.
 
 [Hosted runtime](docs/hosted-runtime.md) ·
-[Session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
+[Session API](https://github.com/aexhq/brain/blob/main/crates/brain-http/generated/contract/session/v1/openapi.yaml) ·
 [Control API](contracts/control/v1/openapi.yaml)
 
 Licensed under [Apache 2.0](LICENSE).
 
 Brain is a standalone runtime consumed through its public contracts. Its default turn-end
 suspension releases execution while transcripts and recorded Events remain readable. Aex owns
-account, admission, billing, and future platform durability; Environment providers own physical
-resource TTL. Tool/environment failures and interrupted turns remain explicit observations, with
+account, admission, billing, and future platform durability; callers choose Environment lifetime while providers enforce physical
+resource ceilings. Tool/environment failures and interrupted turns remain explicit observations, with
 no automatic effect replay in Brain.

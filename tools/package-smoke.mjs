@@ -96,13 +96,13 @@ try {
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { agentloop, brainWasm, component } from "@aexhq/brain";
+import { agentloop, brainEnv, component } from "@aexhq/brain";
 import { Aex, type CreateSessionOptions } from "@aexhq/sdk";
 
 const diagnostic = agentloop({ implementation: component(new Uint8Array([1])) });
 const options: CreateSessionOptions = {
   model: { provider: "vercel-ai-gateway", name: "openai/gpt-5-mini", apiKey: "test-key" },
-  agentloop: diagnostic({ env: brainWasm() }),
+  agentloop: diagnostic({ env: brainEnv({ name: "brain" }) }),
 };
 
 async function typecheckAex(aex: Aex): Promise<void> {

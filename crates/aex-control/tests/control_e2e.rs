@@ -148,22 +148,15 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
             "create-one",
             json!({
                 "agentloop": {
-                    "identity":"a".repeat(64),
+                    "implementation":{"type":"brain_component","entrypoint":"turn","id":"a".repeat(64)},
                     "configuration":{},
-                    "environment_id":"env_agentloop"
+                    "environment":"brain"
                 },
                 "model":{"provider":"vercel-ai-gateway","name":"openai/test","api_key":"test-key"},
                 "system":"test",
                 "tools":[],
                 "environments":[{
-                    "environment_id":"env_agentloop",
-                    "configuration":{
-                        "driver":"brain_wasm",
-                        "network":{"allow":[]},
-                        "filesystem":{"workspace":true},
-                        "secrets":[]
-                    },
-                    "bindings":{}
+                    "name":"brain", "driver":"brain", "configuration":{}
                 }]
             }),
         )),
@@ -347,7 +340,7 @@ async fn authenticated_session_api_tracks_ownership_and_forwards_the_brain_contr
 async fn fake_brain(State(deleted): State<Arc<AtomicBool>>, request: Request<Body>) -> Response {
     let path = request.uri().path();
     if path == "/v1/agentloops" {
-        return axum::Json(json!({"identity":"a".repeat(64),"status":"admitted"})).into_response();
+        return axum::Json(json!({"implementation":{"type":"brain_component","entrypoint":"turn","id":"a".repeat(64)},"status":"admitted"})).into_response();
     }
     if path == "/v1/tools" {
         return axum::Json(json!({"identity":"b".repeat(64),"status":"admitted"})).into_response();
