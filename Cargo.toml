@@ -3,6 +3,7 @@ members = ["crates/aex-server"]
 resolver = "2"
 
 [workspace.package]
+license = "MIT"
 edition = "2024"
 rust-version = "1.97"
 
