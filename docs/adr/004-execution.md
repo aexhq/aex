@@ -1,6 +1,6 @@
 # ADR-004: Limit MVP execution to curated Components and customer application Tools
 
-Status: Accepted. Date: 2026-09-07. Product scope requires owner discussion.
+Status: Accepted. Date: 2026-09-07. Product scope accepted; deployment evidence remains required.
 
 ## Context
 

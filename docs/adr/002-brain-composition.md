@@ -83,6 +83,6 @@ artifact admission, host reconnect and committed-event replay. Two accounts usin
 same operation key remain independent. Fault injection covers both sides of the create
 boundary. Direct-versus-gateway latency and stream memory are measured on identical hardware.
 
-Brain references: [HTTP service interface](https://github.com/aexhq/brain/blob/0ca8e99d7790b6e8a5b0dcde38d7dfe77c27b247/crates/brain-http/src/service.rs),
-[server operations](https://github.com/aexhq/brain/blob/0ca8e99d7790b6e8a5b0dcde38d7dfe77c27b247/crates/brain-server/src/service.rs).
-This inspected source baseline is not yet a selected Aex release dependency.
+Brain references: [HTTP service interface](https://github.com/aexhq/brain/blob/8fcfa8d9b0c9b58e09664fa6b739d80de952e708/crates/brain-http/src/service.rs),
+[server operations](https://github.com/aexhq/brain/blob/8fcfa8d9b0c9b58e09664fa6b739d80de952e708/crates/brain-server/src/service.rs).
+This is the pinned source dependency; the published-SDK journey verifies compatibility.
