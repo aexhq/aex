@@ -17,7 +17,9 @@
   internals. Unknown public operations and unsupported grants fail explicitly.
 - Generate Aex-owned contracts from their implementing types and route annotations.
   Do not redefine Brain types. Keep generated output with its source change.
-- No skipped tests or bypassed CI gates. CI gates release; local success does not replace it.
+- Do not skip tests in selected jobs or bypass CI gates. CI gates release; local success does not replace it.
+- Run checks for affected components on pull requests; prose-only README/docs edits do not
+  need runtime tests or builds. CI selects jobs from the full PR diff and runs all checks on main.
 - Keep local environment files at the workspace root, never in this repository. Never
   commit or print secret values.
 - Keep current behavior in code and user documentation. Research and abandoned approaches

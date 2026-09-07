@@ -9,7 +9,57 @@ concurrency:
   group: rewrite-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      audit: ${{ github.event_name != 'pull_request' || steps.filter.outputs.common == 'true' || steps.filter.outputs.dependencies == 'true' }}
+      checks: ${{ github.event_name != 'pull_request' || steps.filter.outputs.common == 'true' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.npm == 'true' || steps.filter.outputs.contracts == 'true' || steps.filter.outputs.storage == 'true' }}
+      journeys: ${{ github.event_name != 'pull_request' || steps.filter.outputs.common == 'true' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.npm == 'true' || steps.filter.outputs.journeys == 'true' }}
+      image: ${{ github.event_name != 'pull_request' || steps.filter.outputs.common == 'true' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.image == 'true' }}
+      cli: ${{ github.event_name != 'pull_request' || steps.filter.outputs.common == 'true' || steps.filter.outputs.npm == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      # Compare the tested merge commit with its base, including every PR commit and both rename paths.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          token: ''
+          predicate-quantifier: every
+          filters: |
+            common:
+              - '!*.md'
+              - '!**/README*.md'
+              - '!docs/**/*.md'
+              - '!assets/aex-mark-{black,white}.webp'
+              - '!{crates,packages/sdk,packages/cli,docs/generated,examples,tests}/**'
+              - '!{Cargo.toml,Cargo.lock,rust-toolchain.toml,rustfmt.toml,package.json,package-lock.json,Dockerfile,.dockerignore}'
+              - '!tools/{check.sh,sdk-contracts.mjs,storage-report.py,journeys.sh,image-smoke.py}'
+            rust:
+              - '{crates/**,Cargo.toml,Cargo.lock,rust-toolchain.toml,rustfmt.toml,examples/config.json}'
+              - '!**/README*.md'
+            npm:
+              - '{packages/sdk/**,packages/cli/**,package.json,package-lock.json}'
+              - '!**/README*.md'
+            dependencies:
+              - '**/Cargo.{toml,lock}'
+            contracts:
+              - '{docs/generated/**,tools/check.sh,tools/sdk-contracts.mjs}'
+            storage:
+              - '{tools/storage-report.py,tests/*_test.py}'
+            journeys:
+              - '{examples/**,tests/**,tools/journeys.sh}'
+              - '!**/README*.md'
+              - '!tests/*_test.py'
+            image:
+              - '{Dockerfile,.dockerignore,tools/image-smoke.py}'
   audit:
+    needs: changes
+    if: needs.changes.outputs.audit == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -18,6 +68,8 @@ jobs:
       - run: cargo install cargo-audit --locked --version 0.22.2
       - run: cargo audit
   checks:
+    needs: changes
+    if: needs.changes.outputs.checks == 'true'
     services:
       postgres:
         image: postgres:17-bookworm
@@ -45,6 +97,8 @@ jobs:
           python-version: '3.9'
       - run: python3 -m unittest discover -s tests -p '*_test.py'
   journeys:
+    needs: changes
+    if: needs.changes.outputs.journeys == 'true'
     services:
       postgres:
         image: postgres:17-bookworm
@@ -72,6 +126,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: bash tools/journeys.sh
   image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +138,8 @@ jobs:
       - run: docker build -t aex-rewrite:test .
       - run: python3 tools/image-smoke.py
   cli:
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -97,9 +155,21 @@ jobs:
       - run: npm run test:cli
   release-gate:
     if: always()
-    needs: [audit, checks, journeys, image, cli]
+    needs: [changes, audit, checks, journeys, image, cli]
     runs-on: ubuntu-24.04
     steps:
-      - env:
+      - name: Every affected check passed
+        env:
           RESULTS: ${{ toJSON(needs) }}
-        run: node -e 'for(const [name,job] of Object.entries(JSON.parse(process.env.RESULTS))) if(job.result!=="success") throw Error(name+":"+job.result)'
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { changes, ...jobs } = JSON.parse(process.env.RESULTS);
+          assert.equal(changes.result, 'success', 'change detection must succeed');
+          for (const [name, job] of Object.entries(jobs)) {
+            const selected = changes.outputs[name];
+            assert.ok(['true', 'false'].includes(selected), `${name}: missing selection`);
+            const expected = selected === 'true' ? 'success' : 'skipped';
+            assert.equal(job.result, expected, `${name}: expected ${expected}, got ${job.result}`);
+          }
+          NODE

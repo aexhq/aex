@@ -19,6 +19,10 @@ The journey script fetches the pinned Brain release and builds the reference Age
 It runs the SDK against real Linux workers and a deterministic provider, without cloud credentials.
 All CI checks gate releases; deployed provider and recovery checks additionally gate hosting releases.
 
+PR CI runs checks for affected components; prose-only README/docs changes skip builds and runtime tests.
+Generated contracts still require verification. CI changes and unclassified files run every job.
+Pushes to `main` run the full suite; the release gate requires every selected job to pass.
+
 ## Run a server
 
 Copy [examples/config.json](../examples/config.json) to your workspace configuration.
