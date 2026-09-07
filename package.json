@@ -8,7 +8,8 @@
   "scripts": {
     "test": "node --test tests/journeys/*.test.mjs",
     "build": "npm run build --workspace @aexhq/sdk",
-    "test:sdk": "npm test --workspace @aexhq/sdk"
+    "test:sdk": "npm test --workspace @aexhq/sdk",
+    "test:cli": "npm run build && npm test --workspace @aexhq/cli"
   },
   "devDependencies": {
     "@aexhq/agentloop-pi": "4.0.0",
@@ -20,6 +21,7 @@
     "zod": "4.4.3"
   },
   "workspaces": [
-    "packages/sdk"
+    "packages/sdk",
+    "packages/cli"
   ]
 }

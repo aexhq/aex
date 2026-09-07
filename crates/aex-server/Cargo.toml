@@ -9,6 +9,7 @@ publish = false
 anyhow = "1"
 async-stream = "0.3"
 axum = "0.8"
+base64 = "0.22"
 brain-protocol = { git = "https://github.com/aexhq/brain", rev = "039c3b843e83dd5a7fc859bbd91cc4833fe74223" }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }

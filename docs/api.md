@@ -47,8 +47,30 @@ key reuse or metadata pruning occurs.
 
 The trusted website verifies Google OIDC and calls `POST /v1/accounts` with `AEX_SITE_TOKEN`.
 It receives a seven-day dashboard credential, kept in a Secure HttpOnly SameSite cookie.
-`GET /v1/account` and `GET /v1/usage` accept dashboard credentials or workload API keys.
+`GET /v1/account` and `GET /v1/usage` accept account session credentials or workload API keys.
 `GET/POST /v1/keys`, `PATCH/DELETE /v1/keys/{id}`, and `DELETE /v1/account/session`
-require dashboard credentials. Workload keys cannot issue keys. Keys are shown once,
+require account session credentials. Workload keys cannot issue keys. Keys are shown once,
 stored as verifiers, named, listed, renamed and revoked within their account.
 The first release is free hosting with customer model keys; it does not collect payments.
+
+## Browser and CLI login
+
+Dashboard, SDK and CLI share these public account APIs. The website keeps its bearer
+credential in an HttpOnly cookie and forwards browser requests to the same API;
+CLI and SDK use bearer credentials directly. Product rules live in Aex.
+
+`POST /v1/auth/grants` requires an account session and accepts `code_challenge` (S256,
+base64url SHA-256) and `redirect_uri` (`http://127.0.0.1:PORT/callback`). It returns
+`{code, expires}` after the browser user authorizes the CLI. One grant per browser
+session is retained, expires after 60 seconds, and is invalidated by browser logout.
+
+`POST /v1/auth/exchange` accepts `{code, code_verifier, redirect_uri}` without a bearer
+token. A matching, unexpired code is consumed atomically and returns a distinct
+`{token, expires}` account session. Codes are stored hashed; intercepted codes cannot
+be exchanged without the initiating client's PKCE verifier. Account sessions expire
+after seven days, and at most eight remain active per account across web and CLI.
+
+The CLI opens `/cli` on the website, completes Google sign-in if needed and receives
+the code on its loopback listener. State binds the callback to the initiating process.
+This follows the external-browser and loopback pattern in RFC 8252 and S256 PKCE in
+RFC 7636. The website handles identity-provider integration, not separate product APIs.

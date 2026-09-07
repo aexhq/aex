@@ -54,6 +54,22 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "login-grant-input",
+                    schemars::schema_for!(aex_server::account::LoginGrantInput),
+                ),
+                (
+                    "login-grant",
+                    schemars::schema_for!(aex_server::account::LoginGrant),
+                ),
+                (
+                    "login-exchange",
+                    schemars::schema_for!(aex_server::account::LoginExchange),
+                ),
+                (
+                    "account-session",
+                    schemars::schema_for!(aex_server::account::AccountSession),
+                ),
+                (
                     "account",
                     schemars::schema_for!(aex_server::account::Account),
                 ),

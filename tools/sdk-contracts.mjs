@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { compile } from "json-schema-to-typescript";
-const schemas = ["account", "usage", "api-key", "issued-key", "key-input"];
+const schemas = ["account", "usage", "api-key", "issued-key", "key-input", "login-grant-input", "login-grant", "login-exchange", "account-session"];
 const root = new URL("../", import.meta.url);
 const definitions = {};
 for (const name of schemas) {

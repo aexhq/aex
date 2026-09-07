@@ -10,4 +10,5 @@ npm audit --audit-level=high
 npm run gen --workspace @aexhq/sdk
 git diff --exit-code -- packages/sdk/src/generated.ts
 npm run test:sdk
+npm run test:cli
 python3 -m unittest discover -s tests -p '*_test.py'

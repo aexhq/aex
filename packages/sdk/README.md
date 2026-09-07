@@ -21,3 +21,24 @@ on the initial deployment. Supply your model key per session.
 `account.get()` and `account.usage()` accept a workload API key. `keys` management requires
 an authenticated account session and is normally performed in the dashboard. API keys do
 not grant authority to create more credentials. New key secrets are returned once.
+
+## Account management
+
+Use an account session obtained through browser login for account management. Workload
+API keys remain scoped to runtime operations and read-only account/usage access.
+
+```ts
+const account = new Aex({ accountToken: process.env.AEX_ACCOUNT_TOKEN! });
+await account.keys.list();
+const issued = await account.keys.create({ name: "My app" });
+await account.keys.update(issued.key.id, { name: "Renamed app" });
+await account.keys.delete(issued.key.id);
+await account.account.get(); // includes billing status and limits
+await account.account.usage();
+await account.account.logout();
+```
+
+`account.account.authorizeLogin({code_challenge, redirect_uri})` and
+`Aex.exchangeLogin({code, code_verifier, redirect_uri})` expose the shared HTTP login
+contract for clients. The `@aexhq/cli` package handles opening the browser, PKCE,
+loopback callback and local credential storage.

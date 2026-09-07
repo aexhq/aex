@@ -18,3 +18,15 @@ test("Aex preserves Brain and its extension identities and uses the account API"
   assert.equal(requests[0].url,"https://api.aex.dev/v1/account");
   assert.equal(new Headers(requests[0].init.headers).get("authorization"),"Bearer customer-key");
 });
+
+test("account sessions and login exchange use the same HTTP API", async () => {
+  const requests = [];
+  const fetch = async (url, init) => { requests.push({ url, init }); return Response.json({ token: "account" }); };
+  const client = new Aex({ accountToken: "account-session", fetch });
+  await client.keys.list(); await client.keys.create({ name: "app" }); await client.keys.update("key_id", { name: "renamed" }); await client.keys.delete("key_id");
+  await client.account.usage(); await client.account.authorizeLogin({ code_challenge: "challenge", redirect_uri: "http://127.0.0.1:1234/callback" }); await client.account.logout();
+  for (const request of requests) assert.equal(new Headers(request.init.headers).get("authorization"), "Bearer account-session");
+  await Aex.exchangeLogin({ code: "code", code_verifier: "verifier", redirect_uri: "http://127.0.0.1:1234/callback" }, { fetch });
+  assert.equal(requests.at(-1).url, "https://api.aex.dev/v1/auth/exchange");
+  assert.equal(new Headers(requests.at(-1).init.headers).has("authorization"), false);
+});

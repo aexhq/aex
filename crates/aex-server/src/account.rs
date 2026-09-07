@@ -10,9 +10,38 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LoginGrantInput {
+    pub code_challenge: String,
+    pub redirect_uri: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LoginExchange {
+    pub code: String,
+    pub code_verifier: String,
+    pub redirect_uri: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct LoginGrant {
+    pub code: String,
+    pub expires: i64,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct AccountSession {
+    pub token: String,
+    pub expires: i64,
+}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +115,7 @@ pub fn route(method: &Method, path: &str) -> bool {
     matches!(
         (method.as_str(), path),
         ("POST", "/v1/accounts")
+            | ("POST", "/v1/auth/grants" | "/v1/auth/exchange")
             | ("GET", "/v1/account" | "/v1/usage" | "/v1/keys")
             | ("POST", "/v1/keys")
             | ("DELETE", "/v1/account/session")
@@ -102,6 +132,31 @@ pub async fn handle(
     token: &str,
     body: Bytes,
 ) -> Result<Response> {
+    if path == "/v1/auth/exchange" {
+        let input: LoginExchange = serde_json::from_slice(&body)?;
+        if !(43..=128).contains(&input.code_verifier.len())
+            || !input
+                .code_verifier
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
+        {
+            return Err(Error::invalid("invalid PKCE verifier"));
+        }
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(input.code_verifier.as_bytes()));
+        let mut tx = app.store.0.begin().await?;
+        let row = sqlx::query("DELETE FROM login_grants g USING dashboard_sessions d, accounts a WHERE g.verifier=$1 AND g.challenge=$2 AND g.redirect_uri=$3 AND g.expires>$4 AND d.verifier=g.session_verifier AND d.expires>$4 AND a.id=d.account AND a.active=1 RETURNING d.account,d.expires")
+            .bind(digest(input.code.as_bytes())).bind(challenge).bind(input.redirect_uri).bind(now())
+            .fetch_optional(&mut *tx).await?.ok_or_else(Error::denied)?;
+        let account: String = row.get("account");
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active=1 FOR UPDATE")
+            .bind(&account)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(Error::denied)?;
+        let session = issue_session(&mut tx, &account).await?;
+        tx.commit().await?;
+        return Ok(Json(session).into_response());
+    }
     if path == "/v1/accounts" {
         if !identity::matches(token, &app.site_verifier) {
             return Err(Error::denied());
@@ -153,18 +208,9 @@ pub async fn handle(
             .bind(&account)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM dashboard_sessions WHERE expires<=$1 OR verifier IN (SELECT verifier FROM dashboard_sessions WHERE account=$2 ORDER BY expires DESC OFFSET 7)")
-            .bind(now()).bind(&account).execute(&mut *tx).await?;
-        let token = random("aex_account");
-        let expires = now() + 7 * 24 * 3600;
-        sqlx::query("INSERT INTO dashboard_sessions VALUES ($1,$2,$3)")
-            .bind(digest(token.as_bytes()))
-            .bind(&account)
-            .bind(expires)
-            .execute(&mut *tx)
-            .await?;
+        let session = issue_session(&mut tx, &account).await?;
         tx.commit().await?;
-        return Ok(Json(serde_json::json!({"token":token,"expires":expires})).into_response());
+        return Ok(Json(session).into_response());
     }
     let account =
         if matches!(path, "/v1/account" | "/v1/usage") && !token.starts_with("aex_account_") {
@@ -173,6 +219,48 @@ pub async fn handle(
             dashboard_account(app, token).await?
         };
     tracing::Span::current().record("account", &account);
+    if path == "/v1/auth/grants" {
+        let input: LoginGrantInput = serde_json::from_slice(&body)?;
+        let redirect = url::Url::parse(&input.redirect_uri)
+            .map_err(|_| Error::invalid("invalid loopback redirect"))?;
+        if redirect.scheme() != "http"
+            || redirect.host_str() != Some("127.0.0.1")
+            || redirect.port().is_none()
+            || redirect.path() != "/callback"
+            || !redirect.username().is_empty()
+            || redirect.password().is_some()
+            || redirect.query().is_some()
+            || redirect.fragment().is_some()
+            || input.code_challenge.len() != 43
+            || URL_SAFE_NO_PAD.decode(&input.code_challenge).is_err()
+        {
+            return Err(Error::invalid(
+                "expected S256 challenge and http://127.0.0.1:PORT/callback",
+            ));
+        }
+        let code = random("aex_login");
+        let expires = now() + 60;
+        let mut tx = app.store.0.begin().await?;
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 FOR UPDATE")
+            .bind(&account)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM login_grants WHERE expires<=$1 OR session_verifier=$2")
+            .bind(now())
+            .bind(digest(token.as_bytes()))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO login_grants VALUES ($1,$2,$3,$4,$5)")
+            .bind(digest(code.as_bytes()))
+            .bind(digest(token.as_bytes()))
+            .bind(input.code_challenge)
+            .bind(input.redirect_uri)
+            .bind(expires)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(LoginGrant { code, expires }).into_response());
+    }
     if matches!(path, "/v1/account" | "/v1/usage") {
         let row=sqlx::query("SELECT count(*) AS sessions,count(active_key) AS active_turns,coalesce(sum(retained_bytes),0)::bigint AS retained_bytes FROM sessions WHERE account=$1 AND state!='deleted'")
             .bind(&account).fetch_one(&app.store.0).await?;
@@ -252,4 +340,23 @@ pub async fn handle(
         .bind(name).bind(path.strip_prefix("/v1/keys/").ok_or_else(Error::missing)?).bind(account)
         .fetch_optional(&app.store.0).await?.ok_or_else(Error::missing)?;
     Ok(Json(key(&row)).into_response())
+}
+
+async fn issue_session(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account: &str,
+) -> Result<AccountSession> {
+    sqlx::query("DELETE FROM dashboard_sessions WHERE expires<=$1 OR verifier IN (SELECT verifier FROM dashboard_sessions WHERE account=$2 ORDER BY expires DESC OFFSET 7)")
+        .bind(now()).bind(account).execute(&mut **tx).await?;
+    let session = AccountSession {
+        token: random("aex_account"),
+        expires: now() + 7 * 24 * 3600,
+    };
+    sqlx::query("INSERT INTO dashboard_sessions VALUES ($1,$2,$3)")
+        .bind(digest(session.token.as_bytes()))
+        .bind(account)
+        .bind(session.expires)
+        .execute(&mut **tx)
+        .await?;
+    Ok(session)
 }

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AccountSession",
+  "type": "object",
+  "properties": {
+    "expires": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "token": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "expires"
+  ]
+}

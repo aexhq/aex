@@ -1,18 +1,15 @@
 # Aex roadmap
 
 Status: scope accepted 2026-09-07; implementation and release evidence tracked below.
-The owner selected PostgreSQL for product state and a minimal customer dashboard on
-2026-09-07. These requirements supersede ADR-005's SQLite selection and the dashboard
-deferral below; both changes are pending implementation. The dashboard has exactly three
-items: API-key CRUD, Docs, and Account / Billing / Usage. Customer authentication, key
-metadata updates, account-scoped key management and account/usage APIs are release work.
-Paid billing at launch remains unresolved; customer model keys remain the baseline.
+The production preview implements PostgreSQL product state, self-service Google sign-in,
+API-key CRUD, account/usage APIs and the thin Brain-compatible Aex SDK. The dashboard has
+exactly three items: API keys, Docs, and Account / Billing / Usage. Hosting is free during
+preview; customers supply model keys. These supersede the earlier SQLite, manual-only
+onboarding and dashboard/SDK deferrals in the original MVP ADRs.
 
-The owner also requires self-service registration, a thin Aex SDK over the Brain SDK, and
-customer-defined Tools and Environments with hosted execution. These supersede manual-only
-onboarding, the separate-SDK deferral and ADR-004's curated-only launch scope. Implementation
-and hosted isolation design are pending. Reuse Brain extension contracts unchanged; deployment
-support and sealed authority still determine which Environment can execute an implementation.
+The customer CLI uses the same public HTTP API through the SDK. It supports browser
+login, logout, key CRUD, account, billing status, usage and docs. Browser identity-provider
+integration stays in Site; authorization and product behavior stay in Aex.
 
 The [MVP ADRs](docs/adr/README.md) explain the architecture. Post-MVP entries are options
 with admission criteria, not architecture decisions or delivery promises.
@@ -57,7 +54,7 @@ They are separate scope changes; “official host” alone does not settle them.
 | Brain lifecycle, transcript, committed Events and live SSE | A second event system, workflow retries, mutable placement |
 | Bounded admission, storage and stream usage | Fair scheduling across arbitrary hostile workloads |
 | One serving node, PostgreSQL product state, persistent Brain disk, coordinated backup/restore and interruption semantics | Automatic failover, horizontal session placement, multi-region |
-| Thin Aex SDK over Brain, executable quickstart, operator commands and three-item customer dashboard | General customer CLI |
+| Thin Aex SDK over Brain, executable quickstart, operator commands, customer CLI and three-item dashboard | Paid billing |
 | CI, deployment smoke, resource measurements and recovery proof | Premature service decomposition or a plugin framework |
 
 ## MVP milestones
