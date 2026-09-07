@@ -1,6 +1,6 @@
 # ADR-002: Start with an explicit HTTP boundary to an unchanged Brain server
 
-Status: Proposed. Date: 2026-09-06. Depends on ADR-001 and the M0 integration experiment.
+Status: Accepted. Date: 2026-09-07. Depends on ADR-001 and the M0 integration experiment.
 
 ## Context
 

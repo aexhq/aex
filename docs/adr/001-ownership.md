@@ -1,6 +1,6 @@
 # ADR-001: Keep Brain, public hosting behavior, and private operations separate
 
-Status: Proposed. Date: 2026-09-06.
+Status: Accepted. Date: 2026-09-07.
 
 ## Context
 

@@ -1,7 +1,7 @@
 # MVP architecture decision records
 
-All records below are **Proposed**, dated 2026-09-06. Owner requirements are identified
-separately from recommendations. Acceptance requires discussion; a decision's acceptance
+All records below are **Accepted**, following owner approval on 2026-09-07. Owner requirements are identified
+separately from recommendations. Release requires the documented evidence; a decision's acceptance
 does not mean its implementation is complete.
 
 | ADR | Decision boundary |

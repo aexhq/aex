@@ -1,6 +1,6 @@
 # ADR-003: Make account ownership durable at the Aex boundary
 
-Status: Proposed. Date: 2026-09-06. Depends on ADR-002.
+Status: Accepted. Date: 2026-09-07. Depends on ADR-002.
 
 ## Context
 
@@ -43,9 +43,9 @@ and access; operator cancellation uses ordinary Brain session operations.
    claim. The caller supplies the same request, including credentials, for any explicit retry.
 3. On a completed create response, atomically persist session ownership and the operation
    result. Only then return success to the customer.
-4. A lost response is pending/ambiguous, never a new request key. Within Brain's proven replay
-   window, an explicit caller retry may retrieve its saved response. If Brain cannot determine
-   the result, surface uncertainty and retain the reservation for operator resolution.
+4. A lost response is pending/ambiguous, never a new request key. The MVP never dispatches a pending Aex claim again.
+   Surface uncertainty and retain the reservation for operator resolution. Only an Aex
+   claim with a completed saved result can replay.
 
 Brain's saved-response retention is not an infinite exactly-once guarantee. Once that
 window has passed, do not resubmit an unresolved create: Brain could create a second session.

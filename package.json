@@ -1,0 +1,8 @@
+{
+  "name": "aex-hosting",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test tests/journeys/*.test.mjs" },
+  "devDependencies": { "@aexhq/brain": "0.18.0", "zod": "4.4.3" }
+}

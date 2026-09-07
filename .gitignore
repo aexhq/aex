@@ -1,5 +1,10 @@
 /target/
 /node_modules/
-.env*
+/artifacts/
 /data/
-*.log
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+.env*

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "agentloops": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "brain_url": {
+      "type": "string"
+    },
+    "data_dir": {
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    },
+    "listen": {
+      "type": "string"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "operator_listen": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "listen",
+    "operator_listen",
+    "data_dir",
+    "brain_url",
+    "agentloops",
+    "models",
+    "limits"
+  ],
+  "$defs": {
+    "Limits": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "active_turns_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "claims_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "hosts_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "keys_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "minimum_free_disk_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "request_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "requests": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "requests_per_account": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "response_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "retained_bytes_per_account": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retention_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sessions_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "streams_per_account": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "turn_reserve_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "upstream_timeout_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usage_max_age_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accounts",
+        "keys_per_account",
+        "sessions_per_account",
+        "hosts_per_account",
+        "claims_per_account",
+        "active_turns_per_account",
+        "streams_per_account",
+        "requests",
+        "requests_per_account",
+        "request_bytes",
+        "response_bytes",
+        "upstream_timeout_secs",
+        "retained_bytes_per_account",
+        "turn_reserve_bytes",
+        "minimum_free_disk_bytes",
+        "retention_secs",
+        "usage_max_age_secs"
+      ]
+    }
+  }
+}

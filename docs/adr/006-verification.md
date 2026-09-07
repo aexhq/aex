@@ -1,6 +1,6 @@
 # ADR-006: Gate release on real integration, bounded resources and recovery
 
-Status: Proposed. Date: 2026-09-06.
+Status: Accepted. Date: 2026-09-07.
 
 ## Context
 

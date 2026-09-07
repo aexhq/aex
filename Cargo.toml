@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/aex-server"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.97"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

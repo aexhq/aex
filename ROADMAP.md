@@ -1,6 +1,6 @@
 # Aex roadmap
 
-Status: discussion draft, 2026-09-06. This is planned work, not a feature inventory.
+Status: scope accepted 2026-09-07; implementation and release evidence tracked below.
 The [MVP ADRs](docs/adr/README.md) explain the architecture. Post-MVP entries are options
 with admission criteria, not architecture decisions or delivery promises.
 
@@ -14,7 +14,7 @@ TypeScript SDK against Aex, select a supported Agentloop and model, attach appli
 create a session, send work, observe and reconnect, inspect history, cancel or end, and delete.
 Another account cannot access any of those resources.
 
-### Assumptions requiring discussion
+### Accepted MVP scope
 
 1. The first release is an invite-only developer preview, with manual account onboarding.
 2. Customers supply model keys. Aex does not sell model credits or collect payments yet.
@@ -155,3 +155,21 @@ Choose the next outcome from actual demand. These tracks are not all sequential 
 
 Moving product metadata to PostgreSQL does not by itself distribute Brain sessions.
 Likewise, adding a remote Environment does not provide automatic session recovery.
+
+## Implementation record - 2026-09-07
+
+The public service, generated configuration/operator contracts, SDK example, operator tooling,
+SQLite ownership/claims, bounded admission, storage reporting and CI are implemented. Local
+Windows Rust checks and Linux published-SDK/real-worker journeys pass. A real-provider local
+hosted session passes. Tests cover tool execution, isolation, stream revocation, restart,
+consistent backup-file restoration and unresolved create claims.
+
+M0/M1 have executable implementation evidence. M2/M3 mechanisms and local recovery tests exist;
+M4 has a reproducible direct/gateway warm-read baseline. Full M4 saturation and final admission
+values remain release gates. M5 is not complete: AWS provisioning, actual TLS/SSE, instance
+isolation, EBS reattachment, completed-snapshot restoration, measured RPO/RTO and onboarding are
+explicitly held. CI success does not substitute for deployment-dependent gates.
+
+Byte reservations and resource limits remain launch hypotheses. Storage admission is not a
+hard filesystem quota. No production availability, capacity or recovery promise is made
+before the held acceptance work passes.

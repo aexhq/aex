@@ -1,6 +1,6 @@
 # ADR-005: Use one serving node and make its durability boundary explicit
 
-Status: Proposed. Date: 2026-09-06. Accept only with the stated availability trade-off.
+Status: Accepted. Date: 2026-09-07. Accept only with the stated availability trade-off.
 
 ## Context
 

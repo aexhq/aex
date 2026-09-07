@@ -6,8 +6,8 @@
 - This repository must be independently buildable and suitable for public release. Private
   deployment configuration, credentials, customer records, and commercial policy belong in
   Platform. There is no build or test dependency on that private repository.
-- Read [ROADMAP.md](ROADMAP.md) and [the ADR index](docs/adr/README.md). Proposed decisions
-  are discussion drafts, not implemented behavior or accepted requirements.
+- Read [ROADMAP.md](ROADMAP.md) and [the ADR index](docs/adr/README.md). Accepted decisions
+  define scope; the roadmap separates implementation from outstanding release evidence.
 - Keep one owner for each behavior. Start with cohesive modules in one service; extract a
   package, trait, or process when a concrete dependency or execution boundary requires it.
 - Before adding a layer or check, name its supported failure and the action on failure.
