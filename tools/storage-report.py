@@ -19,7 +19,7 @@ def measure(root):
         total = 0
         for directory, dirs, files in os.walk(session, followlinks=False):
             for name in dirs + files:
-                info = (Path(directory) / name).stat(follow_symlinks=False)
+                info = (Path(directory) / name).lstat()
                 if stat.S_ISLNK(info.st_mode):
                     raise ValueError("symlink in session data")
                 if stat.S_ISREG(info.st_mode):

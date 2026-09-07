@@ -40,6 +40,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: bash tools/check.sh
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.9'
+      - run: python3 -m unittest discover -s tests -p '*_test.py'
   journeys:
     services:
       postgres:
