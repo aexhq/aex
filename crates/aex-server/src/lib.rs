@@ -1,4 +1,6 @@
+pub mod account;
 pub mod admission;
+pub mod artifacts;
 pub mod brain;
 pub mod config;
 pub mod error;
@@ -24,25 +26,31 @@ pub struct App {
     pub account_requests: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub streams: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub host_registration: Arc<Mutex<()>>,
+    pub artifact_admission: Arc<Mutex<()>>,
     pub operator_verifier: String,
+    pub site_verifier: String,
 }
 impl App {
     pub async fn open(
         config: config::Config,
         brain_token: String,
         operator_token: String,
+        database_url: String,
+        site_token: String,
     ) -> anyhow::Result<Self> {
         config.validate()?;
         anyhow::ensure!(
-            brain_token.len() >= 32 && operator_token.len() >= 32,
+            brain_token.len() >= 32 && operator_token.len() >= 32 && site_token.len() >= 32,
             "internal credentials require at least 32 characters"
         );
         anyhow::ensure!(
-            brain_token != operator_token,
-            "Brain and operator credentials must differ"
+            brain_token != operator_token
+                && site_token != brain_token
+                && site_token != operator_token,
+            "internal credentials must differ"
         );
         std::fs::create_dir_all(&config.data_dir)?;
-        let store = store::Store::open(&config.data_dir.join("aex.db")).await?;
+        let store = store::Store::open(&database_url).await?;
         let brain = brain::Brain::new(&config, brain_token)?;
         Ok(Self {
             operator_lock: Arc::default(),
@@ -55,7 +63,9 @@ impl App {
             changed: watch::channel(0).0,
             streams: Arc::default(),
             host_registration: Arc::default(),
+            artifact_admission: Arc::default(),
             operator_verifier: identity::digest(operator_token.as_bytes()),
+            site_verifier: identity::digest(site_token.as_bytes()),
         })
     }
 }

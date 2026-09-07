@@ -1,3 +1,4 @@
+mod common;
 use aex_server::{
     App,
     config::Config,
@@ -37,9 +38,15 @@ async fn lost_upstream_create_response_does_not_create_a_second_resource() {
     config.data_dir = directory.path().to_path_buf();
     config.brain_url = url;
     config.limits.minimum_free_disk_bytes = 1;
-    let app = App::open(config, "b".repeat(32), "o".repeat(32))
-        .await
-        .unwrap();
+    let app = App::open(
+        config,
+        "b".repeat(32),
+        "o".repeat(32),
+        common::database(directory.path()).await,
+        "s".repeat(32),
+    )
+    .await
+    .unwrap();
     let account = execute(&app, Operation::CreateAccount).await.unwrap()["account"]
         .as_str()
         .unwrap()

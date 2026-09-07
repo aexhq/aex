@@ -1,49 +1,45 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Config",
+  "title": "Account",
   "type": "object",
   "properties": {
-    "agentloops": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true
+    "billing": {
+      "$ref": "#/$defs/Billing"
     },
-    "brain_url": {
-      "type": "string"
+    "created": {
+      "type": "integer",
+      "format": "int64"
     },
-    "data_dir": {
+    "email": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
       "type": "string"
     },
     "limits": {
       "$ref": "#/$defs/Limits"
     },
-    "listen": {
-      "type": "string"
-    },
-    "models": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true
-    },
-    "operator_listen": {
-      "type": "string"
+    "usage": {
+      "$ref": "#/$defs/Usage"
     }
   },
-  "additionalProperties": false,
   "required": [
-    "listen",
-    "operator_listen",
-    "data_dir",
-    "brain_url",
-    "agentloops",
-    "models",
+    "id",
+    "created",
+    "billing",
+    "usage",
     "limits"
   ],
   "$defs": {
+    "Billing": {
+      "type": "string",
+      "enum": [
+        "preview_customer_model_keys"
+      ]
+    },
     "Limits": {
       "type": "object",
       "properties": {
@@ -164,6 +160,35 @@
         "usage_max_age_secs",
         "artifacts_per_account",
         "artifact_bytes_per_account"
+      ]
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "active_turns": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "measured_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "retained_bytes": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "sessions": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "sessions",
+        "active_turns",
+        "retained_bytes"
       ]
     }
   }

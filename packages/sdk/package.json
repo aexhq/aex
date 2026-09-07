@@ -1,0 +1,20 @@
+{
+  "name": "@aexhq/sdk",
+  "version": "0.69.0",
+  "description": "Aex accounts and hosted sessions using the Brain SDK",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/aexhq/aex.git", "directory": "packages/sdk" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "publishConfig": { "access": "public", "tag": "next" },
+  "dependencies": { "@aexhq/brain": "0.19.0" },
+  "scripts": {
+    "gen": "node ../../tools/sdk-contracts.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  }
+}

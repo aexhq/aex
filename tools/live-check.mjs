@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import { Brain, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/brain";
-import { pathToFileURL } from "node:url";
+import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
+import { pi } from "@aexhq/agentloop-pi";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-for(const key of ["AEX_URL","AEX_API_KEY","AEX_MODEL_KEY","BRAIN_TEST_REFERENCE_AGENTLOOP"]) assert.ok(process.env[key],`${key} required`);
-const brain=new Brain({baseUrl:process.env.AEX_URL,token:process.env.AEX_API_KEY});
+for(const key of ["AEX_URL","AEX_API_KEY","AEX_MODEL_KEY"]) assert.ok(process.env[key],`${key} required`);
+const brain=new Aex({baseUrl:process.env.AEX_URL,apiKey:process.env.AEX_API_KEY});
 let session, registration, toolCalls=0;
 const answer=randomUUID();
 const probe=tool({name:"hosted_probe",description:"Return the current hosting verification value",input:z.object({}),run:()=>{toolCalls++;return answer;}});
 try {
-  session=await brain.sessions.create({model:{provider:"vercel-ai-gateway",name:"openai/gpt-4.1-mini",apiKey:process.env.AEX_MODEL_KEY},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})}),tools:[probe({env:hostEnv({name:"application"})})]});
+  session=await brain.sessions.create({model:{provider:"vercel-ai-gateway",name:"openai/gpt-4.1-mini",apiKey:process.env.AEX_MODEL_KEY},agentloop:pi({env:brainEnv({name:"brain"})}),tools:[probe({env:hostEnv({name:"application"})})]});
   registration=await brain.register();
   await session.send("Call hosted_probe exactly once, then reply with its returned value. Do not invent the value.");
   assert.equal(toolCalls,1,"the real provider must invoke the application Tool");

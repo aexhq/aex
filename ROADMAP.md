@@ -1,6 +1,19 @@
 # Aex roadmap
 
 Status: scope accepted 2026-09-07; implementation and release evidence tracked below.
+The owner selected PostgreSQL for product state and a minimal customer dashboard on
+2026-09-07. These requirements supersede ADR-005's SQLite selection and the dashboard
+deferral below; both changes are pending implementation. The dashboard has exactly three
+items: API-key CRUD, Docs, and Account / Billing / Usage. Customer authentication, key
+metadata updates, account-scoped key management and account/usage APIs are release work.
+Paid billing at launch remains unresolved; customer model keys remain the baseline.
+
+The owner also requires self-service registration, a thin Aex SDK over the Brain SDK, and
+customer-defined Tools and Environments with hosted execution. These supersede manual-only
+onboarding, the separate-SDK deferral and ADR-004's curated-only launch scope. Implementation
+and hosted isolation design are pending. Reuse Brain extension contracts unchanged; deployment
+support and sealed authority still determine which Environment can execute an implementation.
+
 The [MVP ADRs](docs/adr/README.md) explain the architecture. Post-MVP entries are options
 with admission criteria, not architecture decisions or delivery promises.
 
@@ -9,17 +22,22 @@ with admission criteria, not architecture decisions or delivery promises.
 Host Brain reliably for developers who want an agent runtime without operating it.
 Brain remains the source of session semantics; Aex owns the customer boundary around it.
 
-The proposed first customer journey is: obtain an operator-issued API key, use the Brain
-TypeScript SDK against Aex, select a supported Agentloop and model, attach application Tools,
-create a session, send work, observe and reconnect, inspect history, cancel or end, and delete.
+The first customer journey is: register on the website, create an API key, install the thin
+Aex TypeScript SDK, define an Agentloop, model, Tools and Environments using Brain contracts,
+create a hosted session, send work, observe and reconnect, inspect history, cancel or end,
+and delete. The customer's calling script runs in their application; each extension runs
+where its selected Environment places it. Customers can consume Events and persist their
+own projections while Brain retains canonical history.
 Another account cannot access any of those resources.
 
 ### Accepted MVP scope
 
-1. The first release is an invite-only developer preview, with manual account onboarding.
+1. Customers register and manage API keys through the minimal website dashboard.
 2. Customers supply model keys. Aex does not sell model credits or collect payments yet.
-3. Hosted execution admits a small curated Component set; custom Tools run in the customer's
-   process through Brain's existing `hostEnv` transport. There is no managed shell sandbox.
+3. The thin Aex SDK adds product/account capabilities and reuses Brain's SDK and extension
+   contracts. Customer-defined hosted execution requires an isolated Environment outside
+   Brain's process. `hostEnv` continues to run Tools in the customer's process; an Environment
+   declaration alone does not upload a JavaScript closure or grant access to the serving host.
 4. One serving node and a documented maintenance/recovery window are acceptable initially.
 5. The public repository contains the reusable hosting implementation. Platform supplies
    private deployment settings and commercial choices through configuration.
@@ -32,14 +50,14 @@ They are separate scope changes; “official host” alone does not settle them.
 
 | MVP | Deferred |
 | --- | --- |
-| Accounts, API keys, key revocation, account suspension | Signup/login UI, organizations, roles, SSO |
+| Accounts, API keys, key revocation, account suspension, minimal dashboard authentication | Organizations, roles, SSO |
 | Account-owned sessions and host registrations | Shared sessions, cross-account sharing |
-| Curated Agentloop admission and customer application Tools | Arbitrary hosted Components, shell sandbox fleet, custom images |
+| Brain extension compatibility and customer-defined hosted Tools/Environments with verified isolation | A general shell sandbox fleet and custom images unless required by the selected launch Environment |
 | Supported provider catalogue and per-session customer keys | Aex-funded inference, pricing, credits, payments, refunds |
 | Brain lifecycle, transcript, committed Events and live SSE | A second event system, workflow retries, mutable placement |
 | Bounded admission, storage and stream usage | Fair scheduling across arbitrary hostile workloads |
-| One serving node, persistent disk, backup/restore and interruption semantics | Automatic failover, horizontal session placement, multi-region |
-| Brain SDK compatibility, executable quickstart and operator commands | Separate Aex session SDK, general customer CLI, dashboard |
+| One serving node, PostgreSQL product state, persistent Brain disk, coordinated backup/restore and interruption semantics | Automatic failover, horizontal session placement, multi-region |
+| Thin Aex SDK over Brain, executable quickstart, operator commands and three-item customer dashboard | General customer CLI |
 | CI, deployment smoke, resource measurements and recovery proof | Premature service decomposition or a plugin framework |
 
 ## MVP milestones

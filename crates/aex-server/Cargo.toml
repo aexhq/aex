@@ -9,7 +9,7 @@ publish = false
 anyhow = "1"
 async-stream = "0.3"
 axum = "0.8"
-brain-protocol = { git = "https://github.com/aexhq/brain", rev = "8fcfa8d9b0c9b58e09664fa6b739d80de952e708" }
+brain-protocol = { git = "https://github.com/aexhq/brain", rev = "039c3b843e83dd5a7fc859bbd91cc4833fe74223" }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 fs2 = "0.4"
@@ -22,7 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_jcs = "0.2"
 sha2 = "0.11"
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "macros"] }
 subtle = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

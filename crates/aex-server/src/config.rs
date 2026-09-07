@@ -34,6 +34,8 @@ pub struct Limits {
     pub minimum_free_disk_bytes: u64,
     pub retention_secs: u64,
     pub usage_max_age_secs: u64,
+    pub artifacts_per_account: u32,
+    pub artifact_bytes_per_account: u64,
 }
 
 impl Config {
@@ -54,11 +56,10 @@ impl Config {
             "brain_url must be an HTTP origin"
         );
         anyhow::ensure!(
-            !self.agentloops.is_empty()
-                && self.agentloops.iter().all(|id| id.len() == 64
-                    && id
-                        .bytes()
-                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))),
+            self.agentloops.iter().all(|id| id.len() == 64
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))),
             "agentloops must contain approved SHA-256 addresses"
         );
         anyhow::ensure!(
@@ -73,7 +74,7 @@ impl Config {
                 value
                     .as_u64()
                     .is_some_and(|v| v > 0 && v <= i64::MAX as u64),
-                "{name} must be positive and fit SQLite integers"
+                "{name} must be positive and fit database integers"
             );
         }
         anyhow::ensure!(

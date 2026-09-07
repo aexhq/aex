@@ -24,13 +24,11 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
     if descriptor.len() != 3
         || descriptor.get("type").and_then(|v| v.as_str()) != Some("brain_component")
         || descriptor.get("entrypoint").and_then(|v| v.as_str()) != Some("turn")
-        || !descriptor
-            .get("id")
-            .and_then(|v| v.as_str())
-            .is_some_and(|id| app.config.agentloops.contains(id))
+        || descriptor.get("id").and_then(|v| v.as_str()).is_none()
     {
         return Err(Error::invalid("Agentloop is not hosted"));
     }
+    crate::artifacts::owned(app, p, "agentloops", descriptor["id"].as_str().unwrap()).await?;
     let mut names = std::collections::HashSet::new();
     for environment in &request.environments {
         if !names.insert(environment.name.as_str()) {
@@ -62,15 +60,37 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
         ));
     }
     for tool in &request.tools {
-        for environment in tool.placements.keys() {
-            if !request
+        for (environment, placement) in &tool.placements {
+            let selected = request
                 .environments
                 .iter()
-                .any(|e| e.name == *environment && matches!(e.driver, Driver::Host { .. }))
-            {
-                return Err(Error::invalid(
-                    "custom Tools require a customer host Environment",
-                ));
+                .find(|e| e.name == *environment)
+                .ok_or_else(|| Error::invalid("unknown Tool Environment"))?;
+            if matches!(selected.driver, Driver::Brain {}) {
+                if !placement.needs.is_empty() {
+                    return Err(Error::invalid("hosted Tool grants are not permitted"));
+                }
+                let descriptor = placement
+                    .implementation
+                    .as_object()
+                    .ok_or_else(|| Error::invalid("invalid Tool implementation"))?;
+                if !descriptor.keys().all(|key| {
+                    matches!(key.as_str(), "type" | "entrypoint" | "id" | "configuration")
+                }) || descriptor.get("type").and_then(|v| v.as_str()) != Some("brain_component")
+                    || descriptor.get("entrypoint").and_then(|v| v.as_str()) != Some("run")
+                {
+                    return Err(Error::invalid("hosted Tools require a Brain Component"));
+                }
+                crate::artifacts::owned(
+                    app,
+                    p,
+                    "tools",
+                    descriptor
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| Error::invalid("Tool content address required"))?,
+                )
+                .await?;
             }
         }
     }

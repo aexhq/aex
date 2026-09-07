@@ -1,3 +1,4 @@
+mod common;
 use aex_server::{
     App,
     config::Config,
@@ -20,9 +21,15 @@ fn config(path: &std::path::Path) -> Config {
 }
 async fn app() -> (tempfile::TempDir, App, Principal, String) {
     let directory = tempfile::tempdir().unwrap();
-    let app = App::open(config(directory.path()), "b".repeat(32), "o".repeat(32))
-        .await
-        .unwrap();
+    let app = App::open(
+        config(directory.path()),
+        "b".repeat(32),
+        "o".repeat(32),
+        common::database(directory.path()).await,
+        "s".repeat(32),
+    )
+    .await
+    .unwrap();
     let account = execute(&app, Operation::CreateAccount).await.unwrap()["account"]
         .as_str()
         .unwrap()
@@ -95,7 +102,9 @@ async fn operation_claims_are_account_scoped_durable_and_never_resend_pending_wo
             .0,
         StatusCode::CONFLICT
     );
-    let reopened = Store::open(&dir.path().join("aex.db")).await.unwrap();
+    let reopened = Store::open(&common::database(dir.path()).await)
+        .await
+        .unwrap();
     assert_eq!(
         reopened
             .claim(&p, "create", "same", "request", &app.config.limits)
@@ -145,7 +154,9 @@ async fn keys_and_hosts_follow_revocation_and_suspension_after_restart() {
     execute(&app, Operation::RevokeKey { key: p.key })
         .await
         .unwrap();
-    let reopened = Store::open(&dir.path().join("aex.db")).await.unwrap();
+    let reopened = Store::open(&common::database(dir.path()).await)
+        .await
+        .unwrap();
     assert!(reopened.principal(&token).await.is_err());
     assert!(reopened.host("host_test", "host-secret").await.is_err());
     let values: Vec<String> = sqlx::query_scalar("SELECT verifier FROM api_keys")
@@ -204,7 +215,6 @@ async fn every_session_route_denies_another_account_before_contacting_brain() {
     }
     for path in [
         "/operate",
-        "/v1/tools",
         "/v1/sessions/ses_owned/executions/1/call",
         "/v1/sessions/%2E%2E/hosts",
     ] {

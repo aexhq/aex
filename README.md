@@ -4,15 +4,16 @@ Aex hosts [Brain](https://github.com/aexhq/brain) for multiple developer account
 service owns account keys, session and host ownership, hosted admission and operator actions.
 The unchanged Brain server owns execution, credentials and durable history.
 
-The MVP is an invite-only API with customer model keys, curated Agentloop Components and
-application Tools running in the customer's process. One serving node accepts explicit
+The MVP provides self-service accounts and API keys, customer model keys, hosted Wasm
+Agentloops and Tools, and application Tools running in the customer's process. One serving node accepts explicit
 maintenance interruptions. Public hosting implementation lives here; our AWS deployment and
 commercial settings live in private Platform. This checkout builds without Platform.
 
 ## Development
 
 Install Rust 1.97.1, Node 22+, Python 3 and Git. Linux is required for real Brain workers;
-Rust product-boundary tests also run on Windows.
+Rust product-boundary tests also run on Windows. Start PostgreSQL 17 and set
+`AEX_TEST_DATABASE_URL` to an expendable test database. Tests use isolated schemas.
 
 ```sh
 cargo build --locked
@@ -29,13 +30,15 @@ pass. Real-provider and deployed recovery evidence additionally gate release.
 
 ## Run
 
-Copy `examples/config.json` to your workspace configuration. Replace the Agentloop placeholder
-with the reviewed Component SHA-256. Select exact provider/model entries, addresses, persistent
-product storage and measured limits. Generated schemas live under `docs/generated`.
+Copy `examples/config.json` to your workspace configuration. The `agentloops` list contains
+optional operator-approved content addresses; an empty list permits account-owned uploads. Select exact provider/model entries, addresses, PostgreSQL and persistent
+Brain storage and measured limits. Generated schemas live under `docs/generated`.
 
 Run the pinned Brain server privately with its own persistent data directory and random
 bearer. Set `AEX_BRAIN_TOKEN` to that bearer and `AEX_OPERATOR_TOKEN` to a separate random
-operator credential, both at least 32 characters. Local environment files stay at the workspace root.
+operator credential. Set a third distinct `AEX_SITE_TOKEN` for the trusted website and
+`AEX_DATABASE_URL` for PostgreSQL (TLS verification in production). Internal credentials
+must be at least 32 characters. Local environment files stay at the workspace root.
 
 ```sh
 aex-server serve --config /path/to/config.json
@@ -49,8 +52,9 @@ aex-server operate --request '{"action":"resume"}'
 Brain readiness and fresh metering. The operator listener is loopback-only and uses a separate
 credential. Issued customer keys are shown once; only verifiers are stored.
 
-Use the Brain SDK with the Aex URL and issued account key. See [the example](examples/session.mjs),
+Use `@aexhq/sdk` with the issued API key. `Aex` extends Brain and re-exports the Brain SDK. See [the example](examples/session.mjs),
 [supported API](docs/api.md), [operations](docs/operations.md), [roadmap](ROADMAP.md) and [ADRs](docs/adr/README.md).
 
-AWS provisioning, deployed TLS/SSE, actual instance capacity, EBS replacement, snapshot
-restoration and onboarding remain held. Local success is not a production release.
+The production deployment and release evidence live in private Platform. One production
+environment uses Vercel, EC2/EBS and Single-AZ RDS PostgreSQL in us-east-1. PostgreSQL stores
+product metadata; Brain retains journals, credentials and Components on EBS.

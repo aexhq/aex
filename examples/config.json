@@ -18,7 +18,7 @@
     "active_turns_per_account": 2,
     "streams_per_account": 20,
     "requests": 16,
-    "request_bytes": 2097152,
+    "request_bytes": 33554432,
     "response_bytes": 8388608,
     "upstream_timeout_secs": 120,
     "retained_bytes_per_account": 5368709120,
@@ -26,6 +26,8 @@
     "minimum_free_disk_bytes": 1073741824,
     "retention_secs": 604800,
     "usage_max_age_secs": 60,
-    "requests_per_account": 4
+    "requests_per_account": 4,
+    "artifacts_per_account": 32,
+    "artifact_bytes_per_account": 134217728
   }
 }

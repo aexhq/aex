@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usage",
+  "type": "object",
+  "properties": {
+    "active_turns": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "measured_at": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    },
+    "retained_bytes": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "sessions": {
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "required": [
+    "sessions",
+    "active_turns",
+    "retained_bytes"
+  ]
+}

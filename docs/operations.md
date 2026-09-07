@@ -42,8 +42,9 @@ quota or arbitrary hostile-code hosting.
 
 ## Durability
 
-Stop admission and both writers for consistent whole-volume backup. Preserve SQLite WAL state
-and Brain metadata/key, claims, hosts, artifacts, format marker and journals. Runtime sockets
+Stop admission and both writers for consistent whole-volume backup. Dump PostgreSQL after stopping Aex and Brain, store the dump in a root-only backup
+directory on EBS, then snapshot that volume. Preserve Brain metadata/key, artifacts,
+format marker and journals alongside the matching product dump. Runtime sockets
 under `run/` are transient. Record compatible source revisions and image digests with backups.
 
 Stop the previous writer before moving a retained volume. Disk loss requires a completed backup
@@ -60,7 +61,7 @@ baseline, 1/2/4/8 concurrent-turn admission and unread-subscriber exhaustion. It
 second-writer rejection, consecutive turns, retention and credential redaction.
 `tools/image-smoke.py` verifies the non-root container and writable data path.
 
-`tools/live-local.py --workspace-env /workspace/.env.dev` runs a real-provider check with explicit
-`AEX_TEST_SERVER`, `BRAIN_TEST_SERVER`, `BRAIN_TEST_WORKER` and `BRAIN_TEST_REFERENCE_AGENTLOOP` paths.
+`tools/live-local.py --workspace-env /workspace/.env.prd` runs a real-provider check with explicit
+`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER`, `BRAIN_TEST_WORKER` and `BRAIN_TEST_REFERENCE_AGENTLOOP` paths.
 `tools/live-check.mjs` can target deployed Aex using environment-supplied test credentials.
 Missing credentials or provider failure fail this release check; mocks do not replace it.

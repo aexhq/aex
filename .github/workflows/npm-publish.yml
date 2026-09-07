@@ -1,0 +1,100 @@
+name: Publish SDK and image
+on:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: production-artifacts
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - env:
+          EXPECTED: ${{ inputs.expected_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$GITHUB_REF" = "refs/tags/release/sha-$EXPECTED"
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          git merge-base --is-ancestor "$EXPECTED" origin/main
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$EXPECTED&event=push" --jq '.workflow_runs | any(.conclusion == "success")' | grep -x true
+  sdk:
+    needs: validate
+    environment: npm-production
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11.19.0
+      - run: npm ci --ignore-scripts
+      - run: npm run test:sdk
+      - run: npm publish --workspace @aexhq/sdk --access public --tag next
+  image:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, arch: amd64}
+          - {os: ubuntu-24.04-arm, arch: arm64}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: docker build -t aex-rewrite:test .
+      - run: python3 tools/image-smoke.py
+      - env:
+          IMAGE: ghcr.io/aexhq/aex-server:sha-${{ github.sha }}-${{ matrix.arch }}
+        run: |
+          docker tag aex-rewrite:test "$IMAGE"
+          docker push "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' > image-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.arch }}
+          path: image-${{ matrix.arch }}.txt
+  manifest:
+    needs: image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+      - env:
+          IMAGE: ghcr.io/aexhq/aex-server:sha-${{ github.sha }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE" "$(cat image-amd64.txt)" "$(cat image-arm64.txt)"
+          docker buildx imagetools inspect "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

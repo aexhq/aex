@@ -33,6 +33,14 @@ def main():
     root=Path(__file__).parent.parent
     brain_port,aex_port,admin_port=port(),port(),port()
     brain_token,operator_token=uuid.uuid4().hex,uuid.uuid4().hex
+    schema='live_'+uuid.uuid4().hex
+    def database(sql):
+        return subprocess.check_output(['node','--input-type=module','-e',
+            'import {Client} from \"pg\";const c=new Client({connectionString:process.env.AEX_TEST_DATABASE_URL});await c.connect();await c.query(process.argv[1]);await c.end()',sql],cwd=root,text=True)
+    database('CREATE SCHEMA '+schema)
+    from urllib.parse import urlparse,parse_qsl,urlencode,urlunparse
+    parsed=urlparse(os.environ['AEX_TEST_DATABASE_URL'])
+    database_url=urlunparse(parsed._replace(query=urlencode([*parse_qsl(parsed.query),('options','-csearch_path='+schema)])))
     children=[]
     with tempfile.TemporaryDirectory(prefix='aex-live-') as directory:
         path=Path(directory)
@@ -41,7 +49,7 @@ def main():
             agentloops=[hashlib.sha256(Path(os.environ['BRAIN_TEST_REFERENCE_AGENTLOOP']).read_bytes()).hexdigest()],models=['vercel-ai-gateway/openai/gpt-4.1-mini'])
         (path/'config.json').write_text(json.dumps(config))
         environment={**os.environ,'BRAIN_LISTEN':f'127.0.0.1:{brain_port}','BRAIN_DATA_DIR':str(path/'brain'),'BRAIN_ENV_WORKER':os.environ['BRAIN_TEST_WORKER'],'BRAIN_API_TOKEN':brain_token,
-            'AEX_BRAIN_TOKEN':brain_token,'AEX_OPERATOR_TOKEN':operator_token,'AEX_URL':f'http://127.0.0.1:{aex_port}','AEX_MODEL_KEY':model_key}
+            'AEX_DATABASE_URL':database_url,'AEX_SITE_TOKEN':uuid.uuid4().hex,'AEX_BRAIN_TOKEN':brain_token,'AEX_OPERATOR_TOKEN':operator_token,'AEX_URL':f'http://127.0.0.1:{aex_port}','AEX_MODEL_KEY':model_key}
         def operate(body):
             request=urllib.request.Request(f'http://127.0.0.1:{admin_port}/operate',data=json.dumps(body).encode(),headers={'content-type':'application/json','authorization':'Bearer '+operator_token})
             with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
@@ -66,6 +74,7 @@ def main():
             for child in reversed(children):
                 if child.poll() is None:os.killpg(child.pid,signal.SIGKILL)
                 child.wait()
+            database('DROP SCHEMA '+schema+' CASCADE')
 
 
 if __name__=='__main__':main()

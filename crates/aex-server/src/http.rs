@@ -19,11 +19,12 @@ pub fn router(app: App) -> Router {
 
 #[derive(Debug, PartialEq)]
 pub enum Route<'a> {
+    Account,
     Health(bool),
     Create,
     List,
     Register,
-    Agentloop(Option<&'a str>),
+    Artifact(&'a str, Option<&'a str>),
     Host(&'a str, &'a str),
     Session(&'a str, &'a str),
 }
@@ -36,14 +37,19 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
         return Err(Error::missing());
     }
     let parts: Vec<_> = path.split('/').collect();
+    if crate::account::route(method, path) {
+        return Ok(Route::Account);
+    }
     match (method.as_str(), parts.as_slice()) {
         ("GET", ["", "health", "live"]) => Ok(Route::Health(false)),
         ("GET", ["", "health", "ready"]) => Ok(Route::Health(true)),
         ("POST", ["", "v1", "sessions"]) => Ok(Route::Create),
         ("GET", ["", "v1", "sessions"]) => Ok(Route::List),
         ("POST", ["", "v1", "hosts"]) => Ok(Route::Register),
-        ("POST", ["", "v1", "agentloops"]) => Ok(Route::Agentloop(None)),
-        ("GET", ["", "v1", "agentloops", id]) => Ok(Route::Agentloop(Some(id))),
+        ("POST", ["", "v1", kind @ ("agentloops" | "tools")]) => Ok(Route::Artifact(kind, None)),
+        ("GET", ["", "v1", kind @ ("agentloops" | "tools"), id]) => {
+            Ok(Route::Artifact(kind, Some(id)))
+        }
         ("GET", ["", "v1", "hosts", id, "commands"]) => Ok(Route::Host(id, "commands")),
         ("POST", ["", "v1", "hosts", id, op @ ("results" | "events")]) => Ok(Route::Host(id, op)),
         ("GET" | "DELETE", ["", "v1", "sessions", id]) => Ok(Route::Session(id, "")),
@@ -100,11 +106,12 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     tracing::Span::current().record(
         "route",
         match route {
+            Route::Account => "account",
             Route::Health(_) => "health",
             Route::Create => "create",
             Route::List => "list",
             Route::Register => "register",
-            Route::Agentloop(_) => "agentloop",
+            Route::Artifact(kind, _) => kind,
             Route::Host(_, op) | Route::Session(_, op) => op,
         },
     );
@@ -134,6 +141,17 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         return Err(Error::invalid("expected after sequence"));
     }
     let token = identity::bearer(&parts.headers)?;
+    if matches!(route, Route::Account) {
+        let body = tokio::time::timeout(std::time::Duration::from_secs(10), to_bytes(body, 4096))
+            .await
+            .map_err(|_| Error::invalid("request body timed out"))?
+            .map_err(|_| Error::invalid("request body exceeds limit"))?;
+        let mut response = crate::account::handle(&app, &parts.method, path, token, body).await?;
+        response
+            .headers_mut()
+            .insert("cache-control", "no-store".parse().unwrap());
+        return Ok(response);
+    }
     let principal = match route {
         Route::Host(id, _) => app.store.host(id, token).await?,
         _ => app.store.principal(token).await?,
@@ -178,20 +196,9 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         }
         Route::List => return sessions::list(&app, &principal).await,
         Route::Register => return hosts::register(&app, &principal, &parts.headers).await,
-        Route::Agentloop(id) => {
-            let digest = id
-                .map(str::to_owned)
-                .unwrap_or_else(|| identity::digest(&body));
-            if !app.config.agentloops.contains(&digest) {
-                return Err(Error::invalid("Agentloop is not hosted"));
-            }
-            if parts.method == Method::POST {
-                upstream_key = Some(identity::scoped_key(
-                    &principal,
-                    path,
-                    identity::operation_key(&parts.headers)?,
-                ));
-            }
+        Route::Artifact(kind, id) => {
+            return crate::artifacts::handle(&app, &principal, kind, id, &parts.headers, body)
+                .await;
         }
         Route::Host(_, op) => {
             host_token = Some(token);
@@ -233,7 +240,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 upstream_key = Some(key);
             }
         }
-        Route::Health(_) => unreachable!(),
+        Route::Health(_) | Route::Account => unreachable!(),
     }
     let wants_stream = matches!(route, Route::Host(_, "commands"))
         || (matches!(route, Route::Session(_, "events"))

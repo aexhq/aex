@@ -1,7 +1,7 @@
 name: rewrite-ci
 on:
   push:
-    branches: [main, rewrite/mvp]
+    branches: [main, rewrite/mvp, release/production-preview]
   pull_request:
 permissions:
   contents: read
@@ -18,6 +18,16 @@ jobs:
       - run: cargo install cargo-audit --locked --version 0.22.2
       - run: cargo audit
   checks:
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: aex-local-test
+          POSTGRES_DB: aex
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AEX_TEST_DATABASE_URL: postgres://postgres:aex-local-test@127.0.0.1:5432/aex
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -31,6 +41,16 @@ jobs:
           cache: npm
       - run: bash tools/check.sh
   journeys:
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: aex-local-test
+          POSTGRES_DB: aex
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AEX_TEST_DATABASE_URL: postgres://postgres:aex-local-test@127.0.0.1:5432/aex
     strategy:
       fail-fast: false
       matrix:

@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/brain` 0.18.0 against Aex with an issued account key. Brain source is pinned by
+Use `@aexhq/sdk` 0.69.0 (Brain SDK 0.19.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -10,16 +10,17 @@ full revision in Cargo. Customer keys never authorize direct access to private B
 | GET | `/v1/sessions/{id}/transcript` | Account ownership |
 | GET | `/v1/sessions/{id}/events?after=N` | Ownership; JSON or SSE by Accept header |
 | POST | `/v1/sessions/{id}/messages`, `/cancel`, `/end` | Ownership and operation key |
-| POST | `/v1/agentloops` | Active key and approved Component bytes |
-| GET | `/v1/agentloops/{id}` | Active key and approved content address |
+| POST | `/v1/agentloops`, `/v1/tools` | Active key; bounded account-owned Wasm Components |
+| GET | `/v1/agentloops/{id}`, `/v1/tools/{id}` | Account-owned or operator-approved content address |
 | POST | `/v1/hosts` | Active account key |
 | GET | `/v1/hosts/{id}/commands` | Scoped token and active issuing key/account |
 | POST | `/v1/hosts/{id}/results`, `/events` | Scoped token and owned target session |
 | GET | `/health/live`, `/health/ready` | No customer data |
 
-Other methods/routes fail closed. Arbitrary Tool uploads, remote Environment URLs, execution
+Other methods/routes fail closed. Remote Environment URLs, execution
 callbacks, provider endpoint overrides and hosted secret/filesystem/network grants are denied.
-Custom Tools run in the customer's live process. Committed event cursors and shapes are
+Application functions run in the customer's live process. Compatible Wasm Tools with no
+host resource grants can run in Brain. Committed event cursors and shapes are
 preserved. Keepalive comments have no event identity and are inserted only between frames.
 Server-error text is redacted while retaining the Brain error code. Bodies and credentials
 are never logged.
@@ -41,3 +42,13 @@ Configured limits cover accounts, keys, hosts, claims, retained sessions, active
 streams, requests, body sizes and storage admission. Completed claims and deletion tombstones
 remain retained in MVP; size metadata limits for the preview duration. No implicit historical
 key reuse or metadata pruning occurs.
+
+## Account API
+
+The trusted website verifies Google OIDC and calls `POST /v1/accounts` with `AEX_SITE_TOKEN`.
+It receives a seven-day dashboard credential, kept in a Secure HttpOnly SameSite cookie.
+`GET /v1/account` and `GET /v1/usage` accept dashboard credentials or workload API keys.
+`GET/POST /v1/keys`, `PATCH/DELETE /v1/keys/{id}`, and `DELETE /v1/account/session`
+require dashboard credentials. Workload keys cannot issue keys. Keys are shown once,
+stored as verifiers, named, listed, renamed and revoked within their account.
+The first release is free hosting with customer model keys; it does not collect payments.

@@ -52,6 +52,34 @@ async fn main() -> anyhow::Result<()> {
                     serde_json::to_string_pretty(&schemars::schema_for!(Operation))?
                 ),
             )?;
+            for (name, schema) in [
+                (
+                    "account",
+                    schemars::schema_for!(aex_server::account::Account),
+                ),
+                (
+                    "api-key",
+                    schemars::schema_for!(aex_server::account::ApiKey),
+                ),
+                (
+                    "issued-key",
+                    schemars::schema_for!(aex_server::account::IssuedKey),
+                ),
+                ("usage", schemars::schema_for!(aex_server::account::Usage)),
+                (
+                    "key-input",
+                    schemars::schema_for!(aex_server::account::KeyInput),
+                ),
+                (
+                    "sign-in",
+                    schemars::schema_for!(aex_server::account::SignIn),
+                ),
+            ] {
+                std::fs::write(
+                    output.join(format!("{name}.schema.json")),
+                    format!("{}\n", serde_json::to_string_pretty(&schema)?),
+                )?;
+            }
         }
         Command::Operate { url, request } => {
             let origin = url::Url::parse(&url)?;
@@ -97,6 +125,8 @@ async fn main() -> anyhow::Result<()> {
                 config,
                 secret("AEX_BRAIN_TOKEN")?,
                 secret("AEX_OPERATOR_TOKEN")?,
+                secret("AEX_DATABASE_URL")?,
+                secret("AEX_SITE_TOKEN")?,
             )
             .await?;
             let stop = tokio_util::sync::CancellationToken::new();
