@@ -1,9 +1,0 @@
-{
-  "id": "rfd_01J5X8Y2K3M4N5P6Q7R8S9W4",
-  "object": "refund",
-  "topup_id": "top_01J5X8Y2K3M4N5P6Q7R8S9V2",
-  "amount_cents": 500,
-  "status": "succeeded",
-  "created_at": "2026-08-18T10:00:00Z",
-  "updated_at": "2026-08-18T10:00:01Z"
-}

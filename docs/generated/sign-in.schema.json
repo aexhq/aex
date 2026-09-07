@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SignIn",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "subject",
+    "email"
+  ]
+}

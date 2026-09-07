@@ -1,19 +1,25 @@
 {
-  "name": "aex-monorepo",
+  "name": "aex-hosting",
   "private": true,
-  "workspaces": ["packages/contracts", "packages/sdk", "packages/cli"],
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
-    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
-    "package-smoke": "node tools/package-smoke.mjs"
+    "test": "node --test tests/journeys/*.test.mjs",
+    "build": "npm run build --workspace @aexhq/sdk",
+    "test:sdk": "npm test --workspace @aexhq/sdk"
   },
   "devDependencies": {
-    "@aexhq/brain": "0.18.0",
-    "yaml": "2.9.0"
+    "@aexhq/agentloop-pi": "4.0.0",
+    "@aexhq/brain": "0.19.0",
+    "@types/node": "22.19.19",
+    "json-schema-to-typescript": "15.0.4",
+    "pg": "8.16.3",
+    "typescript": "5.9.3",
+    "zod": "4.4.3"
   },
-  "overrides": {
-    "@aexhq/brain": "$@aexhq/brain"
-  },
-  "engines": { "node": ">=22" }
+  "workspaces": [
+    "packages/sdk"
+  ]
 }

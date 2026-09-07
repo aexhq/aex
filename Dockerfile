@@ -1,18 +1,16 @@
-# The control-plane image: identity, prepaid billing, session ownership, and exact model usage — one
-# process in front of one brain. AEX_PAYMENTS must explicitly select fake or Stripe. The SQLite
-# ledger lives on /data: MOUNT IT DURABLY —
-# accounts and money do not belong on ephemeral container storage.
-FROM rust:1.97-bookworm AS build
+FROM rust:1.97.1-bookworm AS build
+ARG TARGETARCH
 WORKDIR /src
 COPY . .
-RUN cargo build --locked --release -p aex-control --bin aex-control
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=aex-target-${TARGETARCH},target=/src/target \
+    cargo build --locked --release -p aex-server && cp /src/target/release/aex-server /aex-server
 
 FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/target/release/aex-control /usr/local/bin/aex-control
-ENV AEX_CONTROL_DB=/data/control.db
-VOLUME /data
-EXPOSE 8600
-ENTRYPOINT ["/usr/local/bin/aex-control"]
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10002 aex && install -d -o aex -g aex /var/lib/aex
+COPY --from=build /aex-server /usr/local/bin/aex-server
+USER 10002:10002
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/aex-server"]
+CMD ["serve", "--config", "/etc/aex/config.json"]

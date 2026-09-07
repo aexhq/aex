@@ -1,6 +1,5 @@
-target/
-.git/
-node_modules/
-packages/*/dist/
-aex-control-data/
-.m1-gate/
+.git
+target
+node_modules
+artifacts
+data

@@ -1,144 +1,87 @@
-name: ci
+name: rewrite-ci
 on:
   push:
-    branches: [main]
+    branches: [main, rewrite/mvp, release/production-preview]
   pull_request:
-
-# Superseded PR pushes stop competing for runners; main pushes run to completion
-# (both image workflows key off ci success on main).
+permissions:
+  contents: read
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+  group: rewrite-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  contracts:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+  audit:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt
-      - run: npm ci
-      - name: Checkout the pinned Brain contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: cache cargo-typify
-        id: typify-cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/bin/cargo-typify
-          key: cargo-typify-0.7.0-${{ runner.os }}
-      - name: Install the pinned contract generator
-        if: steps.typify-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-typify --version 0.7.0 --locked
-      - name: Regenerate owning contracts and fail on drift
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash tools/gen.sh
-          node tools/verify-brain-overlay.mjs
-          git diff --exit-code
-          test -z "$(git status --porcelain)"
-
-  rust-fmt:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  rust-clippy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.97.1"
-          components: clippy
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-debug
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-
-  rust-test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+      - run: cargo install cargo-audit --locked --version 0.22.2
+      - run: cargo audit
+  checks:
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: aex-local-test
+          POSTGRES_DB: aex
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AEX_TEST_DATABASE_URL: postgres://postgres:aex-local-test@127.0.0.1:5432/aex
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.97.1"
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-debug
-      - run: cargo test --workspace --all-targets
-
-  npm:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '22'
           cache: npm
-      - run: npm ci
-      - name: Checkout the pinned Brain contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - run: npm test
-
-  package-smoke:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+      - run: bash tools/check.sh
+  journeys:
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: aex-local-test
+          POSTGRES_DB: aex
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AEX_TEST_DATABASE_URL: postgres://postgres:aex-local-test@127.0.0.1:5432/aex
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
-          persist-credentials: false
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run package-smoke
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: bash tools/journeys.sh
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t aex-rewrite:test .
+      - run: python3 tools/image-smoke.py
+  release-gate:
+    if: always()
+    needs: [audit, checks, journeys, image]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: node -e 'for(const [name,job] of Object.entries(JSON.parse(process.env.RESULTS))) if(job.result!=="success") throw Error(name+":"+job.result)'

@@ -1,44 +1,12 @@
 [workspace]
-resolver = "3"
-members = ["crates/aex-contracts", "crates/aex-control"]
+members = ["crates/aex-server"]
+resolver = "2"
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.97"
-license = "Apache-2.0"
-repository = "https://github.com/aexhq/aex"
 
-[workspace.dependencies]
-aex-contracts = { path = "crates/aex-contracts" }
-aex-control = { path = "crates/aex-control" }
-brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "8fcfa8d9b0c9b58e09664fa6b739d80de952e708" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
-regress = "0.12"
-sha2 = "0.10"
-serde_jcs = "0.2"
-hex = "0.4"
-hmac = "0.12"
-ipnet = "2"
-jsonschema = { version = "0.52", default-features = false }
-anyhow = "1"
-async-trait = "0.1"
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
-bytes = "1"
-clap = { version = "4", features = ["derive"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-html2text = "0.17.1"
-rand = "0.9"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "form"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
-thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "signal"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[workspace.lints.rust]
-unsafe_code = "forbid"
-
-[workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

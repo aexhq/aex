@@ -1,9 +1,0 @@
-{
-  "id": "grt_01J5X8Y2K3M4N5P6Q7R8S9X5",
-  "object": "credit_grant",
-  "account_id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0",
-  "email": "dev@example.com",
-  "amount_cents": 1000,
-  "reason": "Alpha evaluation credit",
-  "created_at": "2026-08-18T09:55:00Z"
-}

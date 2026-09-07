@@ -1,42 +1,20 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.68.0",
-  "description": "TypeScript SDK for Aex sessions",
-  "license": "Apache-2.0",
-  "homepage": "https://aex.dev",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aexhq/aex.git",
-    "directory": "packages/sdk"
-  },
+  "version": "0.69.0",
+  "description": "Aex accounts and hosted sessions using the Brain SDK",
+  "license": "MIT",
   "type": "module",
-  "engines": {
-    "node": ">=22.0.0"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": false,
-    "tag": "next"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "sideEffects": false,
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/aexhq/aex.git", "directory": "packages/sdk" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "publishConfig": { "access": "public", "tag": "next" },
+  "dependencies": { "@aexhq/brain": "0.19.0" },
   "scripts": {
+    "gen": "node ../../tools/sdk-contracts.mjs",
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test"
-  },
-  "dependencies": {
-    "@aexhq/brain": "0.18.0"
-  },
-  "devDependencies": {
-    "typescript": "5.9.3"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
   }
 }

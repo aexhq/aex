@@ -1,0 +1,33 @@
+{
+  "listen": "127.0.0.1:8081",
+  "operator_listen": "127.0.0.1:8082",
+  "data_dir": "data",
+  "brain_url": "http://127.0.0.1:8080",
+  "agentloops": [
+    "0000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "models": [
+    "openai/gpt-4.1-mini"
+  ],
+  "limits": {
+    "accounts": 10,
+    "keys_per_account": 32,
+    "sessions_per_account": 100,
+    "hosts_per_account": 100,
+    "claims_per_account": 10000,
+    "active_turns_per_account": 2,
+    "streams_per_account": 20,
+    "requests": 16,
+    "request_bytes": 33554432,
+    "response_bytes": 8388608,
+    "upstream_timeout_secs": 120,
+    "retained_bytes_per_account": 5368709120,
+    "turn_reserve_bytes": 67108864,
+    "minimum_free_disk_bytes": 1073741824,
+    "retention_secs": 604800,
+    "usage_max_age_secs": 60,
+    "requests_per_account": 4,
+    "artifacts_per_account": 32,
+    "artifact_bytes_per_account": 134217728
+  }
+}

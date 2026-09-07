@@ -1,269 +1,100 @@
-name: publish npm packages
-
+name: Publish SDK and image
 on:
   workflow_dispatch:
     inputs:
-      operation:
-        description: Bootstrap new package names, publish versions under next, or promote them to latest
-        type: choice
-        required: true
-        default: stage
-        options:
-          - bootstrap
-          - stage
-          - promote
       expected_commit:
-        description: Exact 40-character Aex commit selected by the workflow ref
-        type: string
         required: true
-      stage_run_id:
-        description: Successful stage workflow run containing the immutable archives (promote only)
         type: string
-        required: false
-        default: ''
-
+permissions:
+  contents: read
+  actions: read
 concurrency:
-  group: npm-publish
+  group: production-artifacts
   cancel-in-progress: false
-
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: false
-      - name: Validate the immutable source identity
-        shell: bash
-        env:
-          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
-          OPERATION: ${{ inputs.operation }}
-          SELECTED_COMMIT: ${{ github.sha }}
-          SELECTED_REF: ${{ github.ref }}
-          STAGE_RUN_ID: ${{ inputs.stage_run_id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          EXPECTED: ${{ inputs.expected_commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          test "$SELECTED_COMMIT" = "$EXPECTED_COMMIT"
-          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          test "$SELECTED_REF" = "refs/tags/release/sha-$EXPECTED_COMMIT"
+          [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$GITHUB_REF" = "refs/tags/release/sha-$EXPECTED"
           test "$(git cat-file -t "$GITHUB_REF")" = tag
-          git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main
-          if [[ "$OPERATION" == promote ]]; then
-            [[ "$STAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-            stage_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGE_RUN_ID")
-            test "$(jq -r .head_sha <<<"$stage_run")" = "$EXPECTED_COMMIT"
-            test "$(jq -r .event <<<"$stage_run")" = workflow_dispatch
-            test "$(jq -r .status <<<"$stage_run")" = completed
-            test "$(jq -r .conclusion <<<"$stage_run")" = success
-            stage_path=$(jq -r .path <<<"$stage_run")
-            [[ "$stage_path" == .github/workflows/npm-publish.yml || \
-              "$stage_path" == .github/workflows/npm-publish.yml@* ]]
-          else
-            test -z "$STAGE_RUN_ID"
-          fi
-
-  stage-tests:
-    if: inputs.operation != 'promote'
+          git merge-base --is-ancestor "$EXPECTED" origin/main
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$EXPECTED&event=push" --jq '.workflow_runs | any(.conclusion == "success")' | grep -x true
+  sdk:
     needs: validate
+    environment: npm-production
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for trusted publishing
-        run: npm install --global npm@11.19.0
-      - run: npm ci
-      - name: Checkout the pinned Brain contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - run: npm test
-
-  stage-package-smoke:
-    if: inputs.operation != 'promote'
+      - run: npm install -g npm@11.19.0
+      - run: npm ci --ignore-scripts
+      - run: npm run test:sdk
+      - run: npm publish --workspace @aexhq/sdk --access public --tag next
+  image:
     needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, arch: amd64}
+          - {os: ubuntu-24.04-arm, arch: arm64}
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for trusted publishing
-        run: npm install --global npm@11.19.0
-      - run: npm ci
-      - run: npm run build
-      - run: npm run package-smoke
-
-  prepare:
-    if: inputs.operation != 'promote'
-    needs: [validate, stage-tests, stage-package-smoke]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    outputs:
-      versions: ${{ steps.pack.outputs.versions }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for trusted publishing
-        run: npm install --global npm@11.19.0
-      - run: npm ci
-      - run: npm run build
-      - name: Pack the exact release archives
-        id: pack
-        shell: bash
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: docker build -t aex-rewrite:test .
+      - run: python3 tools/image-smoke.py
+      - env:
+          IMAGE: ghcr.io/aexhq/aex-server:sha-${{ github.sha }}-${{ matrix.arch }}
         run: |
-          set -euo pipefail
-          release_dir="$RUNNER_TEMP/aex-npm-release"
-          node tools/npm-release.mjs pack "$release_dir"
-          versions=$(node tools/npm-release.mjs versions "$release_dir/manifest.json")
-          echo "versions=$versions" >> "$GITHUB_OUTPUT"
-          {
-            echo '### Immutable Aex npm archives'
-            echo
-            node tools/npm-release.mjs markdown "$release_dir/manifest.json"
-          } >> "$GITHUB_STEP_SUMMARY"
+          docker tag aex-rewrite:test "$IMAGE"
+          docker push "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' > image-${{ matrix.arch }}.txt
       - uses: actions/upload-artifact@v7
         with:
-          name: aex-npm-release-${{ github.sha }}
-          path: ${{ runner.temp }}/aex-npm-release
-          if-no-files-found: error
-          retention-days: 30
-
-  stage:
-    if: inputs.operation == 'stage'
-    needs: prepare
+          name: image-${{ matrix.arch }}
+          path: image-${{ matrix.arch }}.txt
+  manifest:
+    needs: image
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
+      packages: write
     steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - uses: actions/download-artifact@v8
         with:
-          name: aex-npm-release-${{ github.sha }}
-          path: ${{ runner.temp }}/aex-npm-release
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for trusted publishing
-        run: npm install --global npm@11.19.0
-      - name: Require the staged external dependency set
-        shell: bash
-        run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" next
-      - name: Publish once under next with trusted publishing
-        shell: bash
-        env:
-          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
-        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" stage
-      - name: Record staged versions
-        shell: bash
-        env:
-          VERSIONS: ${{ needs.prepare.outputs.versions }}
+          pattern: image-*
+          merge-multiple: true
+      - env:
+          IMAGE: ghcr.io/aexhq/aex-server:sha-${{ github.sha }}
         run: |
-          echo "Staged exact versions under npm dist-tag \`next\`: \`$VERSIONS\`" >> "$GITHUB_STEP_SUMMARY"
-
-  bootstrap:
-    if: inputs.operation == 'bootstrap'
-    needs: prepare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: npm-production
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: aex-npm-release-${{ github.sha }}
-          path: ${{ runner.temp }}/aex-npm-release
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for trusted publishing
-        run: npm install --global npm@11.19.0
-      - name: Publish only new or placeholder package names
-        shell: bash
-        env:
-          # npm cannot configure OIDC before the first publish. This protected token may create a
-          # name or replace its 0.0.0 reservation; every later version uses the stage operation.
-          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
-        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" bootstrap
-
-  promote:
-    if: inputs.operation == 'promote'
-    needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: npm-production
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: aex-npm-release-${{ github.sha }}
-          path: ${{ runner.temp }}/aex-npm-release
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ inputs.stage_run_id }}
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Use the npm version pinned for promotion
-        run: npm install --global npm@11.19.0
-      - name: Require the promoted external dependency set
-        shell: bash
-        run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" latest
-      - name: Promote the already-staged archives without republishing
-        shell: bash
-        env:
-          # Trusted-publisher OIDC intentionally cannot mutate dist-tags. Keep this granular token
-          # scoped to the Aex packages and protect it with the npm-production environment.
-          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
-        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" promote
-      - name: Record promoted versions
-        shell: bash
-        run: |
-          versions=$(node "$RUNNER_TEMP/aex-npm-release/npm-release.mjs" versions "$RUNNER_TEMP/aex-npm-release/manifest.json")
-          echo "Promoted the same registry objects to npm dist-tag \`latest\`: \`$versions\`" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools create --tag "$IMAGE" "$(cat image-amd64.txt)" "$(cat image-arm64.txt)"
+          docker buildx imagetools inspect "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

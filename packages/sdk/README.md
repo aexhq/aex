@@ -1,35 +1,23 @@
-# @aexhq/sdk
+# Aex SDK
 
-The hosted Aex client uses the neutral Brain composition API with the `https://api.aex.dev` base
-URL and an Aex API key.
+Install `@aexhq/sdk`. Create an API key at https://aex.dev/dashboard.
 
 ```ts
-import { Aex, brainEnv } from "@aexhq/sdk";
-import { awsMicroVm } from "@aexhq/env-aws-microvm";
-import { pi } from "@aexhq/agentloop-pi";
-import { bash, read } from "@aexhq/tools";
+import { Aex, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const workspace = awsMicroVm({ name: "sandbox", url: process.env.ENVIRONMENT_URL, token: process.env.ENVIRONMENT_TOKEN, region: "eu-west-2" });
-const session = await aex.sessions.create({
-  model: {
-    provider: "vercel-ai-gateway",
-    name: "openai/gpt-5-mini",
-    apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY!,
-  },
-  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-  tools: [read({ env: workspace }), bash({ env: workspace })],
-});
-
-await session.send("Inspect the workspace.");
-for await (const event of session.events()) console.log(event);
+console.log(await aex.account.get());
 ```
 
-Aex supplies hosted authentication and policy. Brain admission, Tool placement, Environment
-operations, operation keys, and event cursors are handled by the shared Brain SDK.
+`Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
+extension builders are Brain's implementations. Existing Brain extension packages work with
+the same contracts. See https://aex.dev/docs for a complete session example.
 
-This example requires a separately deployed AWS Environment driver. Supply its URL and bearer
-credential as `ENVIRONMENT_URL` and `ENVIRONMENT_TOKEN`; the SDK keeps the credential out of the
-Environment configuration and Tool implementation descriptors. See the
-[Environment package](https://github.com/aexhq/extensions/tree/main/packages/env-aws-microvm)
-for its supported runtime and deployment boundary.
+Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
+executes application functions in your process. Native hosted Components receive no server
+secrets, filesystem or network grants. Customer-selected HTTP Environments are not enabled
+on the initial deployment. Supply your model key per session.
+
+`account.get()` and `account.usage()` accept a workload API key. `keys` management requires
+an authenticated account session and is normally performed in the dashboard. API keys do
+not grant authority to create more credentials. New key secrets are returned once.
