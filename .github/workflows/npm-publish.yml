@@ -1,4 +1,4 @@
-name: Publish SDK and image
+name: Publish packages and image
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +32,10 @@ jobs:
   sdk:
     needs: validate
     environment: npm-production
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [sdk, cli]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -45,7 +49,8 @@ jobs:
       - run: npm install -g npm@11.19.0
       - run: npm ci --ignore-scripts
       - run: npm run test:sdk
-      - run: npm publish --workspace @aexhq/sdk --access public --tag next
+      - run: npm run test:cli
+      - run: npm publish --workspace @aexhq/${{ matrix.package }} --access public --tag next
   image:
     needs: validate
     strategy:

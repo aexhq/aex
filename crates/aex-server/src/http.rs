@@ -140,7 +140,11 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     {
         return Err(Error::invalid("expected after sequence"));
     }
-    let token = identity::bearer(&parts.headers)?;
+    let token = if path == "/v1/auth/exchange" {
+        ""
+    } else {
+        identity::bearer(&parts.headers)?
+    };
     if matches!(route, Route::Account) {
         let body = tokio::time::timeout(std::time::Duration::from_secs(10), to_bytes(body, 4096))
             .await

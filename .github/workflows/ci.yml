@@ -81,9 +81,23 @@ jobs:
       - uses: actions/checkout@v7
       - run: docker build -t aex-rewrite:test .
       - run: python3 tools/image-smoke.py
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:cli
   release-gate:
     if: always()
-    needs: [audit, checks, journeys, image]
+    needs: [audit, checks, journeys, image, cli]
     runs-on: ubuntu-24.04
     steps:
       - env:

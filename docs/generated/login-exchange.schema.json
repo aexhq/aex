@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LoginExchange",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string"
+    },
+    "code_verifier": {
+      "type": "string"
+    },
+    "redirect_uri": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "code_verifier",
+    "redirect_uri"
+  ]
+}

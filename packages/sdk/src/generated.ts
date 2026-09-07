@@ -80,3 +80,36 @@ export interface IssuedKey {
 export interface KeyInput {
   name: string;
 }
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "LoginGrantInput".
+ */
+export interface LoginGrantInput {
+  code_challenge: string;
+  redirect_uri: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "LoginGrant".
+ */
+export interface LoginGrant {
+  code: string;
+  expires: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "LoginExchange".
+ */
+export interface LoginExchange {
+  code: string;
+  code_verifier: string;
+  redirect_uri: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "AccountSession".
+ */
+export interface AccountSession {
+  expires: number;
+  token: string;
+}

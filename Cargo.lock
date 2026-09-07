@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "axum",
+ "base64",
  "brain-protocol",
  "bytes",
  "clap",
