@@ -11,7 +11,7 @@ commercial settings live in private Platform. This checkout builds without Platf
 
 ## Development
 
-Install Rust 1.97.1, Node 22+, Python 3 and Git. Linux is required for real Brain workers;
+Install Rust 1.97.1, Node 22+, Python 3, Git and Docker. Linux is required for real Brain workers;
 Rust product-boundary tests also run on Windows. Start PostgreSQL 17 and set
 `AEX_TEST_DATABASE_URL` to an expendable test database. Tests use isolated schemas.
 
@@ -23,8 +23,8 @@ docker build -t aex-rewrite:test .
 python3 tools/image-smoke.py
 ```
 
-The journey script fetches the immutable Brain revision in the Cargo manifest, builds its
-server, workers and reference Agentloop, then runs the published SDK against Aex. It uses a
+The journey script fetches the immutable Brain revision in the Cargo manifest, extracts its
+production server/workers from the pinned image and builds the reference Agentloop, then runs the published SDK against Aex. It uses a
 local deterministic provider and requires no cloud credentials. All required CI jobs must
 pass. Real-provider and deployed recovery evidence additionally gate release.
 
