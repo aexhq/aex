@@ -17,10 +17,7 @@ pub async fn register(app: &App, p: &Principal, headers: &HeaderMap) -> Result<R
         .host_registration
         .try_lock()
         .map_err(|_| Error::capacity())?;
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM hosts WHERE account=?")
-        .bind(&p.account)
-        .fetch_one(&app.store.0)
-        .await?;
+    let count = app.store.host_count(&p.account).await?;
     if count >= i64::from(app.config.limits.hosts_per_account) {
         return Err(Error::capacity());
     }

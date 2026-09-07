@@ -33,7 +33,8 @@ Other mutation keys are account/path scoped and use Brain's bounded replay contr
 are not an unlimited exactly-once guarantee. Occupied sessions reject concurrent messages;
 uncertain turn reservations require drained reconciliation. Revocation does not undo a
 previously dispatched effect. Deletion denies access before cleanup, and uncertain cleanup
-keeps its tombstone. Revoked keys lose existing session and host streams. Suspension denies
+keeps its tombstone. End a session before deleting it; a premature delete is rejected without
+hiding the session. Responses include a server-generated `x-aex-request-id` for support. Revoked keys lose existing session and host streams. Suspension denies
 all account access; resumption does not revive revoked keys.
 
 Configured limits cover accounts, keys, hosts, claims, retained sessions, active turns,

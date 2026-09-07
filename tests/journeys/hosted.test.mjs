@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, writeFile, rm, readdir, stat, cp } from "node:fs/promises";
@@ -22,12 +22,14 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const brainPort=await port(), aexPort=await port(), adminPort=await port();
   const brainUrl=`http://127.0.0.1:${brainPort}`, baseUrl=`http://127.0.0.1:${aexPort}`, adminUrl=`http://127.0.0.1:${adminPort}`;
   const internal=randomUUID(), operator=randomUUID();
-  let modelCalls=0, toolCalls=0, running, brainChild, aexChild;
+  let modelCalls=0, toolCalls=0, modelDelay=0, running, brainChild, aexChild;
+  const processLogs=[];
   const children=new Set();
   const model=createServer(async(req,res)=>{
     const chunks=[]; for await(const c of req) chunks.push(c);
     const body=JSON.parse(Buffer.concat(chunks)); modelCalls++;
     assert.equal(req.headers.authorization,"Bearer test-model-secret");
+    if(modelDelay) await pause(modelDelay);
     res.writeHead(200,{"content-type":"text/event-stream"});
     const delta=body.tools?.length && body.messages.at(-1).role!=="tool"
       ? {tool_calls:[{index:0,id:"lookup-1",type:"function",function:{name:"lookup",arguments:'{"id":"42"}'}}]} : {content:"answered"};
@@ -41,14 +43,14 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   await writeFile(join(directory,"config.json"),JSON.stringify(configuration));
   async function launch(executable,args,env,url){
     const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"],detached:true}); children.add(child);
-    let logs="";child.stdout.on("data",c=>logs+=c);child.stderr.on("data",c=>logs+=c);
+    let logs="";const capture=c=>{logs+=c;processLogs.push(String(c));};child.stdout.on("data",capture);child.stderr.on("data",capture);
     for(let i=0;i<600;i++){ if(child.exitCode!==null)throw new Error(`process exited: ${logs}`);try{if((await fetch(url+"/health/live")).ok)return child;}catch{}await pause(50); }
     throw new Error(`readiness timeout: ${logs}`);
   }
   async function stop(child,signal="SIGTERM"){ if(child.exitCode===null && child.signalCode===null){const done=once(child,"exit");process.kill(-child.pid,signal);await done;}children.delete(child); }
   async function start(){
     brainChild=await launch(process.env.BRAIN_TEST_SERVER,[],{BRAIN_LISTEN:`127.0.0.1:${brainPort}`,BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_ENV_WORKER:process.env.BRAIN_TEST_WORKER,BRAIN_API_TOKEN:internal,BRAIN_MODEL_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`},brainUrl);
-    aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator},baseUrl);
+    aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator,RUST_LOG:"info"},baseUrl);
     await meter();
     await operate({action:"resume"});
   }
@@ -58,6 +60,14 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const raw=(path,token,options={})=>fetch(baseUrl+path,{...options,headers:{authorization:`Bearer ${token}`,...options.headers}});
   t.after(async()=>{running?.pump.stop();await running?.pump.closed;for(const child of children)await stop(child,"SIGKILL");model.closeAllConnections();await new Promise(r=>model.close(r));await rm(directory,{recursive:true,force:true});});
   await start();
+  for (const [executable,args,env,expected] of [
+    [process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator},/already has a writer/],
+    [process.env.BRAIN_TEST_SERVER,[],{BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_API_TOKEN:internal},/already in use or cannot be locked/],
+  ]) {
+    const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"]});
+    let output="";child.stdout.on("data",c=>output+=c);child.stderr.on("data",c=>output+=c);
+    const [code]=await once(child,"exit");assert.notEqual(code,0);assert.match(output,expected);
+  }
   const a=await account(),b=await account();
   const client=new Brain({baseUrl,token:a.token}),other=new Brain({baseUrl,token:b.token});
   const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
@@ -78,7 +88,36 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.equal((await raw("/v1/agentloops",a.token,{method:"POST",body:"unapproved",headers:{"idempotency-key":"bad"}})).status,400);
   await session.send("look it up");assert.equal(toolCalls,1);assert.equal(modelCalls,2);
   const events=[];for await(const event of session.events())events.push(event);assert.ok(events.some(e=>e.type==="tool_call_ended"));
-  const last=events.at(-1).sequence;const page=await (await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token)).json();assert.equal(page.events.length,0);
+  let last=events.at(-1).sequence;const page=await (await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token)).json();assert.equal(page.events.length,0);
+  await session.send("look it up again");assert.equal(toolCalls,2,"terminal turns release admission for the next message");
+  const sweep=[];
+  for(let i=0;i<8;i++) sweep.push(await other.sessions.create(options,{idempotencyKey:`sweep-${i}`}));
+  modelDelay=250;
+  for(const concurrency of [1,2,4,8]) {
+    await meter();
+    const started=performance.now();
+    const results=await Promise.all(sweep.slice(0,concurrency).map(async(s,i)=>{
+      const r=await raw(`/v1/sessions/${s.id}/messages`,b.token,{method:"POST",headers:{"content-type":"application/json","idempotency-key":`sweep-${concurrency}-${i}`},body:JSON.stringify({input:{message:"x".repeat(concurrency===8?65536:1024)}})});
+      await r.arrayBuffer();return r.status;
+    }));
+    assert.equal(results.filter(s=>s===200).length,Math.min(concurrency,configuration.limits.active_turns_per_account));
+    assert.ok(results.every(s=>s===200||s===503));
+    t.diagnostic(JSON.stringify({operation:"turn_admission_sweep",concurrency,statuses:results,elapsed_ms:performance.now()-started,brain_bytes:await size(join(directory,"brain"))}));
+  }
+  modelDelay=0;
+  const subscribers=[];
+  for(let i=0;i<configuration.limits.streams_per_account;i++) {
+    const abort=new AbortController();
+    const r=await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"},signal:abort.signal});assert.equal(r.status,200);
+    subscribers.push({abort,body:r.body});
+  }
+  assert.equal((await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"}})).status,503,"unread subscribers stay within the account limit");
+  for(const subscriber of subscribers){subscriber.abort.abort();await subscriber.body.cancel().catch(()=>{});}
+  const premature=await raw(`/v1/sessions/${sweep[0].id}`,b.token,{method:"DELETE",headers:{"idempotency-key":"premature-delete"}});
+  assert.equal(premature.status,400);
+  assert.equal((await raw(`/v1/sessions/${sweep[0].id}`,b.token)).status,200,"rejected deletion must not hide a live session");
+  for(const s of sweep){await s.end();await s.delete();}
+  last=(await (await raw(`/v1/sessions/${session.id}/events`,a.token)).json()).next_cursor;
   await meter();
   const controller=new AbortController();const feed=await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token,{headers:{accept:"text/event-stream"},signal:controller.signal});const reader=feed.body.getReader();await reader.read();
   await operate({action:"revoke_key",key:a.key});
@@ -98,4 +137,10 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   await start();assert.equal((await raw(`/v1/sessions/${session.id}`,a.token)).status,401,"restored key remains revoked");
   assert.equal((await raw(`/v1/sessions/${session.id}`,replacement.token)).status,401,"post-backup credentials do not exist in restore");
   assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,200,"restore requires post-backup deletion reconciliation before reopening");
+  execFileSync("python3",["-c","import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE sessions SET created=0 WHERE id=?',(sys.argv[2],)); c.commit()",join(directory,"aex/aex.db"),otherSession.id]);
+  assert.equal((await operate({action:"maintain"})).deleted,1,"retention ends and removes expired sessions");
+  assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,404);
+  const logs=processLogs.join("");
+  for(const secret of ["test-model-secret",internal,operator,a.token,b.token,replacement.token]) assert.equal(logs.includes(secret),false,"service logs must not contain credentials");
+  assert.ok(logs.includes('"request_id"'),"redacted request correlation is emitted");
 });

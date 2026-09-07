@@ -165,7 +165,10 @@ hosted session passes. Tests cover tool execution, isolation, stream revocation,
 consistent backup-file restoration and unresolved create claims.
 
 M0/M1 have executable implementation evidence. M2/M3 mechanisms and local recovery tests exist;
-M4 has a reproducible direct/gateway warm-read baseline. Full M4 saturation and final admission
+M4 has a reproducible direct/gateway warm-read baseline, 1/2/4/8 concurrent-turn admission
+sweeps with 1 KiB/64 KiB messages, unread-subscriber exhaustion and redacted request traces.
+Second-writer rejection and end-before-delete/retention behavior are tested with real processes.
+Full M4 saturation and final admission
 values remain release gates. M5 is not complete: AWS provisioning, actual TLS/SSE, instance
 isolation, EBS reattachment, completed-snapshot restoration, measured RPO/RTO and onboarding are
 explicitly held. CI success does not substitute for deployment-dependent gates.

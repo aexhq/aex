@@ -66,6 +66,16 @@ pub async fn list(app: &App, p: &Principal) -> Result<Response> {
     Ok(Json(SessionList { sessions }).into_response())
 }
 pub async fn delete(app: &App, id: &str, headers: &HeaderMap, key: &str) -> Result<Response> {
+    if app.store.session_state(id).await? == "owned"
+        && !matches!(
+            app.brain.summary(id).await?.status,
+            brain_protocol::SessionStatus::Ended
+        )
+    {
+        return Err(crate::error::Error::invalid(
+            "session must be ended before deletion",
+        ));
+    }
     if !app.store.mark_deleting(id).await? {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -88,4 +98,34 @@ pub async fn delete(app: &App, id: &str, headers: &HeaderMap, key: &str) -> Resu
     } else {
         super::http::finite(app, response).await
     }
+}
+
+pub async fn retire(app: &App, id: &str) -> Result<Response> {
+    if !app.store.mark_deleting(id).await? {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    app.changed.send_modify(|v| *v = v.wrapping_add(1));
+    let headers = HeaderMap::new();
+    let response = app
+        .brain
+        .request(
+            Method::POST,
+            &format!("/v1/sessions/{id}/end"),
+            &headers,
+            Bytes::from_static(b"{}"),
+            Some(&digest(format!("retention-end:{id}").as_bytes())),
+            None,
+        )
+        .await?;
+    if !response.status().is_success() && response.status() != StatusCode::NOT_FOUND {
+        return super::http::finite(app, response).await;
+    }
+    app.brain.bytes(response).await?;
+    delete(
+        app,
+        id,
+        &headers,
+        &digest(format!("retention:{id}").as_bytes()),
+    )
+    .await
 }

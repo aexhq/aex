@@ -93,11 +93,11 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
                 serde_json::from_slice(&app.brain.bytes(response).await?)?;
             let mut orphans = Vec::new();
             for session in inventory.sessions {
-                let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions WHERE id=?")
-                    .bind(session.session_id.as_str())
-                    .fetch_one(&app.store.0)
-                    .await?;
-                if count == 0 {
+                if !app
+                    .store
+                    .contains_session(session.session_id.as_str())
+                    .await?
+                {
                     orphans.push(session.session_id);
                 }
             }
@@ -113,118 +113,45 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
             {
                 return Err(Error::invalid("usage report is stale or in the future"));
             }
-            let mut tx = app.store.0.begin().await?;
-            for (id, bytes) in sessions {
-                let bytes =
-                    i64::try_from(bytes).map_err(|_| Error::invalid("storage size overflow"))?;
-                sqlx::query("UPDATE sessions SET retained_bytes=? WHERE id=? AND state!='deleted' AND active_key IS NULL AND changed_at < ?")
-                    .bind(bytes)
-                    .bind(id)
-                    .bind(observed_at)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            sqlx::query("INSERT INTO storage_report VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET received=excluded.received").bind(observed_at).execute(&mut *tx).await?;
-            tx.commit().await?;
+            app.store.report_usage(observed_at, sessions).await?;
             json!({"recorded":true})
         }
         Operation::Maintain => {
-            use sqlx::Row;
-            let rows = sqlx::query(
-                "SELECT id,state,created,active_key FROM sessions WHERE state!='deleted'",
-            )
-            .fetch_all(&app.store.0)
-            .await?;
             let mut deleted = 0;
-            for row in rows {
-                let id: String = row.get("id");
-                if row.get::<String, _>("state") == "deleting"
-                    || crate::store::now().saturating_sub(row.get("created"))
-                        > app.config.limits.retention_secs as i64
-                {
-                    let response = crate::sessions::delete(
-                        app,
-                        &id,
-                        &HeaderMap::new(),
-                        &identity::digest(format!("retention:{id}").as_bytes()),
-                    )
-                    .await?;
-                    if response.status().is_success() {
-                        deleted += 1;
-                    }
+            for id in app
+                .store
+                .expired_sessions(app.config.limits.retention_secs)
+                .await?
+            {
+                let response = crate::sessions::retire(app, &id).await?;
+                if response.status().is_success() {
+                    deleted += 1;
                 }
             }
             json!({"deleted":deleted})
         }
         Operation::CreateAccount => {
-            let mut tx = app.store.0.begin().await?;
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-                .fetch_one(&mut *tx)
-                .await?;
-            if count >= i64::from(app.config.limits.accounts) {
-                return Err(Error::capacity());
-            }
-            let id = identity::random("acct");
-            sqlx::query("INSERT INTO accounts(id) VALUES (?)")
-                .bind(&id)
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
+            let id = app.store.create_account(&app.config.limits).await?;
             json!({"account": id})
         }
         Operation::IssueKey { account } => {
-            let mut tx = app.store.0.begin().await?;
-            let exists: i64 =
-                sqlx::query_scalar("SELECT count(*) FROM accounts WHERE id=? AND active=1")
-                    .bind(&account)
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if exists != 1 {
-                return Err(Error::missing());
-            }
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM api_keys WHERE account=?")
-                .bind(&account)
-                .fetch_one(&mut *tx)
-                .await?;
-            if count >= i64::from(app.config.limits.keys_per_account) {
-                return Err(Error::capacity());
-            }
-            let id = identity::random("key");
-            let token = identity::random("aex");
-            sqlx::query("INSERT INTO api_keys(id,account,verifier) VALUES (?,?,?)")
-                .bind(&id)
-                .bind(account)
-                .bind(identity::digest(token.as_bytes()))
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
+            let (id, token) = app.store.issue_key(&account, &app.config.limits).await?;
             json!({"key": id, "token": token})
         }
         Operation::RevokeKey { key } => {
-            sqlx::query("UPDATE api_keys SET active=0 WHERE id=?")
-                .bind(key)
-                .execute(&app.store.0)
-                .await?;
+            app.store.revoke_key(&key).await?;
             json!({"revoked": true})
         }
         Operation::SuspendAccount { account } => {
-            sqlx::query("UPDATE accounts SET active=0 WHERE id=?")
-                .bind(account)
-                .execute(&app.store.0)
-                .await?;
+            app.store.set_account_active(&account, false).await?;
             json!({"active": false})
         }
         Operation::ResumeAccount { account } => {
-            sqlx::query("UPDATE accounts SET active=1 WHERE id=?")
-                .bind(account)
-                .execute(&app.store.0)
-                .await?;
+            app.store.set_account_active(&account, true).await?;
             json!({"active": true})
         }
         Operation::Inspect => {
-            use sqlx::Row;
-            let accounts: Vec<Value> = sqlx::query("SELECT a.id,a.active,(SELECT count(*) FROM sessions s WHERE s.account=a.id AND s.state!='deleted') AS sessions FROM accounts a").fetch_all(&app.store.0).await?.iter().map(|r| json!({"account": r.get::<String,_>("id"),"active":r.get::<i64,_>("active") == 1,"sessions":r.get::<i64,_>("sessions")})).collect();
-            let claims: Vec<Value> = sqlx::query("SELECT account,operation,client_key,created FROM claims WHERE state='pending'").fetch_all(&app.store.0).await?.iter().map(|r| json!({"account":r.get::<String,_>("account"),"operation":r.get::<String,_>("operation"),"client_key":r.get::<String,_>("client_key"),"created":r.get::<i64,_>("created")})).collect();
+            let (accounts, claims) = app.store.inspect().await?;
             json!({"accounts":accounts,"pending":claims,"accepting":app.accepting.load(std::sync::atomic::Ordering::SeqCst)})
         }
         Operation::ResolveCreate {
@@ -232,14 +159,11 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
             client_key,
         } => {
             require_drained(app)?;
-            sqlx::query("UPDATE claims SET state='resolved' WHERE account=? AND client_key=? AND operation='create' AND state='pending'").bind(account).bind(client_key).execute(&app.store.0).await?;
+            app.store.resolve_create(&account, &client_key).await?;
             json!({"resolved":true})
         }
         Operation::ForgetHost { host } => {
-            sqlx::query("DELETE FROM hosts WHERE id=?")
-                .bind(host)
-                .execute(&app.store.0)
-                .await?;
+            app.store.forget_host(&host).await?;
             json!({"forgotten":true})
         }
         Operation::Drain => {
@@ -259,13 +183,26 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
         Operation::DeleteOrphan { session } => {
             require_drained(app)?;
             super::http::route(&Method::DELETE, &format!("/v1/sessions/{session}"))?;
-            let owned: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions WHERE id=?")
-                .bind(&session)
-                .fetch_one(&app.store.0)
-                .await?;
-            if owned != 0 {
+            if app.store.contains_session(&session).await? {
                 return Err(Error::conflict("resource has an ownership record"));
             }
+            let ended = app
+                .brain
+                .request(
+                    Method::POST,
+                    &format!("/v1/sessions/{session}/end"),
+                    &HeaderMap::new(),
+                    Bytes::new(),
+                    Some(&identity::digest(
+                        format!("orphan-end:{session}").as_bytes(),
+                    )),
+                    None,
+                )
+                .await?;
+            if !ended.status().is_success() && ended.status() != axum::http::StatusCode::NOT_FOUND {
+                return Err(Error::ambiguous());
+            }
+            app.brain.bytes(ended).await?;
             let response = app
                 .brain
                 .request(

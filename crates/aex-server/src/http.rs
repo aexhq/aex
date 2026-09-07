@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
+use tracing::Instrument;
 
 pub fn router(app: App) -> Router {
     Router::new().fallback(handle).with_state(app)
@@ -63,7 +64,31 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
     }
 }
 
-async fn handle(State(app): State<App>, request: Request) -> Result<Response> {
+async fn handle(State(app): State<App>, request: Request) -> Response {
+    let request_id = identity::random("req");
+    let span = tracing::info_span!("request", request_id, method = %request.method(), route = tracing::field::Empty, account = tracing::field::Empty, session = tracing::field::Empty);
+    async move {
+        let started = std::time::Instant::now();
+        let mut response = match dispatch(app, request).await {
+            Ok(response) => response,
+            Err(error) => error.into_response(),
+        };
+        tracing::info!(
+            status = response.status().as_u16(),
+            header_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "request completed"
+        );
+        response.headers_mut().insert(
+            "x-aex-request-id",
+            request_id.parse().expect("generated request identifier"),
+        );
+        response
+    }
+    .instrument(span)
+    .await
+}
+
+async fn dispatch(app: App, request: Request) -> Result<Response> {
     let _permit = app
         .requests
         .clone()
@@ -72,11 +97,22 @@ async fn handle(State(app): State<App>, request: Request) -> Result<Response> {
     let (parts, body) = request.into_parts();
     let path = parts.uri.path();
     let route = route(&parts.method, path)?;
+    tracing::Span::current().record(
+        "route",
+        match route {
+            Route::Health(_) => "health",
+            Route::Create => "create",
+            Route::List => "list",
+            Route::Register => "register",
+            Route::Agentloop(_) => "agentloop",
+            Route::Host(_, op) | Route::Session(_, op) => op,
+        },
+    );
     if let Route::Health(ready) = route {
         return Ok(if !ready
             || (app.accepting.load(std::sync::atomic::Ordering::SeqCst)
                 && app.brain.ready().await
-                && sqlx::query("SELECT 1").execute(&app.store.0).await.is_ok())
+                && app.store.ready().await)
         {
             StatusCode::NO_CONTENT
         } else {
@@ -102,6 +138,7 @@ async fn handle(State(app): State<App>, request: Request) -> Result<Response> {
         Route::Host(id, _) => app.store.host(id, token).await?,
         _ => app.store.principal(token).await?,
     };
+    tracing::Span::current().record("account", &principal.account);
     let _account_permit = {
         let mut requests = app.account_requests.lock().await;
         requests
@@ -174,6 +211,7 @@ async fn handle(State(app): State<App>, request: Request) -> Result<Response> {
             app.store
                 .owned(&principal, id, parts.method == Method::DELETE)
                 .await?;
+            tracing::Span::current().record("session", id);
             stream_session = Some(id.to_string());
             if parts.method != Method::GET {
                 let key = identity::scoped_key(

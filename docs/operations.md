@@ -32,7 +32,8 @@ and bounded record counts rather than per-tenant attribution.
 Turns reserve retained-byte capacity transactionally. A fresh scan started after the last
 completed write can replace reservations with measured bytes. Active/uncertain work cannot
 have its allocation reset by a scan. Stale reports or insufficient disk space deny new work.
-`maintain` applies creation-age retention through ordinary deletion and can interrupt old sessions.
+`maintain` tombstones expired sessions, ends them and confirms deletion. It can interrupt old
+sessions; failed cleanup remains inaccessible and is retried on subsequent maintenance.
 
 The byte reserve is an admission allowance, not a filesystem quota. In-flight growth and the
 metering interval must fit measured headroom. Before onboarding, saturation tests must validate
@@ -55,7 +56,9 @@ Rollback requires data-format compatibility; changing an image alone is not a da
 `tools/check.sh` runs strict Rust checks/tests, generated-contract verification, npm audit and
 meter tests. `tools/journeys.sh` runs the published SDK, real Linux workers, customer Tools,
 isolation, revocation, restart and consistent file restore. It reports a direct/gateway read
-baseline. `tools/image-smoke.py` verifies the non-root container and writable data path.
+baseline, 1/2/4/8 concurrent-turn admission and unread-subscriber exhaustion. It also verifies
+second-writer rejection, consecutive turns, retention and credential redaction.
+`tools/image-smoke.py` verifies the non-root container and writable data path.
 
 `tools/live-local.py --workspace-env /workspace/.env.dev` runs a real-provider check with explicit
 `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER`, `BRAIN_TEST_WORKER` and `BRAIN_TEST_REFERENCE_AGENTLOOP` paths.

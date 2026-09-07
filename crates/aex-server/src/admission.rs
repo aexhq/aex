@@ -81,10 +81,7 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
 }
 
 pub async fn disk(app: &App) -> Result<()> {
-    let received: Option<i64> =
-        sqlx::query_scalar("SELECT received FROM storage_report WHERE singleton=1")
-            .fetch_optional(&app.store.0)
-            .await?;
+    let received = app.store.usage_received().await?;
     if !received.is_some_and(|at| {
         crate::store::now().saturating_sub(at) <= app.config.limits.usage_max_age_secs as i64
     }) {
