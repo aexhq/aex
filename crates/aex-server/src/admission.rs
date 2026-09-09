@@ -13,9 +13,6 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
     if request.model.api_key.is_empty() || request.model.api_key.len() > 16384 {
         return Err(Error::invalid("model key required"));
     }
-    if !request.agentloop.needs.is_empty() {
-        return Err(Error::invalid("hosted Agentloop grants are not permitted"));
-    }
     let descriptor = request
         .agentloop
         .implementation
@@ -67,9 +64,6 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                 .find(|e| e.name == *environment)
                 .ok_or_else(|| Error::invalid("unknown Tool Environment"))?;
             if matches!(selected.driver, Driver::Brain {}) {
-                if !placement.needs.is_empty() {
-                    return Err(Error::invalid("hosted Tool grants are not permitted"));
-                }
                 let descriptor = placement
                     .implementation
                     .as_object()

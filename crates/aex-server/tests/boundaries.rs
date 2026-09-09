@@ -345,14 +345,18 @@ async fn hosted_policy_rejects_customer_code_endpoints_and_ambient_grants() {
     );
     for (pointer, value) in [
         (
-            "/agentloop/needs",
-            serde_json::json!(["http://169.254.169.254"]),
+            "/environments",
+            serde_json::json!([{"name":"brain","driver":"brain","configuration":{"network":["http://169.254.169.254"]}}]),
         ),
         (
             "/agentloop/implementation/id",
             serde_json::json!("f".repeat(64)),
         ),
         ("/model/provider", serde_json::json!("customer-provider")),
+        (
+            "/environments",
+            serde_json::json!([{"name":"brain","driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),
+        ),
         (
             "/environments",
             serde_json::json!([{"name":"brain","driver":"brain","configuration":{"secrets":["AEX_OPERATOR_TOKEN"]}}]),
@@ -367,11 +371,7 @@ async fn hosted_policy_rejects_customer_code_endpoints_and_ambient_grants() {
         ),
     ] {
         let mut value_request = base.clone();
-        if pointer == "/agentloop/needs" {
-            value_request["agentloop"]["needs"] = value;
-        } else {
-            *value_request.pointer_mut(pointer).unwrap() = value;
-        }
+        *value_request.pointer_mut(pointer).unwrap() = value;
         let request = serde_json::from_value(value_request).unwrap();
         assert!(
             aex_server::admission::create(&app, &p, &request)

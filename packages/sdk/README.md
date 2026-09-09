@@ -10,13 +10,17 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. Existing Brain extension packages work with
-the same contracts. See https://aex.dev/docs for a complete session example.
+extension builders are Brain's implementations. SDK 0.71 uses Brain 0.20 and official
+extension packages 5.x. Rebuild custom Wasm Components against Brain 0.20's WIT; older
+Components and session configurations are not migrated automatically. See https://aex.dev/docs
+for a complete session example.
 
 Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
 executes application functions in your process. Native hosted Components receive no server
 secrets, filesystem or network grants. Customer-selected HTTP Environments are not enabled
-on the initial deployment. Supply your model key per session.
+on the initial deployment. Hosted `brainEnv` configuration must be empty; resource access
+is configured by each Environment, not declared through extension `needs`. Prepare dependencies
+for `hostEnv` Tools in your application before registering them. Supply your model key per session.
 
 `account.get()` and `account.usage()` accept a workload API key. `keys` management requires
 an authenticated account session and is normally performed in the dashboard. API keys do

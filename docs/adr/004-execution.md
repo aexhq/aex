@@ -19,7 +19,9 @@ Curated means reviewed content identity, not a caller-supplied name or publisher
 A customer can define prompts, Tool schemas, inputs and fixed permitted placements using
 Brain's existing API. All such data remains untrusted. The customer cannot introduce a
 different hosted implementation, server secret name, writable host path, or network grant.
-Brain's own needs validation and enforcement remain authoritative inside the Environment.
+Brain's Environment-owned grant configuration and deployment ceilings remain authoritative
+inside the Environment. Aex rejects nonempty native configuration, including filesystem,
+network, and secrets; removing extension dependency declarations does not grant access.
 
 No customer-selected HTTP Environment URL, provider base URL or arbitrary native-network
 grant is accepted in MVP. The server uses an operator-selected supported provider catalogue.

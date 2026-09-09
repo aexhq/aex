@@ -13,7 +13,7 @@ Aex owns product metadata in PostgreSQL: account identity, key verifiers, owners
 claims, admission reservations and usage. Brain owns execution and its EBS data. Aex
 never changes Brain's protocol or puts Brain's journal in the product database.
 
-The SDK extends and re-exports Brain 0.19.0, adding default hosted transport and account
+The SDK extends and re-exports Brain 0.20.0, adding default hosted transport and account
 methods. Applications run their own script and event handling. Brain-compatible Wasm
 Agentloops and Tools can run in hosted Brain; hostEnv functions stay in the application.
 Arbitrary HTTP Environments and native secret, filesystem or networking grants are not
