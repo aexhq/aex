@@ -18,7 +18,10 @@ try {
   assert.ok(events.some(event=>event.type==="model_call_ended"),"real model call must commit a success event");
   assert.ok(!events.some(event=>event.type==="model_call_failed"),"real model call failed");
   assert.ok(events.some(event=>event.type==="tool_call_ended"),"application Tool result must commit");
-  console.log("real provider and application Tool hosted session passed");
+  const result = await session.send("Return the previously retrieved hosting verification value in the value field. Use the existing result; do not call the Tool again.", { output: { type: z.object({ value: z.literal(answer) }) } });
+  assert.equal(result.value, answer);
+  assert.equal(toolCalls, 1, "structured output uses the existing Tool result");
+  console.log("real provider, application Tool, and typed structured output hosted session passed");
 } finally {
   try {if(session){await session.end();await session.delete();}}
   finally {if(registration){registration.pump.stop();await registration.pump.closed;}}

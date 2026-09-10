@@ -4,7 +4,7 @@ Node.js 22 or newer. The CLI uses `@aexhq/sdk` and the same public Aex HTTP API 
 the dashboard. No dashboard cookies, site credentials or operator credentials are needed.
 
 ```sh
-npm install -g @aexhq/cli@0.38.0
+npm install -g @aexhq/cli@0.39.0
 aex login
 aex keys create "My application"
 aex keys list

@@ -10,7 +10,7 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.71 uses Brain 0.20 and official
+extension builders are Brain's implementations. SDK 0.72 uses Brain SDK 0.21 and official
 extension packages 5.x. Rebuild custom Wasm Components against Brain 0.20's WIT; older
 Components and session configurations are not migrated automatically. See https://aex.dev/docs
 for a complete session example.
@@ -25,6 +25,21 @@ for `hostEnv` Tools in your application before registering them. Supply your mod
 `account.get()` and `account.usage()` accept a workload API key. `keys` management requires
 an authenticated account session and is normally performed in the dashboard. API keys do
 not grant authority to create more credentials. New key secrets are returned once.
+
+## Structured output
+
+Pass `output: { type: z.object({ name: z.string() }), maxRetries: 2 }` in the second
+argument to `session.send`. The SDK prompts for JSON, validates with Zod locally,
+and returns the inferred parsed value. Two additional correction turns are allowed
+by default; set zero to disable retries. Ordinary sends keep returning session state.
+
+See the [executable example](https://github.com/aexhq/aex/blob/main/examples/structured-output.mjs)
+and [full contract](https://aex.dev/brain/docs/guides/structured-output).
+Exhaustion throws `StructuredOutputError` with `attempts`, `lastOutput`, and `issues`.
+Retries run in your client and are ordinary turns with the session's existing tools.
+Use exclusive ownership of sends during the operation. An optional top-level
+`signal` cancels the active turn and stops corrections. Raw attempts remain visible
+in history and streams; validation does not change the Agentloop or provider format.
 
 ## Account management
 

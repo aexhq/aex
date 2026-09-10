@@ -11,6 +11,7 @@ import test from "node:test";
 import { Aex, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
 import { database } from "./database.mjs";
 import { pi } from "@aexhq/agentloop-pi";
+import { codex } from "@aexhq/agentloop-codex";
 import { z } from "zod";
 import { measure } from "../../tools/benchmark.mjs";
 
@@ -26,6 +27,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const brainUrl=`http://127.0.0.1:${brainPort}`, baseUrl=`http://127.0.0.1:${aexPort}`, adminUrl=`http://127.0.0.1:${adminPort}`;
   const internal=randomUUID(), operator=randomUUID();
   let modelCalls=0, toolCalls=0, modelDelay=0, running, brainChild, aexChild;
+  let structuredAnswers;
   const processLogs=[];
   const children=new Set();
   const model=createServer(async(req,res)=>{
@@ -33,6 +35,13 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     const body=JSON.parse(Buffer.concat(chunks)); modelCalls++;
     assert.equal(req.headers.authorization,"Bearer test-model-secret");
     if(modelDelay) await pause(modelDelay);
+    if (structuredAnswers) {
+      assert.ok(structuredAnswers.length, "unexpected structured-output model call");
+      assert.equal(body.response_format, undefined);
+      res.writeHead(200,{"content-type":"text/event-stream"});
+      res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{content:structuredAnswers.shift()},finish_reason:"stop"}]})}\n\ndata: [DONE]\n\n`);
+      return;
+    }
     res.writeHead(200,{"content-type":"text/event-stream"});
     const delta=body.tools?.length && body.messages.at(-1).role!=="tool"
       ? {tool_calls:[{index:0,id:"lookup-1",type:"function",function:{name:"lookup",arguments:'{"id":"42"}'}}]} : {content:"answered"};
@@ -97,6 +106,23 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.ok(hostedEvents.some(e=>e.type==="tool_call_ended"),"published Pi and uploaded Tool run in hosted Brain");
   assert.equal(toolCalls,1,"hosted Tool does not execute the application function");
   await hostedSession.end();await hostedSession.delete();
+
+  for (const loop of [pi, codex]) {
+    await meter();
+    const structured = await client.sessions.create({ ...options, agentloop: loop({ env: brainEnv({ name: "brain" }) }) });
+    await meter();
+    const before = modelCalls;
+    structuredAnswers = ["not JSON", '{"age":"wrong"}', '{"age":37}'];
+    assert.deepEqual(await structured.send("Extract Ada's age", { output: { type: z.object({ age: z.number() }) } }), { age: 37 });
+    assert.equal(modelCalls - before, 3);
+    assert.equal(structuredAnswers.length, 0);
+    const reopened = await client.sessions.get(structured.id);
+    const history = []; for await (const event of reopened.events()) history.push(event);
+    assert.equal(history.filter(e => e.type === "turn_ended").length, 3);
+    structuredAnswers = undefined;
+    await structured.end(); await structured.delete();
+  }
+  await meter();
 
   const events=[];for await(const event of session.events())events.push(event);assert.ok(events.some(e=>e.type==="tool_call_ended"));
   let last=events.at(-1).sequence;const page=await (await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token)).json();assert.equal(page.events.length,0);
