@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
+import { z } from "zod";
+
+test("Aex sessions inherit typed structured output from the pinned Brain SDK", async () => {
+  const client = new Aex({ apiKey: "customer-key", fetch: async (url, init) => {
+    if (url.endsWith("/messages")) {
+      assert.match(JSON.parse(init.body).input.message, /For this response only/);
+      return Response.json({ session_id: "s", status: "idle", last_sequence: 3 });
+    }
+    if (url.includes("/events?")) return Response.json({ events: [
+      { sequence: 1, recorded_at_ms: 1, event_type: "turn_started", data: {} },
+      { sequence: 2, recorded_at_ms: 1, event_type: "output_emitted", origin: { kind: "agentloop", sequence: 1 }, data: { type: "assistant_message", message: '{"age":37}' } },
+      { sequence: 3, recorded_at_ms: 1, event_type: "turn_ended", data: { result: null } },
+    ], next_cursor: 3 });
+    return Response.json({ session_id: "s", status: "idle", last_sequence: 0 });
+  } });
+  const session = await client.sessions.get("s");
+  assert.ok(session instanceof upstream.SessionHandle);
+  assert.deepEqual(await session.send("Extract age", { output: { type: z.object({ age: z.number() }) } }), { age: 37 });
+});
 
 test("Aex preserves Brain and its extension identities and uses the account API", async () => {
   assert.equal(Brain, upstream.Brain);
