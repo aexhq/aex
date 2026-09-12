@@ -24,6 +24,13 @@ await session.send({ message: "Explain the chart", media: [attachment.media] });
 await aex.attachments.delete(session.id, attachment.id);
 ```
 
+For Tool-result images, return `{ type: "aex_tool_output", version: 1, content, media: [attachment.media] }`
+from the Tool. The official loops present that media to the model and preserve the call's source
+order even in a parallel batch. Arbitrary JSON/base64 is not implicitly an image. See the
+[executable image Tool example](../examples/image-tool.mjs), which publishes through Aex using
+the Tool context's session ID. Keep the attachment available for later turns that reference it.
+The Wasm memory limit is unchanged; use the matching SDK and extensions with HTTPS media URLs.
+
 `expiresAt` may request an earlier future deadline than the deployment TTL. Expiry and bytes are
 immutable after publication. The same upload key replays the original URL and deadline; different
 bytes, type or requested expiry conflict. Retrying a completed upload does not extend access or

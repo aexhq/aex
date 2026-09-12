@@ -21,7 +21,7 @@ Brain remains the source of session semantics; Aex owns the customer boundary ar
 
 The first customer journey is: register on the website, create an API key, install the thin
 Aex TypeScript SDK, define an Agentloop, model, Tools and Environments using Brain contracts,
-create a hosted session, send work, observe and reconnect, inspect history, cancel or end,
+create a hosted session, send work, observe and reconnect, inspect history, interrupt or end,
 and delete. The customer's calling script runs in their application; each extension runs
 where its selected Environment places it. Customers can consume Events and persist their
 own projections while Brain retains canonical history.

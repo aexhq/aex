@@ -10,11 +10,23 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.74 uses Brain SDK 0.23 and Pi/Codex/Tools
-6.0. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
+extension builders are Brain's implementations. SDK 0.75 uses Brain SDK 0.24 and Pi/Codex/Tools
+6.1. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs
 for a complete session example.
+
+Put client use, including session creation, inside `try/finally` and `await aex.close()` in
+`finally`. The client retains one shared host connection until close, even if creation fails.
+Close releases client I/O and local handlers while retaining stored sessions. Use
+`session.interrupt()` to stop the current turn, `session.end()` to finish the conversation,
+and `session.delete()` to remove an ended or failed session. `interrupt()` replaces SDK
+`cancel()`; the HTTP route is unchanged. See the [session example](../../examples/session.mjs).
+
+Tool schemas describe accepted inputs. Defaulted arguments are optional; Zod applies defaults
+and transforms before the handler. Ordinary objects strip extra properties and strict objects
+reject them. Pi dispatches in parallel; coordinate shared resources in their owning Tool or
+Environment. The official loops explain unanswered calls after interruption without replaying them.
 
 Host Tools return ordinary successful output or a Brain `Outcome` directly. Structured errors retain
 code, message, retryable and details. The top-level statuses `ok`, `error`, `timeout`, `cancelled`
@@ -44,7 +56,8 @@ not grant authority to create more credentials. New key secrets are returned onc
 Pass `output: { type: z.object({ name: z.string() }), maxRetries: 2 }` in the second
 argument to `session.send`. The SDK prompts for JSON, validates with Zod locally,
 and returns the inferred parsed value. Two additional correction turns are allowed
-by default; set zero to disable retries. Ordinary sends keep returning session state.
+by default; set zero to disable retries. Ordinary sends keep returning session state;
+`idle` alone does not mean the turn succeeded. No terminal Tool is needed for structured output.
 
 See the [executable example](https://github.com/aexhq/aex/blob/main/examples/structured-output.mjs)
 and [full contract](https://aex.dev/brain/docs/guides/structured-output).
