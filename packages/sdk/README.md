@@ -10,9 +10,10 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.73 uses Brain SDK 0.22 and Pi/Codex/Tools
-5.1. Brain 0.22 retains the existing Wasm interface. Components and session configurations are
-not migrated automatically. See https://aex.dev/docs
+extension builders are Brain's implementations. SDK 0.74 uses Brain SDK 0.23 and Pi/Codex/Tools
+6.0. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
+runtime and extensions together. Retained sessions require a compatibility check before upgrading.
+See https://aex.dev/docs
 for a complete session example.
 
 Host Tools return ordinary successful output or a Brain `Outcome` directly. Structured errors retain

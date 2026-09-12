@@ -52,6 +52,7 @@ They are separate scope changes; “official host” alone does not settle them.
 | Brain extension compatibility and customer-defined hosted Tools/Environments with verified isolation | A general shell sandbox fleet and custom images unless required by the selected launch Environment |
 | Supported provider catalogue and per-session customer keys | Aex-funded inference, pricing, credits, payments, refunds |
 | Brain lifecycle, transcript, committed Events and live SSE | A second event system, workflow retries, mutable placement |
+| Immutable session image/PDF attachments, HTTPS capability URLs and bounded S3 storage | Inline Brain media, multipart uploads, URL refresh and R2 deployment |
 | Bounded admission, storage and stream usage | Fair scheduling across arbitrary hostile workloads |
 | One serving node, PostgreSQL product state, persistent Brain disk, coordinated backup/restore and interruption semantics | Automatic failover, horizontal session placement, multi-region |
 | Thin Aex SDK over Brain, executable quickstart, operator commands, customer CLI and three-item dashboard | Paid billing |
@@ -191,3 +192,11 @@ explicitly held. CI success does not substitute for deployment-dependent gates.
 Byte reservations and resource limits remain launch hypotheses. Storage admission is not a
 hard filesystem quota. No production availability, capacity or recovery promise is made
 before the held acceptance work passes.
+
+## URL media increment - 2026-09-12
+
+Aex owns session attachments and their immutable expiry, quotas, revocation and cleanup; Brain
+receives only HTTPS image/PDF references. The [attachment API](docs/api.md) and SDK use Brain's
+media contracts. Storage uses one put/get/delete interface with an S3 implementation. PostgreSQL,
+SDK, hosted recovery and real S3 checks pass locally. Exact-source CI, protected storage/provider
+checks and retained-session compatibility inspection remain required before release and deployment.
