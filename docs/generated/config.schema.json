@@ -10,6 +10,16 @@
       },
       "uniqueItems": true
     },
+    "attachments": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Config"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "brain_url": {
       "type": "string"
     },
@@ -44,6 +54,62 @@
     "limits"
   ],
   "$defs": {
+    "Config": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string"
+        },
+        "bytes_per_account": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "count_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "endpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "public_origin": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "transfer_timeout_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "ttl_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "public_origin",
+        "bucket",
+        "region",
+        "max_bytes",
+        "count_per_account",
+        "bytes_per_account",
+        "ttl_secs",
+        "transfer_timeout_secs"
+      ]
+    },
     "Limits": {
       "type": "object",
       "properties": {

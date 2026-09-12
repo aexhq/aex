@@ -5,6 +5,20 @@ use crate::{
 };
 use brain_protocol::{CreateSessionRequest, Driver};
 
+pub fn request(
+    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    reserve_download: bool,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    // A model turn can wait on a provider fetching its attachment through this same service.
+    let mut permit = semaphore
+        .try_acquire_many_owned(if reserve_download { 2 } else { 1 })
+        .map_err(|_| Error::capacity())?;
+    if reserve_download {
+        drop(permit.split(1));
+    }
+    Ok(permit)
+}
+
 pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) -> Result<()> {
     let selected = format!("{}/{}", request.model.provider, request.model.name);
     if !app.config.models.contains(&selected) {

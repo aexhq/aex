@@ -54,6 +54,10 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "attachment",
+                    schemars::schema_for!(aex_server::attachments::Attachment),
+                ),
+                (
                     "login-grant-input",
                     schemars::schema_for!(aex_server::account::LoginGrantInput),
                 ),

@@ -169,6 +169,14 @@
           "type": "integer",
           "format": "int64"
         },
+        "attachment_bytes": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "attachments": {
+          "type": "integer",
+          "format": "int64"
+        },
         "measured_at": {
           "type": [
             "integer",
@@ -188,7 +196,9 @@
       "required": [
         "sessions",
         "active_turns",
-        "retained_bytes"
+        "retained_bytes",
+        "attachments",
+        "attachment_bytes"
       ]
     }
   }

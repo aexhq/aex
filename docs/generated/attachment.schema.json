@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Attachment",
+  "type": "object",
+  "properties": {
+    "expires_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "id": {
+      "type": "string"
+    },
+    "media": {
+      "$ref": "#/$defs/Media"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "media",
+    "expires_at"
+  ],
+  "$defs": {
+    "FileMediaType": {
+      "type": "string",
+      "enum": [
+        "application/pdf"
+      ]
+    },
+    "Media": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": {
+              "$ref": "#/$defs/FileMediaType"
+            },
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "media_type",
+            "url"
+          ]
+        }
+      ]
+    }
+  }
+}

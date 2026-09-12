@@ -1,6 +1,7 @@
 pub mod account;
 pub mod admission;
 pub mod artifacts;
+pub mod attachments;
 pub mod brain;
 pub mod config;
 pub mod error;
@@ -20,6 +21,8 @@ pub struct App {
     pub accepting: Arc<std::sync::atomic::AtomicBool>,
     pub config: Arc<config::Config>,
     pub store: store::Store,
+    pub attachment_storage: Option<Arc<dyn attachments::storage::Storage>>,
+    pub attachment_uploads: Arc<tokio::sync::RwLock<()>>,
     pub brain: brain::Brain,
     pub changed: watch::Sender<u64>,
     pub requests: Arc<Semaphore>,
@@ -52,6 +55,12 @@ impl App {
         std::fs::create_dir_all(&config.data_dir)?;
         let store = store::Store::open(&database_url).await?;
         let brain = brain::Brain::new(&config, brain_token)?;
+        let attachment_storage = config
+            .attachments
+            .as_ref()
+            .map(attachments::storage::S3::new)
+            .transpose()?
+            .map(|storage| Arc::new(storage) as Arc<dyn attachments::storage::Storage>);
         Ok(Self {
             operator_lock: Arc::default(),
             accepting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -59,6 +68,8 @@ impl App {
             account_requests: Arc::default(),
             config: Arc::new(config),
             store,
+            attachment_storage,
+            attachment_uploads: Arc::default(),
             brain,
             changed: watch::channel(0).0,
             streams: Arc::default(),

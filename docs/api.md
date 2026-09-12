@@ -1,14 +1,18 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.73.0 (Brain SDK 0.22.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.74.0 (Brain SDK 0.23.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
 | --- | --- | --- |
+| GET | `/v1/models?provider=...` | Active key; deployment-allowed models and known capabilities |
 | POST, GET | `/v1/sessions` | Active key; lists contain owned sessions only |
 | GET, DELETE | `/v1/sessions/{id}` | Account ownership |
 | GET | `/v1/sessions/{id}/transcript` | Account ownership |
 | GET | `/v1/sessions/{id}/events?after=N` | Ownership; JSON or SSE by Accept header |
+| POST | `/v1/sessions/{id}/attachments` | Ownership; bounded upload and required operation key |
+| DELETE | `/v1/sessions/{id}/attachments/{attachment}` | Ownership; revokes new reads |
+| GET, HEAD | `/v1/attachments/{id}/content?token=...` | Scoped read capability; active account, owned session and unexpired file |
 | POST | `/v1/sessions/{id}/messages`, `/cancel`, `/end` | Ownership and operation key |
 | POST | `/v1/agentloops`, `/v1/tools` | Active key; bounded account-owned Wasm Components |
 | GET | `/v1/agentloops/{id}`, `/v1/tools/{id}` | Account-owned or operator-approved content address |
@@ -80,3 +84,5 @@ The CLI opens `/cli` on the website, completes Google sign-in if needed and rece
 the code on its loopback listener. State binds the callback to the initiating process.
 This follows the external-browser and loopback pattern in RFC 8252 and S256 PKCE in
 RFC 7636. The website handles identity-provider integration, not separate product APIs.
+
+Image and PDF uploads use the [attachment API](attachments.md). `models(provider?)` exposes only the configured hosted model choices, with models.dev metadata when known.

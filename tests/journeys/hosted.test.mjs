@@ -35,17 +35,24 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     const body=JSON.parse(Buffer.concat(chunks)); modelCalls++;
     assert.equal(req.headers.authorization,"Bearer test-model-secret");
     if(modelDelay) await pause(modelDelay);
+    assert.equal(req.url, "/v1/responses");
+    let output = [], text = "answered";
     if (structuredAnswers) {
       assert.ok(structuredAnswers.length, "unexpected structured-output model call");
-      assert.equal(body.response_format, undefined);
-      res.writeHead(200,{"content-type":"text/event-stream"});
-      res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{content:structuredAnswers.shift()},finish_reason:"stop"}]})}\n\ndata: [DONE]\n\n`);
-      return;
+      assert.equal(body.text?.format, undefined);
+      text = structuredAnswers.shift();
+    } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
+      output = [{ type: "function_call", call_id: "lookup-1", name: "lookup", arguments: '{"id":"42"}' }];
+      text = undefined;
     }
-    res.writeHead(200,{"content-type":"text/event-stream"});
-    const delta=body.tools?.length && body.messages.at(-1).role!=="tool"
-      ? {tool_calls:[{index:0,id:"lookup-1",type:"function",function:{name:"lookup",arguments:'{"id":"42"}'}}]} : {content:"answered"};
-    res.end(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason:delta.tool_calls?"tool_calls":"stop"}]})}\n\ndata: [DONE]\n\n`);
+    const frames = output.map((item, output_index) => ({ type: "response.output_item.done", output_index, item }));
+    if (text !== undefined) {
+      frames.push({ type: "response.output_text.delta", output_index: 0, delta: text });
+      frames.push({ type: "response.output_item.done", output_index: 0, item: { type: "message", content: [{ type: "output_text", text }] } });
+    }
+    frames.push({ type: "response.completed", response: { output } });
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end(frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join(""));
   });
   model.listen(0,"127.0.0.1"); await once(model,"listening");
   const configuration=JSON.parse(await readFile(new URL("../../examples/config.json",import.meta.url)));
@@ -82,6 +89,10 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   }
   const a=await account(),b=await account();
   const client=new Aex({baseUrl,apiKey:a.token}),other=new Aex({baseUrl,apiKey:b.token});
+  const discovery = await client.models("vercel-ai-gateway");
+  assert.deepEqual(discovery.providers[0].models.map(model => model.id), ["test/journey"]);
+  assert.equal(discovery.providers[0].models[0].input_modalities, null);
+  assert.equal(discovery.providers[0].base_url, undefined);
   const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
   const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id})=>{toolCalls++;return `item-${id}`;}});
   const session=await client.sessions.create({...options,tools:[lookup({env:hostEnv({name:"app"})})]},{idempotencyKey:"shared-key"});

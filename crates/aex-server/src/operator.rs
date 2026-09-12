@@ -128,7 +128,8 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
                     deleted += 1;
                 }
             }
-            json!({"deleted":deleted})
+            let attachments = crate::attachments::maintain(app).await?;
+            json!({"deleted":deleted,"attachments_deleted":attachments.deleted,"attachments_failed":attachments.failed})
         }
         Operation::CreateAccount => {
             let id = app.store.create_account(&app.config.limits).await?;
