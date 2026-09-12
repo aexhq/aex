@@ -76,6 +76,8 @@ pub struct Usage {
     pub sessions: i64,
     pub active_turns: i64,
     pub retained_bytes: i64,
+    pub attachments: i64,
+    pub attachment_bytes: i64,
     pub measured_at: Option<i64>,
 }
 
@@ -264,10 +266,14 @@ pub async fn handle(
     if matches!(path, "/v1/account" | "/v1/usage") {
         let row=sqlx::query("SELECT count(*) AS sessions,count(active_key) AS active_turns,coalesce(sum(retained_bytes),0)::bigint AS retained_bytes FROM sessions WHERE account=$1 AND state!='deleted'")
             .bind(&account).fetch_one(&app.store.0).await?;
+        let attachments = sqlx::query("SELECT count(*) AS count,coalesce(sum(bytes),0)::bigint AS bytes FROM attachments WHERE account=$1")
+            .bind(&account).fetch_one(&app.store.0).await?;
         let usage = Usage {
             sessions: row.get("sessions"),
             active_turns: row.get("active_turns"),
             retained_bytes: row.get("retained_bytes"),
+            attachments: attachments.get("count"),
+            attachment_bytes: attachments.get("bytes"),
             measured_at: app.store.usage_received().await?,
         };
         if path == "/v1/usage" {

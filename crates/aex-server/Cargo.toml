@@ -6,12 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+storage-integration-tests = []
+
 [dependencies]
 anyhow = "1"
 async-stream = "0.3"
 axum = "0.8"
 base64 = "0.22"
-brain-protocol = { git = "https://github.com/aexhq/brain", rev = "d3d3f0e947bd6c2b5835ea2714e6dc04e22c589a" }
+brain-protocol = { git = "https://github.com/aexhq/brain", rev = "ff0c242f1cef742c020483e6e1597b12af7b66fd" }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 fs2 = "0.4"
@@ -31,6 +34,7 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
+aws-sdk-s3 = { version = "1.146.1", default-features = false, features = ["rt-tokio", "rustls", "default-https-client"] }
 
 [dev-dependencies]
 tempfile = "3"

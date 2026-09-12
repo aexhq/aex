@@ -61,3 +61,5 @@ await account.account.logout();
 `Aex.exchangeLogin({code, code_verifier, redirect_uri})` expose the shared HTTP login
 contract for clients. The `@aexhq/cli` package handles opening the browser, PKCE,
 loopback callback and local credential storage.
+
+Image and PDF uploads use the [attachment API](../../docs/attachments.md). `models(provider?)` exposes only the configured hosted model choices, with models.dev metadata when known.

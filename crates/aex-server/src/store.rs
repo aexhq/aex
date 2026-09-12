@@ -29,7 +29,7 @@ impl Store {
         sqlx::migrate!().run(&pool).await?;
         Ok(Self(pool))
     }
-    async fn lock_account(
+    pub(crate) async fn lock_account(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         account: &str,
     ) -> Result<()> {
@@ -116,9 +116,22 @@ impl Store {
         limits: &Limits,
     ) -> Result<Claim> {
         let mut tx = self.0.begin().await?;
-        Self::lock_account(&mut tx, &p.account).await?;
+        let claim = Self::claim_in(&mut tx, p, operation, key, fingerprint, limits).await?;
+        tx.commit().await?;
+        Ok(claim)
+    }
+
+    pub(crate) async fn claim_in(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        p: &Principal,
+        operation: &str,
+        key: &str,
+        fingerprint: &str,
+        limits: &Limits,
+    ) -> Result<Claim> {
+        Self::lock_account(tx, &p.account).await?;
         if let Some(row) = sqlx::query("SELECT fingerprint,state,result FROM claims WHERE account=$1 AND operation=$2 AND client_key=$3")
-            .bind(&p.account).bind(operation).bind(key).fetch_optional(&mut *tx).await? {
+            .bind(&p.account).bind(operation).bind(key).fetch_optional(&mut **tx).await? {
             if row.get::<String,_>("fingerprint") != fingerprint { return Err(Error::conflict("operation key reused with different request")); }
             return if row.get::<String,_>("state") == "complete" {
                 Ok(Claim::Complete(serde_json::from_str(row.get("result"))?))
@@ -126,18 +139,18 @@ impl Store {
         }
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM claims WHERE account=$1")
             .bind(&p.account)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
         if count >= i64::from(limits.claims_per_account) {
             return Err(Error::capacity());
         }
         if operation == "create" {
             let count: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM sessions WHERE account=$1 AND state!='deleted') + (SELECT count(*) FROM claims WHERE account=$2 AND operation='create' AND state='pending')")
-                .bind(&p.account).bind(&p.account).fetch_one(&mut *tx).await?;
+                .bind(&p.account).bind(&p.account).fetch_one(&mut **tx).await?;
             if count >= i64::from(limits.sessions_per_account) {
                 return Err(Error::capacity());
             }
-            let bytes: i64 = sqlx::query_scalar("SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions WHERE account=$1 AND state!='deleted'").bind(&p.account).fetch_one(&mut *tx).await?;
+            let bytes: i64 = sqlx::query_scalar("SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions WHERE account=$1 AND state!='deleted'").bind(&p.account).fetch_one(&mut **tx).await?;
             if (bytes as u64)
                 .saturating_add((count as u64 + 1).saturating_mul(limits.turn_reserve_bytes))
                 > limits.retained_bytes_per_account
@@ -153,9 +166,8 @@ impl Store {
             .bind(fingerprint)
             .bind(&upstream)
             .bind(now())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        tx.commit().await?;
         Ok(Claim::New(upstream))
     }
     pub async fn complete_create(

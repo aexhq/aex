@@ -12,6 +12,8 @@ pub struct Config {
     pub agentloops: BTreeSet<String>,
     pub models: BTreeSet<String>,
     pub limits: Limits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<crate::attachments::Config>,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -81,6 +83,13 @@ impl Config {
             self.limits.turn_reserve_bytes <= self.limits.retained_bytes_per_account,
             "turn reserve exceeds account storage"
         );
+        if let Some(config) = &self.attachments {
+            anyhow::ensure!(
+                self.limits.requests >= 2 && self.limits.requests_per_account >= 2,
+                "attachments require request capacity for provider downloads"
+            );
+            config.validate(self.limits.request_bytes)?;
+        }
         Ok(())
     }
 }

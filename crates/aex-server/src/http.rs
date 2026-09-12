@@ -20,6 +20,10 @@ pub fn router(app: App) -> Router {
 #[derive(Debug, PartialEq)]
 pub enum Route<'a> {
     Account,
+    Models,
+    AttachmentUpload(&'a str),
+    AttachmentDelete(&'a str, &'a str),
+    AttachmentContent(&'a str),
     Health(bool),
     Create,
     List,
@@ -41,6 +45,16 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
         return Ok(Route::Account);
     }
     match (method.as_str(), parts.as_slice()) {
+        ("GET", ["", "v1", "models"]) => Ok(Route::Models),
+        ("POST", ["", "v1", "sessions", session, "attachments"]) => {
+            Ok(Route::AttachmentUpload(session))
+        }
+        ("DELETE", ["", "v1", "sessions", session, "attachments", id]) => {
+            Ok(Route::AttachmentDelete(session, id))
+        }
+        ("GET" | "HEAD", ["", "v1", "attachments", id, "content"]) => {
+            Ok(Route::AttachmentContent(id))
+        }
         ("GET", ["", "health", "live"]) => Ok(Route::Health(false)),
         ("GET", ["", "health", "ready"]) => Ok(Route::Health(true)),
         ("POST", ["", "v1", "sessions"]) => Ok(Route::Create),
@@ -95,18 +109,22 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
 }
 
 async fn dispatch(app: App, request: Request) -> Result<Response> {
-    let _permit = app
-        .requests
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| Error::capacity())?;
     let (parts, body) = request.into_parts();
     let path = parts.uri.path();
     let route = route(&parts.method, path)?;
+    let reserve_download = app.config.attachments.is_some();
+    let _permit = crate::admission::request(
+        app.requests.clone(),
+        reserve_download && !matches!(route, Route::AttachmentContent(_)),
+    )?;
     tracing::Span::current().record(
         "route",
         match route {
             Route::Account => "account",
+            Route::Models => "models",
+            Route::AttachmentUpload(_)
+            | Route::AttachmentDelete(_, _)
+            | Route::AttachmentContent(_) => "attachments",
             Route::Health(_) => "health",
             Route::Create => "create",
             Route::List => "list",
@@ -130,15 +148,30 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     if !app.accepting.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(Error::capacity());
     }
-    if parts.uri.query().is_some() && !matches!(route, Route::Session(_, "events")) {
-        return Err(Error::invalid("query parameters are unsupported"));
+    if let Route::AttachmentContent(id) = route {
+        return crate::attachments::download(
+            &app,
+            id,
+            parts.uri.query(),
+            parts.method == Method::HEAD,
+            _permit,
+        )
+        .await;
     }
-    if let Some(query) = parts.uri.query()
-        && !query
-            .strip_prefix("after=")
-            .is_some_and(|v| v.parse::<u64>().is_ok())
-    {
-        return Err(Error::invalid("expected after sequence"));
+    if let Some(query) = parts.uri.query() {
+        let valid = match route {
+            Route::Session(_, "events") => query
+                .strip_prefix("after=")
+                .is_some_and(|v| v.parse::<u64>().is_ok()),
+            Route::Models => {
+                let pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
+                pairs.len() == 1 && pairs[0].0 == "provider" && !pairs[0].1.is_empty()
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(Error::invalid("unsupported query parameters"));
+        }
     }
     let token = if path == "/v1/auth/exchange" {
         ""
@@ -163,16 +196,15 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     tracing::Span::current().record("account", &principal.account);
     let _account_permit = {
         let mut requests = app.account_requests.lock().await;
-        requests
+        let semaphore = requests
             .entry(principal.account.clone())
             .or_insert_with(|| {
                 std::sync::Arc::new(tokio::sync::Semaphore::new(
                     app.config.limits.requests_per_account,
                 ))
             })
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::capacity())?
+            .clone();
+        crate::admission::request(semaphore, reserve_download)?
     };
     let mut changes = app.changed.subscribe();
     app.store.active(&principal).await?;
@@ -188,6 +220,59 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let mut stream_session = None;
     let mut turn_session = None;
     match route {
+        Route::AttachmentUpload(session) => {
+            return crate::attachments::upload(&app, &principal, session, &parts.headers, body)
+                .await;
+        }
+        Route::AttachmentDelete(session, id) => {
+            return crate::attachments::revoke(&app, &principal, session, id).await;
+        }
+        Route::AttachmentContent(_) => unreachable!(),
+        Route::Models => {
+            let response = app
+                .brain
+                .request(
+                    Method::GET,
+                    &parts.uri.to_string(),
+                    &parts.headers,
+                    Bytes::new(),
+                    None,
+                    None,
+                )
+                .await?;
+            if !response.status().is_success() {
+                return finite(&app, response).await;
+            }
+            let mut models: brain_protocol::ModelList =
+                serde_json::from_slice(&app.brain.bytes(response).await?)?;
+            for provider in &mut models.providers {
+                provider.models.retain(|model| {
+                    app.config
+                        .models
+                        .contains(&format!("{}/{}", provider.id, model.id))
+                });
+                for model in &app.config.models {
+                    if let Some(id) = model.strip_prefix(&format!("{}/", provider.id))
+                        && !provider.models.iter().any(|model| model.id == id)
+                    {
+                        provider.models.push(brain_protocol::ModelDef {
+                            id: id.into(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                provider
+                    .models
+                    .sort_by(|left, right| left.id.cmp(&right.id));
+            }
+            models.providers.retain(|provider| {
+                app.config
+                    .models
+                    .iter()
+                    .any(|model| model.starts_with(&format!("{}/", provider.id)))
+            });
+            return Ok(axum::Json(models).into_response());
+        }
         Route::Create => {
             return sessions::create(
                 &app,

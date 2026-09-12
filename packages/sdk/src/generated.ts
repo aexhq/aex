@@ -1,4 +1,5 @@
 /* Generated from aex-server schemas. */
+import type {Media} from "@aexhq/brain";
 
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
@@ -7,6 +8,15 @@
 export type Billing = "preview_customer_model_keys";
 
 export interface AexContracts {}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Attachment".
+ */
+export interface Attachment {
+  expires_at: number;
+  id: string;
+  media: Media;
+}
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Limits".
@@ -38,6 +48,8 @@ export interface Limits {
  */
 export interface Usage {
   active_turns: number;
+  attachment_bytes: number;
+  attachments: number;
   measured_at?: number | null;
   retained_bytes: number;
   sessions: number;

@@ -4,6 +4,28 @@ import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
+test("attachment upload sends bytes and immutable expiry through Brain's transport", async () => {
+  const bytes = new TextEncoder().encode("%PDF-1.7\nfixture");
+  const attachment = { id: "att_one", media: { type: "file", media_type: "application/pdf", url: "https://api.aex.dev/v1/attachments/att_one/content?token=read_one" }, expires_at: 2000000000 };
+  const requests = [];
+  const client = new Aex({ apiKey: "customer-key", fetch: async (url, init) => {
+    requests.push({ url, init });
+    return init.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json(attachment, { status: 201 });
+  } });
+  assert.deepEqual(await client.attachments.upload("session", bytes, { contentType: "application/pdf", expiresAt: attachment.expires_at, idempotencyKey: "publish-once" }), attachment);
+  const { url, init } = requests[0];
+  assert.equal(url, "https://api.aex.dev/v1/sessions/session/attachments");
+  assert.deepEqual(new Uint8Array(init.body), bytes);
+  const headers = new Headers(init.headers);
+  assert.equal(headers.get("authorization"), "Bearer customer-key");
+  assert.equal(headers.get("content-type"), "application/pdf");
+  assert.equal(headers.get("x-aex-expires-at"), "2000000000");
+  assert.equal(headers.get("idempotency-key"), "publish-once");
+  assert.throws(() => client.attachments.upload("session", bytes, { contentType: "application/pdf", expiresAt: 1.5, idempotencyKey: "bad" }), /Unix seconds/);
+  await client.attachments.delete("session", attachment.id);
+  assert.equal(requests.at(-1).url, "https://api.aex.dev/v1/sessions/session/attachments/att_one");
+});
+
 test("Aex sessions inherit typed structured output from the pinned Brain SDK", async () => {
   const client = new Aex({ apiKey: "customer-key", fetch: async (url, init) => {
     if (url.endsWith("/messages")) {

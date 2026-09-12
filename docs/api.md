@@ -74,3 +74,5 @@ The CLI opens `/cli` on the website, completes Google sign-in if needed and rece
 the code on its loopback listener. State binds the callback to the initiating process.
 This follows the external-browser and loopback pattern in RFC 8252 and S256 PKCE in
 RFC 7636. The website handles identity-provider integration, not separate product APIs.
+
+Image and PDF uploads use the [attachment API](attachments.md). `models(provider?)` exposes only the configured hosted model choices, with models.dev metadata when known.
