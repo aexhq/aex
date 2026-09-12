@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.71.0 (Brain SDK 0.20.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.73.0 (Brain SDK 0.22.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -24,6 +24,12 @@ host resource grants can run in Brain. Committed event cursors and shapes are
 preserved. Keepalive comments have no event identity and are inserted only between frames.
 Server-error text is redacted while retaining the Brain error code. Bodies and credentials
 are never logged.
+
+Host Tools may return Brain Outcomes directly. Structured failures retain code, message, retryable
+and details. Tool deadlines produce `timeout`, explicit cancellation produces `cancelled`, and a
+possibly dispatched operation without a reliable result produces `unknown`. Each is a failed Tool
+result, without automatic replay or a promise of rollback. The existing HTTP and Wasm shapes are
+unchanged. See [the Tool return contract](https://aex.dev/brain/docs/guides/write-a-tool#return-values-and-outcomes).
 
 Create claims are account/operation/key scoped. Matching completed creates replay while
 ownership exists; differing payloads conflict. Unresolved creates are never dispatched again,

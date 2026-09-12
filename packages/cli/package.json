@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.39.0",
+  "version": "0.40.0",
   "description": "Aex account and API key management from the terminal",
   "license": "MIT",
   "type": "module",
@@ -9,6 +9,6 @@
   "files": ["src", "README.md"],
   "repository": { "type": "git", "url": "git+https://github.com/aexhq/aex.git", "directory": "packages/cli" },
   "publishConfig": { "access": "public", "tag": "next" },
-  "dependencies": { "@aexhq/sdk": "0.72.0" },
+  "dependencies": { "@aexhq/sdk": "0.73.0" },
   "scripts": { "test": "node --test test/*.test.mjs" }
 }
