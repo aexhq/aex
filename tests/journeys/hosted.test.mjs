@@ -121,6 +121,28 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(history.filter(e => e.type === "turn_ended").length, 3);
     structuredAnswers = undefined;
     await structured.end(); await structured.delete();
+
+    let returned;
+    let calls = 0;
+    const terminal = tool({ name: "lookup", description: "Read a remote result", input: z.object({ id: z.string() }),
+      output: z.string(), run: () => { calls++; return returned; } });
+    const outcomes = await client.sessions.create({ ...options, agentloop: loop({ env: brainEnv({ name: "brain" }) }),
+      tools: [terminal({ env: hostEnv({ name: "app" }) })] });
+    for (const outcome of [
+      { status: "error", error: { code: "rate_limited", message: "Wait", retryable: true, details: { retry_after_ms: 1000 } } },
+      { status: "unknown", message: "Connection closed after dispatch" }, { status: "timeout" }, { status: "cancelled" },
+    ]) {
+      returned = outcome;
+      await outcomes.send("look it up once");
+      const history = []; for await (const event of outcomes.events()) history.push(event);
+      const result = history.filter(event => event.type === "tool_call_ended").at(-1).data.result;
+      assert.equal(result.is_error, true);
+      assert.equal(result.output.code, outcome.status === "error" ? "rate_limited" : outcome.status);
+      if (outcome.status === "error") assert.deepEqual(result.output, outcome.error);
+      assert.equal(history.some(event => event.type === "environment_unreachable"), false);
+    }
+    assert.equal(calls, 4);
+    await outcomes.end(); await outcomes.delete();
   }
   await meter();
 
