@@ -10,10 +10,22 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.72 uses Brain SDK 0.21 and official
-extension packages 5.x. Rebuild custom Wasm Components against Brain 0.20's WIT; older
-Components and session configurations are not migrated automatically. See https://aex.dev/docs
+extension builders are Brain's implementations. SDK 0.73 uses Brain SDK 0.22 and Pi/Codex/Tools
+5.1. Brain 0.22 retains the existing Wasm interface. Components and session configurations are
+not migrated automatically. See https://aex.dev/docs
 for a complete session example.
+
+Host Tools return ordinary successful output or a Brain `Outcome` directly. Structured errors retain
+code, message, retryable and details. The top-level statuses `ok`, `error`, `timeout`, `cancelled`
+and `unknown` declare outcomes; malformed envelopes fail validation, and only successful values
+pass through the output schema. Tool deadlines produce `timeout`, explicit cancellation produces
+`cancelled`, and missing reliable results after dispatch produce `unknown`. All are failed Tool
+results. Timeout and cancellation do not promise rollback. See
+[the full return contract](https://aex.dev/brain/docs/guides/write-a-tool#return-values-and-outcomes).
+
+`@aexhq/tools-mcp` runs selected MCP Tools in your application host, preserving structured failures
+and original JSON Schema constraints. The official Docker and browser HTTP Environments target
+standalone Brain and require operator deployment. See [official extensions](https://github.com/aexhq/extensions).
 
 Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
 executes application functions in your process. Native hosted Components receive no server
