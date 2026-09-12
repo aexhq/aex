@@ -38,7 +38,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.74.0 @aexhq/agentloop-pi@6.0.0
+npm install @aexhq/sdk@0.75.0 @aexhq/agentloop-pi@6.1.0
 ```
 
 ```ts
@@ -46,20 +46,24 @@ import { Aex, brainEnv } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-const session = await aex.sessions.create({
-  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-  model: {
-    provider: "openai",
-    name: "gpt-4.1-mini",
-    apiKey: process.env.OPENAI_API_KEY!,
-  },
-});
-
 try {
-  await session.send("Explain what an agent session is in one sentence.");
-  for await (const event of session.events()) console.log(event);
+  const session = await aex.sessions.create({
+    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+    model: {
+      provider: "openai",
+      name: "gpt-4.1-mini",
+      apiKey: process.env.OPENAI_API_KEY!,
+    },
+  });
+
+  try {
+    await session.send("Explain what an agent session is in one sentence.");
+    for await (const event of session.events()) console.log(event);
+  } finally {
+    await session.end();
+  }
 } finally {
-  await session.end();
+  await aex.close();
 }
 ```
 
@@ -78,7 +82,7 @@ Manage keys, view your account and usage, or check billing status from whichever
 
 Use your own model keys and Brain-compatible extensions.
 Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.73 uses Brain 0.22 and official extensions 5.1. Custom Wasm Components must target
+SDK 0.75 uses Brain 0.24 and official extensions 6.1. Custom Wasm Components must target
 the matching WIT contract. Prepare application Tool dependencies before registration;
 extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
 

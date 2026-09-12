@@ -4,6 +4,25 @@ import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
+test("inherited client close aborts an attachment upload and rejects later work", async () => {
+  const entered = Promise.withResolvers();
+  let requests = 0;
+  const client = new Aex({ apiKey: "customer-key", fetch: async (_, { signal }) => {
+    requests++;
+    entered.resolve();
+    return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+  } });
+  const upload = () => client.attachments.upload("session", new Uint8Array([1]), { contentType: "image/png", idempotencyKey: "image-once" });
+  const rejected = assert.rejects(upload(), { name: "AbortError" });
+  await entered.promise;
+  await client.close();
+  await rejected;
+  await assert.rejects(upload(), { name: "AbortError" });
+  await assert.rejects(client.account.get(), { name: "AbortError" });
+  assert.equal(requests, 1);
+  assert.equal(client.close, upstream.Brain.prototype.close);
+});
+
 test("attachment upload sends bytes and immutable expiry through Brain's transport", async () => {
   const bytes = new TextEncoder().encode("%PDF-1.7\nfixture");
   const attachment = { id: "att_one", media: { type: "file", media_type: "application/pdf", url: "https://api.aex.dev/v1/attachments/att_one/content?token=read_one" }, expires_at: 2000000000 };

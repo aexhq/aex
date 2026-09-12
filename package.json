@@ -12,9 +12,9 @@
     "test:cli": "npm run build && npm test --workspace @aexhq/cli"
   },
   "devDependencies": {
-    "@aexhq/agentloop-pi": "6.0.0",
-    "@aexhq/agentloop-codex": "6.0.0",
-    "@aexhq/brain": "0.23.0",
+    "@aexhq/agentloop-pi": "6.1.0",
+    "@aexhq/agentloop-codex": "6.1.0",
+    "@aexhq/brain": "0.24.0",
     "@types/node": "22.19.19",
     "json-schema-to-typescript": "15.0.4",
     "pg": "8.16.3",
