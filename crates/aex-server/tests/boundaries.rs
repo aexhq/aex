@@ -334,15 +334,20 @@ fn configuration_and_routes_fail_closed() {
 }
 
 #[tokio::test]
-async fn hosted_policy_rejects_customer_code_endpoints_and_ambient_grants() {
+async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_ambient_grants() {
     let (_dir, app, p, _) = app().await;
     let base = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","driver":"brain"}]});
-    let valid: brain_protocol::CreateSessionRequest = serde_json::from_value(base.clone()).unwrap();
-    assert!(
-        aex_server::admission::create(&app, &p, &valid)
-            .await
-            .is_ok()
-    );
+    for provider in ["openai", "deepseek", "customer-provider"] {
+        let mut request = base.clone();
+        request["model"]["provider"] = serde_json::json!(provider);
+        let request = serde_json::from_value(request).unwrap();
+        assert!(
+            aex_server::admission::create(&app, &p, &request)
+                .await
+                .is_ok(),
+            "Brain validates {provider}"
+        );
+    }
     for (pointer, value) in [
         (
             "/environments",
@@ -352,7 +357,6 @@ async fn hosted_policy_rejects_customer_code_endpoints_and_ambient_grants() {
             "/agentloop/implementation/id",
             serde_json::json!("f".repeat(64)),
         ),
-        ("/model/provider", serde_json::json!("customer-provider")),
         (
             "/environments",
             serde_json::json!([{"name":"brain","driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),

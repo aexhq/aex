@@ -88,4 +88,4 @@ await account.account.logout();
 contract for clients. The `@aexhq/cli` package handles opening the browser, PKCE,
 loopback callback and local credential storage.
 
-Image and PDF uploads use the [attachment API](../../docs/attachments.md). `models(provider?)` exposes only the configured hosted model choices, with models.dev metadata when known.
+Image and PDF uploads use the [attachment API](../../docs/attachments.md). `models(provider?)` forwards Brain's catalogue unchanged, with models.dev metadata when known. Brain validates model selections; Aex has no separate model allowlist.

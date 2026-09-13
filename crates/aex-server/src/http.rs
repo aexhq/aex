@@ -163,10 +163,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             Route::Session(_, "events") => query
                 .strip_prefix("after=")
                 .is_some_and(|v| v.parse::<u64>().is_ok()),
-            Route::Models => {
-                let pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
-                pairs.len() == 1 && pairs[0].0 == "provider" && !pairs[0].1.is_empty()
-            }
+            Route::Models => true,
             _ => false,
         };
         if !valid {
@@ -240,38 +237,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                     None,
                 )
                 .await?;
-            if !response.status().is_success() {
-                return finite(&app, response).await;
-            }
-            let mut models: brain_protocol::ModelList =
-                serde_json::from_slice(&app.brain.bytes(response).await?)?;
-            for provider in &mut models.providers {
-                provider.models.retain(|model| {
-                    app.config
-                        .models
-                        .contains(&format!("{}/{}", provider.id, model.id))
-                });
-                for model in &app.config.models {
-                    if let Some(id) = model.strip_prefix(&format!("{}/", provider.id))
-                        && !provider.models.iter().any(|model| model.id == id)
-                    {
-                        provider.models.push(brain_protocol::ModelDef {
-                            id: id.into(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                provider
-                    .models
-                    .sort_by(|left, right| left.id.cmp(&right.id));
-            }
-            models.providers.retain(|provider| {
-                app.config
-                    .models
-                    .iter()
-                    .any(|model| model.starts_with(&format!("{}/", provider.id)))
-            });
-            return Ok(axum::Json(models).into_response());
+            return finite(&app, response).await;
         }
         Route::Create => {
             return sessions::create(

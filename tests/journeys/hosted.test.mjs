@@ -57,7 +57,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   model.listen(0,"127.0.0.1"); await once(model,"listening");
   const configuration=JSON.parse(await readFile(new URL("../../examples/config.json",import.meta.url)));
   Object.assign(configuration,{listen:`127.0.0.1:${aexPort}`,operator_listen:`127.0.0.1:${adminPort}`,data_dir:join(directory,"aex"),brain_url:brainUrl,
-    models:["vercel-ai-gateway/test/journey"],agentloops:[createHash("sha256").update(await readFile(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP)).digest("hex")]});
+    agentloops:[createHash("sha256").update(await readFile(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP)).digest("hex")]});
   configuration.limits.minimum_free_disk_bytes=1;
   await writeFile(join(directory,"config.json"),JSON.stringify(configuration));
   async function launch(executable,args,env,url){
@@ -90,11 +90,20 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const a=await account(),b=await account();
   const client=new Aex({baseUrl,apiKey:a.token}),other=new Aex({baseUrl,apiKey:b.token});
   t.after(async()=>{await client.close();await other.close();});
-  const discovery = await client.models("vercel-ai-gateway");
-  assert.deepEqual(discovery.providers[0].models.map(model => model.id), ["test/journey"]);
-  assert.equal(discovery.providers[0].models[0].input_modalities, null);
-  assert.equal(discovery.providers[0].base_url, undefined);
+  for (const provider of [undefined, "vercel-ai-gateway", "deepseek"]) {
+    const upstream = await fetch(`${brainUrl}/v1/models${provider ? `?provider=${provider}` : ""}`, { headers: { authorization: `Bearer ${internal}` } });
+    assert.equal(upstream.status, 200);
+    assert.deepEqual(await client.models(provider), await upstream.json(), "Aex preserves Brain's complete model catalogue and metadata");
+  }
+  for (const query of ["provider=not-a-provider", "provider=", "provider=deepseek&extra=value"]) {
+    const path = `/v1/models?${query}`;
+    const upstream = await fetch(brainUrl + path, { headers: { authorization: `Bearer ${internal}` } });
+    const hosted = await raw(path, a.token);
+    assert.equal(hosted.status, upstream.status);
+    assert.equal(await hosted.text(), await upstream.text(), "Brain owns catalogue query validation");
+  }
   const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
+  await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
   const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id})=>{toolCalls++;return `item-${id}`;}});
   const session=await client.sessions.create({...options,tools:[lookup({env:hostEnv({name:"app"})})]},{idempotencyKey:"shared-key"});
 

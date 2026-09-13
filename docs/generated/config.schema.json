@@ -32,13 +32,6 @@
     "listen": {
       "type": "string"
     },
-    "models": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true
-    },
     "operator_listen": {
       "type": "string"
     }
@@ -50,7 +43,6 @@
     "data_dir",
     "brain_url",
     "agentloops",
-    "models",
     "limits"
   ],
   "$defs": {

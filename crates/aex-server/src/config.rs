@@ -10,7 +10,6 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub brain_url: String,
     pub agentloops: BTreeSet<String>,
-    pub models: BTreeSet<String>,
     pub limits: Limits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<crate::attachments::Config>,
@@ -63,13 +62,6 @@ impl Config {
                     .bytes()
                     .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))),
             "agentloops must contain approved SHA-256 addresses"
-        );
-        anyhow::ensure!(
-            !self.models.is_empty()
-                && self.models.iter().all(|m| m
-                    .split_once('/')
-                    .is_some_and(|(p, n)| !p.is_empty() && !n.is_empty())),
-            "models must contain provider/model entries"
         );
         for (name, value) in serde_json::to_value(&self.limits)?.as_object().unwrap() {
             anyhow::ensure!(

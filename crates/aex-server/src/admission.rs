@@ -20,13 +20,6 @@ pub fn request(
 }
 
 pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) -> Result<()> {
-    let selected = format!("{}/{}", request.model.provider, request.model.name);
-    if !app.config.models.contains(&selected) {
-        return Err(Error::invalid("model is not hosted"));
-    }
-    if request.model.api_key.is_empty() || request.model.api_key.len() > 16384 {
-        return Err(Error::invalid("model key required"));
-    }
     let descriptor = request
         .agentloop
         .implementation
