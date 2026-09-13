@@ -38,7 +38,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.75.1 @aexhq/agentloop-pi@6.1.1
+npm install @aexhq/sdk@0.75.2 @aexhq/agentloop-pi@6.1.2
 ```
 
 ```ts

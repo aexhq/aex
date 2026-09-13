@@ -24,7 +24,9 @@ inside the Environment. Aex rejects nonempty native configuration, including fil
 network, and secrets; removing extension dependency declarations does not grant access.
 
 No customer-selected HTTP Environment URL, provider base URL or arbitrary native-network
-grant is accepted in MVP. The server uses an operator-selected supported provider catalogue.
+grant is accepted in MVP. Brain owns the supported provider catalogue and validates model
+selections. Aex forwards model discovery and selections without a separate allowlist
+(updated 2026-09-13).
 Application Tools remain able to use the customer's network under the customer's authority.
 This narrows Aex's outbound surface rather than building a general SSRF filtering service.
 URL syntax validation alone is not a hosted network boundary; see

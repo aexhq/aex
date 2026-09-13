@@ -1,11 +1,11 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.75.1 (Brain SDK 0.24.2) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.75.2 (Brain SDK 0.24.3) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
 | --- | --- | --- |
-| GET | `/v1/models?provider=...` | Active key; deployment-allowed models and known capabilities |
+| GET | `/v1/models?provider=...` | Active key; Brain's model catalogue and known capabilities |
 | POST, GET | `/v1/sessions` | Active key; lists contain owned sessions only |
 | GET, DELETE | `/v1/sessions/{id}` | Account ownership |
 | GET | `/v1/sessions/{id}/transcript` | Account ownership |
@@ -85,4 +85,4 @@ the code on its loopback listener. State binds the callback to the initiating pr
 This follows the external-browser and loopback pattern in RFC 8252 and S256 PKCE in
 RFC 7636. The website handles identity-provider integration, not separate product APIs.
 
-Image and PDF uploads use the [attachment API](attachments.md). `models(provider?)` exposes only the configured hosted model choices, with models.dev metadata when known.
+Image and PDF uploads use the [attachment API](attachments.md). `models(provider?)` forwards Brain's catalogue unchanged, with models.dev metadata when known. Brain validates model selections; Aex has no separate model allowlist.

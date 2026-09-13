@@ -6,9 +6,6 @@
   "agentloops": [
     "0000000000000000000000000000000000000000000000000000000000000000"
   ],
-  "models": [
-    "openai/gpt-4.1-mini"
-  ],
   "limits": {
     "accounts": 10,
     "keys_per_account": 32,
