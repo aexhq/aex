@@ -180,7 +180,7 @@ async fn prepaid_attachments_enforce_total_cost_and_download_allowance_then_rele
         serde_json::from_value(serde_json::json!({"pricebook":{"id":"media-test","rates":{
         "turn_ms":{"micro_usd":1,"units":1},"sandbox_ms":{"micro_usd":1,"units":1},
         "attachment_byte_secs":{"micro_usd":1,"units":1},"egress_bytes":{"micro_usd":1,"units":1}}},
-        "max_turn_secs":60,"default_spend_limit_micro_usd":10000,"payments":null}))
+        "max_turn_secs":60,"payments":null}))
         .unwrap();
     billing::initialize(&app.store, &billing).await.unwrap();
     Arc::make_mut(&mut app.config).billing = Some(billing);

@@ -1,11 +1,12 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.76.0 (Brain SDK 0.25.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.76.0 (Brain SDK 0.25.1) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
 | --- | --- | --- |
 | GET | `/v1/models?provider=...` | Active key; Brain's model catalogue and known capabilities |
+| GET | `/v1/environments` | Active workload key; account's published managed profile catalog |
 | POST, GET | `/v1/sessions` | Active key; lists contain owned sessions only |
 | GET, DELETE | `/v1/sessions/{id}` | Account ownership |
 | GET | `/v1/sessions/{id}/transcript` | Account ownership |
@@ -21,8 +22,9 @@ full revision in Cargo. Customer keys never authorize direct access to private B
 | POST | `/v1/hosts/{id}/results`, `/events` | Scoped token and owned target session |
 | GET | `/health/live`, `/health/ready` | No customer data |
 
-Other methods/routes fail closed. Remote Environment URLs, execution
+Other methods/routes fail closed. Customer-selected Environment endpoints, execution
 callbacks, provider endpoint overrides and hosted secret/filesystem/network grants are denied.
+Catalog Environment selections are admitted after [prepaid resource reservation](environments.md).
 Application functions run in the customer's live process. Compatible Wasm Tools with no
 host resource grants can run in Brain. Committed event cursors and shapes are
 preserved. Keepalive comments have no event identity and are inserted only between frames.

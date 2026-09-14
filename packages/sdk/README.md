@@ -21,8 +21,8 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.76 uses Brain SDK 0.25 and Pi/Codex/Tools
-6.1. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
+extension builders are Brain's implementations. SDK 0.76 uses Brain SDK 0.25 and Pi/Codex
+6.2. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs
 for a complete session example.
@@ -53,8 +53,10 @@ standalone Brain and require operator deployment. See [official extensions](http
 
 Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
 executes application functions in your process. Native hosted Components receive no server
-secrets, filesystem or network grants. Customer-selected HTTP Environments are not enabled
-on the initial deployment. Hosted `brainEnv` configuration must be empty; resource access
+secrets, filesystem or network grants. `await aex.environments.list()` lists your account's
+published profiles. `await aex.environments.modal({name, profile, lifetimeMs})` selects one for
+your Tools; [managed execution](../../docs/environments.md) reserves credits when creating the session.
+Customer-selected HTTP endpoints are denied. Hosted `brainEnv` configuration must be empty; resource access
 is configured by each Environment, not declared through extension `needs`. Prepare dependencies
 for `hostEnv` Tools in your application before registering them. Supply your model key per session.
 
@@ -63,6 +65,12 @@ an authenticated account session and is normally performed in the dashboard. API
 not grant authority to create more credentials. New key secrets are returned once.
 
 ## Structured output
+
+For asynchronous hosted work, configure the official loop with
+`output: {schema: z.toJSONSchema(answerType), maxCorrections: 2}` and use `session.submit()`.
+Validation and bounded corrections run inside that turn. Corrections cannot dispatch Tools;
+only a schema-valid final answer emits an assistant message. Business refinements belong in
+your Tools or application, and are not encoded by JSON Schema.
 
 Pass `output: { type: z.object({ name: z.string() }), maxRetries: 2 }` in the second
 argument to `session.send`. The SDK prompts for JSON, validates with Zod locally,

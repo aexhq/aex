@@ -36,6 +36,16 @@
     "data_dir": {
       "type": "string"
     },
+    "environments": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Config4"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "limits": {
       "$ref": "#/$defs/Limits"
     },
@@ -115,10 +125,6 @@
     "Config2": {
       "type": "object",
       "properties": {
-        "default_spend_limit_micro_usd": {
-          "type": "integer",
-          "format": "int64"
-        },
         "max_turn_secs": {
           "description": "Must bound the paired Brain server's maximum turn duration.",
           "type": "integer",
@@ -142,8 +148,7 @@
       "additionalProperties": false,
       "required": [
         "pricebook",
-        "max_turn_secs",
-        "default_spend_limit_micro_usd"
+        "max_turn_secs"
       ]
     },
     "Config3": {
@@ -168,6 +173,100 @@
         "mode",
         "return_url",
         "topup_amounts_cents"
+      ]
+    },
+    "Config4": {
+      "type": "object",
+      "properties": {
+        "active_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "app_name": {
+          "type": "string"
+        },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PublishedProfile"
+          }
+        },
+        "public_url": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "public_url",
+        "app_name",
+        "active_per_account",
+        "profiles"
+      ]
+    },
+    "EnvironmentProfile": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "cpu": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "image": {
+          "type": "string"
+        },
+        "maxLifetimeMs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "outboundDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "region": {
+          "type": "string"
+        },
+        "workdir": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "commands",
+        "cpu",
+        "memoryMiB",
+        "maxLifetimeMs",
+        "workdir",
+        "region",
+        "outboundDomains",
+        "maxOutputBytes"
       ]
     },
     "Limits": {
@@ -328,6 +427,26 @@
       "required": [
         "id",
         "rates"
+      ]
+    },
+    "PublishedProfile": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "specification": {
+          "$ref": "#/$defs/EnvironmentProfile"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accounts",
+        "specification"
       ]
     },
     "Rate": {

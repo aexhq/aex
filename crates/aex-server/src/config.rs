@@ -15,6 +15,8 @@ pub struct Config {
     pub attachments: Option<crate::attachments::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub billing: Option<crate::billing::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<crate::environments::Config>,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -86,6 +88,17 @@ impl Config {
         }
         if let Some(config) = &self.billing {
             config.validate()?;
+        }
+        if let Some(config) = &self.environments {
+            config.validate()?;
+            anyhow::ensure!(
+                self.billing.as_ref().is_some_and(|b| b
+                    .pricebook
+                    .rates
+                    .get(&crate::billing::Meter::SandboxMs)
+                    .is_some_and(|r| r.micro_usd > 0)),
+                "managed compute requires a positive sandbox price and prepaid billing"
+            );
         }
         Ok(())
     }

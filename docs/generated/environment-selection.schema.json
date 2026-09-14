@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentSelection",
+  "type": "object",
+  "properties": {
+    "lifetimeMs": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "profile": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "lifetimeMs"
+  ]
+}

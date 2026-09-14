@@ -28,7 +28,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "0.25.0"
+    "@aexhq/brain": "0.25.1"
   },
   "scripts": {
     "gen": "node ../../tools/sdk-contracts.mjs",

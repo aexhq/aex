@@ -65,7 +65,6 @@ pub struct Config {
     pub pricebook: Pricebook,
     /// Must bound the paired Brain server's maximum turn duration.
     pub max_turn_secs: u32,
-    pub default_spend_limit_micro_usd: i64,
     pub payments: Option<crate::payments::Config>,
 }
 impl Config {
@@ -80,10 +79,7 @@ impl Config {
                     .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
             "invalid pricebook id"
         );
-        anyhow::ensure!(
-            self.max_turn_secs > 0 && self.default_spend_limit_micro_usd >= 0,
-            "invalid billing limits"
-        );
+        anyhow::ensure!(self.max_turn_secs > 0, "invalid billing limits");
         for meter in [
             Meter::TurnMs,
             Meter::SandboxMs,

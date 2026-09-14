@@ -18,7 +18,7 @@ async fn app() -> (tempfile::TempDir, App, String) {
         "pricebook":{"id":"test-v1","rates":{
             "turn_ms":{"micro_usd":1,"units":3}, "sandbox_ms":{"micro_usd":2,"units":1},
             "attachment_byte_secs":{"micro_usd":1,"units":1000}, "egress_bytes":{"micro_usd":1,"units":1}}},
-        "max_turn_secs":120,"default_spend_limit_micro_usd":1_000_000,"payments":null
+        "max_turn_secs":120,"payments":null
     })).unwrap());
     let app = App::open(
         config,

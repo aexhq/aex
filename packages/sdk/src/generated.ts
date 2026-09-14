@@ -258,3 +258,38 @@ export interface Refund {
   state: string;
   topup: string;
 }
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "EnvironmentProfile".
+ */
+export interface EnvironmentProfile {
+  commands: {
+    [k: string]: string[];
+  };
+  cpu: number;
+  image: string;
+  maxLifetimeMs: number;
+  maxOutputBytes: number;
+  memoryMiB: number;
+  outboundDomains: string[];
+  region: string;
+  workdir: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "EnvironmentCatalog".
+ */
+export interface EnvironmentCatalog {
+  driver_url: string;
+  profiles: {
+    [k: string]: EnvironmentProfile;
+  };
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "EnvironmentSelection".
+ */
+export interface EnvironmentSelection {
+  lifetimeMs: number;
+  profile: string;
+}
