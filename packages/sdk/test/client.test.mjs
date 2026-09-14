@@ -4,6 +4,21 @@ import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
+test("prepaid ceilings and download allowances are explicit headers and billing mutations carry stable keys", async () => {
+  const calls=[];
+  const client=new Aex({apiKey:"key",maxCostMicroUsd:1000,fetch:async (url,init)=>{calls.push({url,init}); return Response.json({});}});
+  await client.request("POST","/v1/sessions/s/messages",{input:{message:"run"}},"turn");
+  assert.equal(new Headers(calls[0].init.headers).get("x-aex-max-cost-micro-usd"),"1000");
+  await client.attachments.upload("s",new Uint8Array([1]),{contentType:"image/png",idempotencyKey:"image",maxCostMicroUsd:2000,downloadBudgetBytes:8});
+  assert.equal(new Headers(calls[1].init.headers).get("x-aex-max-cost-micro-usd"),"2000");
+  assert.equal(new Headers(calls[1].init.headers).get("x-aex-download-budget-bytes"),"8");
+  await client.billing.topup({amount_cents:1000},"checkout-once");
+  assert.equal(new Headers(calls[2].init.headers).get("idempotency-key"),"checkout-once");
+  assert.deepEqual(JSON.parse(calls[2].init.body),{amount_cents:1000});
+  assert.throws(()=>new Aex({apiKey:"key",maxCostMicroUsd:0.1}),/safe integer/);
+  assert.throws(()=>client.attachments.upload("s",new Uint8Array([1]),{contentType:"image/png",idempotencyKey:"image",downloadBudgetBytes:-1}),/safe integer/);
+});
+
 test("inherited client close aborts an attachment upload and rejects later work", async () => {
   const entered = Promise.withResolvers();
   let requests = 0;

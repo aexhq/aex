@@ -95,6 +95,7 @@ pub struct Account {
 #[serde(rename_all = "snake_case")]
 pub enum Billing {
     PreviewCustomerModelKeys,
+    PrepaidCustomerModelKeys,
 }
 
 fn key(row: &sqlx::postgres::PgRow) -> ApiKey {
@@ -107,7 +108,7 @@ fn key(row: &sqlx::postgres::PgRow) -> ApiKey {
     }
 }
 
-async fn dashboard_account(app: &App, token: &str) -> Result<String> {
+pub(crate) async fn dashboard_account(app: &App, token: &str) -> Result<String> {
     sqlx::query_scalar("SELECT a.id FROM dashboard_sessions d JOIN accounts a ON a.id=d.account WHERE d.verifier=$1 AND d.expires>$2 AND a.active=1")
         .bind(digest(token.as_bytes())).bind(now()).fetch_optional(&app.store.0).await?
         .ok_or_else(Error::denied)
@@ -283,11 +284,20 @@ pub async fn handle(
             .bind(&account)
             .fetch_one(&app.store.0)
             .await?;
+        let prepaid: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallets WHERE account=$1)")
+                .bind(&account)
+                .fetch_one(&app.store.0)
+                .await?;
         return Ok(Json(Account {
             id: account,
             email: row.get("email"),
             created: row.get("created"),
-            billing: Billing::PreviewCustomerModelKeys,
+            billing: if prepaid {
+                Billing::PrepaidCustomerModelKeys
+            } else {
+                Billing::PreviewCustomerModelKeys
+            },
             usage,
             limits: app.config.limits.clone(),
         })

@@ -171,6 +171,113 @@ const UPLOAD: &str = "/v1/sessions/session/attachments";
 const PDF: &[u8] = b"%PDF-1.7\nfixture";
 
 #[tokio::test]
+async fn prepaid_attachments_enforce_total_cost_and_download_allowance_then_release_unused_credit()
+{
+    use aex_server::billing::{self, BillingSettings};
+    let directory = tempfile::tempdir().unwrap();
+    let (mut app, objects, account, token, _) = fixture(directory.path()).await;
+    let billing =
+        serde_json::from_value(serde_json::json!({"pricebook":{"id":"media-test","rates":{
+        "turn_ms":{"micro_usd":1,"units":1},"sandbox_ms":{"micro_usd":1,"units":1},
+        "attachment_byte_secs":{"micro_usd":1,"units":1},"egress_bytes":{"micro_usd":1,"units":1}}},
+        "max_turn_secs":60,"default_spend_limit_micro_usd":10000,"payments":null}))
+        .unwrap();
+    billing::initialize(&app.store, &billing).await.unwrap();
+    Arc::make_mut(&mut app.config).billing = Some(billing);
+    billing::settings(
+        &app,
+        &account,
+        BillingSettings {
+            pricebook: "media-test".into(),
+            spend_limit_micro_usd: 10000,
+        },
+    )
+    .await
+    .unwrap();
+    billing::adjust(&app.store, &account, "grant", 10000, "test credit")
+        .await
+        .unwrap();
+    let upload = |ceiling: &str, key: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(UPLOAD)
+            .header("authorization", format!("Bearer {token}"))
+            .header("idempotency-key", key)
+            .header("content-type", "application/pdf")
+            .header("x-aex-max-cost-micro-usd", ceiling)
+            .header("x-aex-download-budget-bytes", PDF.len().to_string())
+            .body(Body::from(PDF))
+            .unwrap()
+    };
+    let denied = aex_server::http::router(app.clone())
+        .oneshot(upload("1", "too-small"))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::PAYMENT_REQUIRED);
+    assert!(objects.bytes.lock().unwrap().is_empty());
+    let file = attachment(
+        aex_server::http::router(app.clone())
+            .oneshot(upload("10000", "file"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .reserved_micro_usd
+            >= (PDF.len() * 60) as i64
+    );
+    let path = read_path(&file);
+    let response = call(&app, Method::HEAD, &path, None, "", b"").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .balance_micro_usd,
+        10000
+    );
+    let response = call(&app, Method::GET, &path, None, "", b"").await;
+    assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), PDF);
+    assert_eq!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .balance_micro_usd,
+        10000 - PDF.len() as i64
+    );
+    assert_eq!(
+        call(&app, Method::GET, &path, None, "", b"").await.status(),
+        StatusCode::PAYMENT_REQUIRED
+    );
+    let principal = app.store.principal(&token).await.unwrap();
+    attachments::revoke(&app, &principal, "session", &file.id)
+        .await
+        .unwrap();
+    objects.fail_delete.store(true, Ordering::SeqCst);
+    assert_eq!(attachments::maintain(&app).await.unwrap().failed, 1);
+    assert!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .reserved_micro_usd
+            > 0
+    );
+    objects.fail_delete.store(false, Ordering::SeqCst);
+    assert_eq!(attachments::maintain(&app).await.unwrap().deleted, 1);
+    assert_eq!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .reserved_micro_usd,
+        0
+    );
+    assert!(objects.bytes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn stalled_or_truncated_downloads_fail_and_release_transfer_admission() {
     let directory = tempfile::tempdir().unwrap();
     let (mut app, objects, account, token, _) = fixture(directory.path()).await;

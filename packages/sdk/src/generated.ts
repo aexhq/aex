@@ -5,7 +5,32 @@ import type {Media} from "@aexhq/brain";
  * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Billing".
  */
-export type Billing = "preview_customer_model_keys";
+export type Billing = "preview_customer_model_keys" | "prepaid_customer_model_keys";
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "BillingMode".
+ */
+export type BillingMode = "preview" | "prepaid";
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Mode".
+ */
+export type Mode = "test" | "live";
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "SyncPayment".
+ */
+export type SyncPayment =
+  | {
+      checkout_id?: string | null;
+      id: string;
+      kind: "topup";
+    }
+  | {
+      id: string;
+      kind: "refund";
+      refund_id?: string | null;
+    };
 
 export interface AexContracts {}
 /**
@@ -124,4 +149,112 @@ export interface LoginExchange {
 export interface AccountSession {
   expires: number;
   token: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Pricebook".
+ */
+export interface Pricebook {
+  id: string;
+  rates: {
+    attachment_byte_secs?: Rate;
+    egress_bytes?: Rate;
+    sandbox_ms?: Rate;
+    turn_ms?: Rate;
+  };
+}
+/**
+ * A rational price in micro-USD. Rating rounds once over cumulative resource usage.
+ *
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Rate".
+ */
+export interface Rate {
+  micro_usd: number;
+  units: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Wallet".
+ */
+export interface Wallet {
+  accepted_pricebook?: string | null;
+  available_micro_usd: number;
+  balance_micro_usd: number;
+  currency: string;
+  mode: BillingMode;
+  offered_pricebook?: Pricebook | null;
+  payment_mode?: Mode | null;
+  reserved_micro_usd: number;
+  spend_limit_micro_usd?: number | null;
+  spent_this_month_micro_usd: number;
+  suspended: boolean;
+  topup_amounts_cents: number[];
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "BillingSettings".
+ */
+export interface BillingSettings {
+  pricebook: string;
+  spend_limit_micro_usd: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "LedgerEntry".
+ */
+export interface LedgerEntry {
+  created: number;
+  delta_micro_usd: number;
+  description: string;
+  id: number;
+  kind: string;
+  reference: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "LedgerPage".
+ */
+export interface LedgerPage {
+  entries: LedgerEntry[];
+  next_before?: number | null;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "TopupInput".
+ */
+export interface TopupInput {
+  amount_cents: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Topup".
+ */
+export interface Topup {
+  amount_cents: number;
+  checkout_url?: string | null;
+  created: number;
+  id: string;
+  receipt_url?: string | null;
+  refunded_cents: number;
+  state: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "RefundInput".
+ */
+export interface RefundInput {
+  amount_cents: number;
+  topup: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "Refund".
+ */
+export interface Refund {
+  amount_cents: number;
+  created: number;
+  id: string;
+  state: string;
+  topup: string;
 }

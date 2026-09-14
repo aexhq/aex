@@ -20,7 +20,14 @@ For ambiguous creation: drain, let Brain creation settle, inspect pending claims
 use `delete_orphan` only for identified unowned sessions, then `resolve_create` to release the
 allocation. Never infer ownership from timing or request similarity. For an uncertain turn,
 stop/restart Brain if a request may remain in flight, then use `reconcile_turn` while drained.
-It releases capacity only for a non-running Brain state and never reruns work.
+It releases capacity after terminal journal evidence or a recorded request rejection and never reruns
+work. `maintain` performs the same reconciliation for completed asynchronous turns. A merely idle
+session does not prove that a pending request was never dispatched.
+
+Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery are described in
+[Billing](billing.md). `billing.max_turn_secs` caps the charge and should match the paired Brain's
+wall-time policy. Keep prices and test/live payment mode explicit; deployments do not enroll preview
+accounts or invent rates. Only the private operator can submit usage or append credit adjustments.
 
 ## Storage
 

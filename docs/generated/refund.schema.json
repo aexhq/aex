@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Refund",
+  "type": "object",
+  "properties": {
+    "amount_cents": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "created": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "topup": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "topup",
+    "amount_cents",
+    "state",
+    "created"
+  ]
+}

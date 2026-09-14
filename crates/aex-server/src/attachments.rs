@@ -178,7 +178,16 @@ pub async fn upload(
     let id = identity::random("att");
     let token = identity::random("read");
     let object_key = format!("attachments/{id}");
-    sqlx::query("INSERT INTO attachments VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)")
+    reserve_storage(
+        &mut tx,
+        principal,
+        &id,
+        bytes.len() as i64,
+        expires_at,
+        headers,
+    )
+    .await?;
+    sqlx::query("INSERT INTO attachments(id,account,session,object_key,content_type,bytes,expires_at,read_verifier,state,operation_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)")
         .bind(&id)
         .bind(&principal.account)
         .bind(session)
@@ -222,11 +231,13 @@ pub async fn upload(
             "attachment publication was revoked or expired",
         ));
     }
-    let updated =
-        sqlx::query("UPDATE attachments SET state='ready' WHERE id=$1 AND state='pending'")
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
+    let updated = sqlx::query(
+        "UPDATE attachments SET state='ready',published_at=$2 WHERE id=$1 AND state='pending'",
+    )
+    .bind(&id)
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
     if updated.rows_affected() != 1 {
         return Err(Error::conflict("attachment was revoked"));
     }
@@ -274,7 +285,7 @@ pub async fn download(
         .account_requests
         .lock()
         .await
-        .entry(account)
+        .entry(account.clone())
         .or_insert_with(|| {
             Arc::new(tokio::sync::Semaphore::new(
                 app.config.limits.requests_per_account,
@@ -288,6 +299,9 @@ pub async fn download(
     let body = if head {
         Body::empty()
     } else {
+        let download =
+            reserve_download(app, &account, id, length, config.transfer_timeout_secs).await?;
+        let metering = app.clone();
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(config.transfer_timeout_secs);
         let mut stream = tokio::time::timeout_at(deadline, storage.get(row.get("object_key")))
@@ -299,6 +313,7 @@ pub async fn download(
             while let Some(chunk) = tokio::time::timeout_at(deadline, stream.next()).await.map_err(|_| Error::internal())? {
                 let chunk = chunk?;
                 remaining = remaining.checked_sub(chunk.len()).ok_or_else(Error::internal)?;
+                if let Some(download) = &download { record_download(&metering, download, chunk.len() as i64).await?; }
                 yield chunk;
             }
             if remaining != 0 { Err(Error::internal())?; }
@@ -325,11 +340,31 @@ pub async fn maintain(app: &App) -> Result<Cleanup> {
         return Ok(Cleanup::default());
     }
     let (_, storage) = configured(app)?;
+    let metered = sqlx::query("SELECT f.id,f.account,f.bytes,f.published_at,r.id AS reservation,r.max_units FROM attachments f JOIN credit_reservations r ON r.resource=f.id AND r.meter='attachment_byte_secs' WHERE r.state='open' AND f.published_at IS NOT NULL")
+        .fetch_all(&app.store.0).await?;
+    for row in metered {
+        let units = storage_units(&row)?;
+        let reservation: String = row.get("reservation");
+        crate::billing::meter(
+            &app.store,
+            &crate::billing::UsageReport {
+                id: format!("storage:{reservation}:{units}"),
+                reservation,
+                units,
+                terminal: false,
+            },
+        )
+        .await?;
+    }
+    sqlx::query("DELETE FROM attachment_downloads WHERE expires<=$1")
+        .bind(now())
+        .execute(&app.store.0)
+        .await?;
     let Ok(_uploads) = app.attachment_uploads.try_write() else {
         return Ok(Cleanup::default());
     };
     let drained = !app.accepting.load(Ordering::SeqCst);
-    let rows = sqlx::query("SELECT f.id,f.object_key FROM attachments f JOIN sessions s ON s.id=f.session WHERE f.state='deleting' OR f.expires_at<=$1 OR s.state!='owned' OR ($2 AND f.state='pending') ORDER BY f.expires_at,f.id LIMIT 100")
+    let rows = sqlx::query("SELECT f.id,f.account,f.object_key,f.bytes,f.published_at FROM attachments f JOIN sessions s ON s.id=f.session WHERE f.state='deleting' OR f.expires_at<=$1 OR s.state!='owned' OR ($2 AND f.state='pending') ORDER BY f.expires_at,f.id LIMIT 100")
         .bind(now()).bind(drained).fetch_all(&app.store.0).await?;
     let mut result = Cleanup::default();
     // Storage outages must not hold up the local-disk meter until its usage report is stale.
@@ -355,11 +390,188 @@ pub async fn maintain(app: &App) -> Result<Cleanup> {
             result.failed += 1;
             break;
         }
+        let mut tx = app.store.0.begin().await?;
+        Store::lock_account(&mut tx, row.get("account")).await?;
+        let reservations = sqlx::query("SELECT * FROM credit_reservations WHERE resource=$1 AND state='open' AND meter IN ('attachment_byte_secs','egress_bytes')")
+            .bind(id).fetch_all(&mut *tx).await?;
+        for reservation in reservations {
+            let units = if reservation.get::<String, _>("meter") == "egress_bytes" {
+                reservation.get("units")
+            } else {
+                elapsed_units(
+                    row.get("published_at"),
+                    row.get("bytes"),
+                    reservation.get("max_units"),
+                )?
+            };
+            let reservation: String = reservation.get("id");
+            crate::billing::meter_in(
+                &mut tx,
+                &crate::billing::UsageReport {
+                    id: format!("storage-closed:{reservation}"),
+                    reservation,
+                    units,
+                    terminal: true,
+                },
+            )
+            .await?;
+        }
         sqlx::query("DELETE FROM attachments WHERE id=$1")
             .bind(id)
-            .execute(&app.store.0)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         result.deleted += 1;
     }
     Ok(result)
+}
+
+async fn reserve_storage(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    p: &Principal,
+    id: &str,
+    bytes: i64,
+    expires_at: i64,
+    headers: &HeaderMap,
+) -> Result<()> {
+    use crate::billing::{self, Meter, Reservation};
+    let prepaid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallets WHERE account=$1)")
+        .bind(&p.account)
+        .fetch_one(&mut **tx)
+        .await?;
+    if !prepaid {
+        return Ok(());
+    }
+    let maximum = billing::maximum(headers)?;
+    let download_bytes = headers.get("x-aex-download-budget-bytes").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<i64>().ok()).filter(|n| *n >= bytes)
+        .ok_or_else(|| Error::invalid("prepaid attachments require x-aex-download-budget-bytes covering at least one download"))?;
+    let storage = format!("storage:{id}");
+    let egress = format!("egress:{id}");
+    let units = bytes
+        .checked_mul(expires_at - now())
+        .ok_or_else(|| Error::invalid("attachment lifetime exceeds metering range"))?;
+    billing::reserve_in(
+        tx,
+        &p.account,
+        Reservation {
+            id: &storage,
+            resource: id,
+            meter: Meter::AttachmentByteSecs,
+            max_units: units,
+            max_cost: maximum,
+        },
+    )
+    .await?;
+    billing::reserve_in(
+        tx,
+        &p.account,
+        Reservation {
+            id: &egress,
+            resource: id,
+            meter: Meter::EgressBytes,
+            max_units: download_bytes,
+            max_cost: maximum,
+        },
+    )
+    .await?;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT sum(remaining)::bigint FROM credit_reservations WHERE id IN ($1,$2)",
+    )
+    .bind(storage)
+    .bind(egress)
+    .fetch_one(&mut **tx)
+    .await?;
+    if total
+        > maximum.ok_or_else(|| Error::invalid("prepaid attachments require a cost ceiling"))?
+    {
+        return Err(Error::credits(
+            "attachment lifetime and download allowance exceed the request cost ceiling",
+        ));
+    }
+    Ok(())
+}
+fn elapsed_units(published: Option<i64>, bytes: i64, maximum: i64) -> Result<i64> {
+    let elapsed = published
+        .map(|start| now().saturating_sub(start).max(0))
+        .unwrap_or(0);
+    i64::try_from((i128::from(elapsed) * i128::from(bytes)).min(i128::from(maximum)))
+        .map_err(|_| Error::internal())
+}
+fn storage_units(row: &sqlx::postgres::PgRow) -> Result<i64> {
+    elapsed_units(
+        row.get("published_at"),
+        row.get("bytes"),
+        row.get("max_units"),
+    )
+}
+
+async fn reserve_download(
+    app: &App,
+    account: &str,
+    attachment: &str,
+    bytes: i64,
+    timeout: u64,
+) -> Result<Option<String>> {
+    let mut tx = app.store.0.begin().await?;
+    Store::lock_account(&mut tx, account).await?;
+    let Some(grant) =
+        sqlx::query("SELECT * FROM credit_reservations WHERE resource=$1 AND meter='egress_bytes'")
+            .bind(attachment)
+            .fetch_optional(&mut *tx)
+            .await?
+    else {
+        return Ok(None);
+    };
+    let reservation: String = grant.get("id");
+    let wallet = sqlx::query("SELECT suspended,balance FROM wallets WHERE account=$1")
+        .bind(account)
+        .fetch_one(&mut *tx)
+        .await?;
+    if wallet.get::<bool, _>("suspended") || wallet.get::<i64, _>("balance") < 0 {
+        return Err(Error::credits("billing account cannot admit downloads"));
+    }
+    let active: i64 = sqlx::query_scalar("SELECT coalesce(sum(bytes-received),0)::bigint FROM attachment_downloads WHERE reservation=$1 AND expires>$2").bind(&reservation).bind(now()).fetch_one(&mut *tx).await?;
+    if grant.get::<String, _>("state") != "open"
+        || i128::from(grant.get::<i64, _>("units")) + i128::from(active) + i128::from(bytes)
+            > i128::from(grant.get::<i64, _>("max_units"))
+    {
+        return Err(Error::credits("attachment download allowance exhausted"));
+    }
+    let id = identity::random("download");
+    sqlx::query(
+        "INSERT INTO attachment_downloads(id,reservation,bytes,expires) VALUES($1,$2,$3,$4)",
+    )
+    .bind(&id)
+    .bind(reservation)
+    .bind(bytes)
+    .bind(now() + timeout as i64 + 1)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some(id))
+}
+async fn record_download(app: &App, download: &str, bytes: i64) -> Result<()> {
+    let account: String = sqlx::query_scalar("SELECT r.account FROM attachment_downloads d JOIN credit_reservations r ON r.id=d.reservation WHERE d.id=$1").bind(download).fetch_optional(&app.store.0).await?.ok_or_else(Error::missing)?;
+    let mut tx = app.store.0.begin().await?;
+    Store::lock_account(&mut tx, &account).await?;
+    let row = sqlx::query("SELECT d.reservation,d.received,r.units FROM attachment_downloads d JOIN credit_reservations r ON r.id=d.reservation WHERE d.id=$1 AND d.expires>$2")
+        .bind(download).bind(now()).fetch_optional(&mut *tx).await?.ok_or_else(Error::missing)?;
+    let received = row.get::<i64, _>("received") + bytes;
+    crate::billing::meter_in(
+        &mut tx,
+        &crate::billing::UsageReport {
+            id: format!("download:{download}:{received}"),
+            reservation: row.get("reservation"),
+            units: row.get::<i64, _>("units") + bytes,
+            terminal: false,
+        },
+    )
+    .await?;
+    sqlx::query("UPDATE attachment_downloads SET received=$1 WHERE id=$2")
+        .bind(received)
+        .bind(download)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }

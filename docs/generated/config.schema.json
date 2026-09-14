@@ -20,6 +20,16 @@
         }
       ]
     },
+    "billing": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Config2"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "brain_url": {
       "type": "string"
     },
@@ -100,6 +110,64 @@
         "bytes_per_account",
         "ttl_secs",
         "transfer_timeout_secs"
+      ]
+    },
+    "Config2": {
+      "type": "object",
+      "properties": {
+        "default_spend_limit_micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "max_turn_secs": {
+          "description": "Must bound the paired Brain server's maximum turn duration.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "payments": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Config3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pricebook": {
+          "$ref": "#/$defs/Pricebook"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pricebook",
+        "max_turn_secs",
+        "default_spend_limit_micro_usd"
+      ]
+    },
+    "Config3": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/Mode"
+        },
+        "return_url": {
+          "type": "string"
+        },
+        "topup_amounts_cents": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "return_url",
+        "topup_amounts_cents"
       ]
     },
     "Limits": {
@@ -222,6 +290,63 @@
         "usage_max_age_secs",
         "artifacts_per_account",
         "artifact_bytes_per_account"
+      ]
+    },
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "test",
+        "live"
+      ]
+    },
+    "Pricebook": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rates": {
+          "type": "object",
+          "properties": {
+            "attachment_byte_secs": {
+              "$ref": "#/$defs/Rate"
+            },
+            "egress_bytes": {
+              "$ref": "#/$defs/Rate"
+            },
+            "sandbox_ms": {
+              "$ref": "#/$defs/Rate"
+            },
+            "turn_ms": {
+              "$ref": "#/$defs/Rate"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "rates"
+      ]
+    },
+    "Rate": {
+      "description": "A rational price in micro-USD. Rating rounds once over cumulative resource usage.",
+      "type": "object",
+      "properties": {
+        "micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "units": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "micro_usd",
+        "units"
       ]
     }
   }

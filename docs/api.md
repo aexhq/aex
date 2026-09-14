@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.75.2 (Brain SDK 0.24.3) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.76.0 (Brain SDK 0.25.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -40,9 +40,15 @@ ownership exists; differing payloads conflict. Unresolved creates are never disp
 even after restart: operators reconcile the ambiguous result and any inaccessible orphan.
 Host registration also returns success only after ownership commits, but has no create replay.
 
+Message keys are durably account/session scoped in Aex, including submission mode and cost ceiling
+in their request fingerprint. `Prefer: respond-async` returns HTTP 202 with the committed turn-start
+sequence; other messages keep the synchronous response. Matching completed requests replay, while
+pending requests remain ambiguous and are never resent. Maintenance releases capacity and costs
+only after journal evidence establishes completion or a known rejection establishes no execution.
+
 Other mutation keys are account/path scoped and use Brain's bounded replay contract. They
 are not an unlimited exactly-once guarantee. Occupied sessions reject concurrent messages;
-uncertain turn reservations require drained reconciliation. Revocation does not undo a
+uncertain turns without terminal evidence require operator reconciliation. Revocation does not undo a
 previously dispatched effect. Deletion denies access before cleanup, and uncertain cleanup
 keeps its tombstone. End a session before deleting it; a premature delete is rejected without
 hiding the session. Responses include a server-generated `x-aex-request-id` for support. Revoked keys lose existing session and host streams. Suspension denies
@@ -61,7 +67,8 @@ It receives a seven-day dashboard credential, kept in a Secure HttpOnly SameSite
 `GET/POST /v1/keys`, `PATCH/DELETE /v1/keys/{id}`, and `DELETE /v1/account/session`
 require account session credentials. Workload keys cannot issue keys. Keys are shown once,
 stored as verifiers, named, listed, renamed and revoked within their account.
-The first release is free hosting with customer model keys; it does not collect payments.
+Preview accounts retain free hosting with customer model keys. Explicitly enrolled prepaid accounts
+use the [billing API](billing.md) for credits, spend limits, Checkout, refunds and ledger history.
 
 ## Browser and CLI login
 

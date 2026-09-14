@@ -4,7 +4,7 @@ Node.js 22 or newer. The CLI uses `@aexhq/sdk` and the same public Aex HTTP API 
 the dashboard. No dashboard cookies, site credentials or operator credentials are needed.
 
 ```sh
-npm install -g @aexhq/cli@0.41.0
+npm install -g @aexhq/cli@0.43.0
 aex login
 aex keys create "My application"
 aex keys list
@@ -25,7 +25,11 @@ credentials expire after seven days; run `login` again. `logout` revokes this se
 
 Results are JSON on stdout; errors and login progress go to stderr. A created key's
 token is returned once. Existing keys expose only their metadata and prefix.
-Billing currently reports free preview hosting with customer-paid model usage.
+`billing` reports preview or prepaid status, available and reserved credits, prices and the monthly
+spend limit. `billing ledger`, `billing topups` and `billing refunds` show account history.
+`billing set PRICEBOOK MICRO_USD` accepts the offered prices and sets the monthly limit.
+`billing topup CENTS KEY` returns a Stripe Checkout URL; `billing refund TOPUP CENTS KEY`
+requests return of unused credits. Reuse the operation key for the same payment intent.
 
 The credential file is `~/.aex/account.json` on Unix or `%LOCALAPPDATA%/.aex/account.json`
 on Windows, restricted to the current user (and Windows SYSTEM). `AEX_CONFIG_DIR`

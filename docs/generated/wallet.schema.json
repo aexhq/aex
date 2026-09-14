@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wallet",
+  "type": "object",
+  "properties": {
+    "accepted_pricebook": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "available_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "balance_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/BillingMode"
+    },
+    "offered_pricebook": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Pricebook"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payment_mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Mode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reserved_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "spend_limit_micro_usd": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    },
+    "spent_this_month_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "suspended": {
+      "type": "boolean"
+    },
+    "topup_amounts_cents": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "int64"
+      }
+    }
+  },
+  "required": [
+    "mode",
+    "currency",
+    "balance_micro_usd",
+    "reserved_micro_usd",
+    "available_micro_usd",
+    "spent_this_month_micro_usd",
+    "suspended",
+    "topup_amounts_cents"
+  ],
+  "$defs": {
+    "BillingMode": {
+      "type": "string",
+      "enum": [
+        "preview",
+        "prepaid"
+      ]
+    },
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "test",
+        "live"
+      ]
+    },
+    "Pricebook": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rates": {
+          "type": "object",
+          "properties": {
+            "attachment_byte_secs": {
+              "$ref": "#/$defs/Rate"
+            },
+            "egress_bytes": {
+              "$ref": "#/$defs/Rate"
+            },
+            "sandbox_ms": {
+              "$ref": "#/$defs/Rate"
+            },
+            "turn_ms": {
+              "$ref": "#/$defs/Rate"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "rates"
+      ]
+    },
+    "Rate": {
+      "description": "A rational price in micro-USD. Rating rounds once over cumulative resource usage.",
+      "type": "object",
+      "properties": {
+        "micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "units": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "micro_usd",
+        "units"
+      ]
+    }
+  }
+}

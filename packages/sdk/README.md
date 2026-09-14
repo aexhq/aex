@@ -1,5 +1,16 @@
 # Aex SDK
 
+`aex.billing` reads credits and ledger entries, accepts a pricebook and spend limit, creates
+idempotent Stripe topups/refunds, and synchronizes provider status and receipt links. Mutations
+require an account credential. Configure `maxCostMicroUsd` on a prepaid workload client for its
+per-operation ceiling. Attachment uploads also accept `downloadBudgetBytes` and an optional
+operation-specific `maxCostMicroUsd`. See [billing](../../docs/billing.md) for units and recovery.
+
+`session.submit()` returns the committed turn-start receipt immediately. Hosted Tools keep running
+after client close; host Tools require their process online. Follow Events from the receipt and read
+the transcript when the turn terminates. Put structured correction policy in the hosted Agentloop
+when submitting from a short-lived Server Action.
+
 Install `@aexhq/sdk`. Create an API key at https://aex.dev/dashboard.
 
 ```ts
@@ -10,7 +21,7 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.75 uses Brain SDK 0.24 and Pi/Codex/Tools
+extension builders are Brain's implementations. SDK 0.76 uses Brain SDK 0.25 and Pi/Codex/Tools
 6.1. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs

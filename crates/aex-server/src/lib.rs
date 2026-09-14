@@ -2,6 +2,7 @@ pub mod account;
 pub mod admission;
 pub mod artifacts;
 pub mod attachments;
+pub mod billing;
 pub mod brain;
 pub mod config;
 pub mod error;
@@ -9,8 +10,10 @@ pub mod hosts;
 pub mod http;
 pub mod identity;
 pub mod operator;
+pub mod payments;
 pub mod sessions;
 pub mod store;
+pub mod turns;
 
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, Semaphore, watch};
@@ -22,6 +25,7 @@ pub struct App {
     pub config: Arc<config::Config>,
     pub store: store::Store,
     pub attachment_storage: Option<Arc<dyn attachments::storage::Storage>>,
+    pub payments: Option<Arc<payments::Stripe>>,
     pub attachment_uploads: Arc<tokio::sync::RwLock<()>>,
     pub brain: brain::Brain,
     pub changed: watch::Sender<u64>,
@@ -54,6 +58,16 @@ impl App {
         );
         std::fs::create_dir_all(&config.data_dir)?;
         let store = store::Store::open(&database_url).await?;
+        if let Some(billing) = &config.billing {
+            billing::initialize(&store, billing).await?;
+        }
+        let payments = config
+            .billing
+            .as_ref()
+            .and_then(|b| b.payments.as_ref())
+            .map(payments::Stripe::from_env)
+            .transpose()?
+            .map(Arc::new);
         let brain = brain::Brain::new(&config, brain_token)?;
         let attachment_storage = config
             .attachments
@@ -69,6 +83,7 @@ impl App {
             config: Arc::new(config),
             store,
             attachment_storage,
+            payments,
             attachment_uploads: Arc::default(),
             brain,
             changed: watch::channel(0).0,

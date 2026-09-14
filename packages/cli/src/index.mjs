@@ -13,7 +13,13 @@ const help = `Usage: aex <command>
   keys rename <id> <name>   Rename a key
   keys revoke <id>          Revoke a key
   account                  Show account, limits and billing status
-  billing                  Show billing status
+  billing                  Show credits, holds, prices and spend limit
+  billing ledger           Show recent credit transactions
+  billing set <pricebook> <micro-usd>  Accept prices and set a monthly spend limit
+  billing topup <cents> <key>         Create an idempotent Stripe Checkout
+  billing refund <topup> <cents> <key> Request a refund of unused credits
+  billing topups           Show payments and receipt links
+  billing refunds          Show refund status
   usage                    Show current usage
   docs                     Open the documentation
 
@@ -26,8 +32,8 @@ async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { help: { type: "boolean", short: "h" }, "no-browser": { type: "boolean" }, "api-url": { type: "string" }, "site-url": { type: "string" } } });
   if (values.help || !positionals.length) { process.stdout.write(help); return; }
   const [command, operation, ...args] = positionals;
-  const expected = { "keys list": 0, "keys create": 1, "keys rename": 2, "keys revoke": 1 };
-  if (command === "keys" ? expected[`keys ${operation}`] !== args.length : !["login", "logout", "account", "billing", "usage", "docs"].includes(command) || positionals.length !== 1) throw new Error("Unknown command or incorrect arguments. Run aex --help.");
+  const expected = { "keys list": 0, "keys create": 1, "keys rename": 2, "keys revoke": 1, "billing ledger":0, "billing set":2, "billing topup":2, "billing refund":3, "billing topups":0, "billing refunds":0 };
+  if (command === "keys" || (command === "billing" && operation) ? expected[`${command} ${operation}`] !== args.length : !["login", "logout", "account", "billing", "usage", "docs"].includes(command) || positionals.length !== 1) throw new Error("Unknown command or incorrect arguments. Run aex --help.");
   const explicitApi = values["api-url"] ?? process.env.AEX_API_URL;
   const siteUrl = origin(values["site-url"] ?? "https://aex.dev");
   if (command === "docs") {
@@ -61,7 +67,15 @@ async function main() {
     if (!process.env.AEX_ACCOUNT_TOKEN) await removeSession();
     result = { signed_out: true };
   } else if (command === "account") result = await client.account.get();
-  else if (command === "billing") result = { billing: (await client.account.get()).billing };
+  else if (command === "billing") {
+    const integer = value => { const n = Number(value); if (!/^\d+$/.test(value) || !Number.isSafeInteger(n)) throw new Error("Amounts must be nonnegative integers"); return n; };
+    if (!operation) result = await client.billing.get();
+    else if (operation === "ledger") result = await client.billing.ledger();
+    else if (operation === "set") result = await client.billing.update({ pricebook: args[0], spend_limit_micro_usd: integer(args[1]) });
+    else if (operation === "topup") result = await client.billing.topup({amount_cents:integer(args[0])},args[1]);
+    else if (operation === "refund") result = await client.billing.refund({topup:args[0],amount_cents:integer(args[1])},args[2]);
+    else result = await client.billing[operation]();
+  }
   else if (command === "usage") result = await client.account.usage();
   else if (operation === "list") result = await client.keys.list();
   else if (operation === "create") result = await client.keys.create({ name: args[0] });

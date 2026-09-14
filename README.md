@@ -8,7 +8,7 @@
 </h1>
 
 <p align="center">
-  A thin, official hosted server for <a href="https://github.com/aexhq/brain">Brain</a>.
+  Hosted <a href="https://github.com/aexhq/brain">Brain</a> and extensions, with accounts and metered services.
 </p>
 
 <p align="center">
@@ -21,7 +21,8 @@
 
 > [!NOTE]
 > Aex is in early preview. APIs and limits may change.
-> Hosting is currently free; bring your own model-provider keys.
+> Existing preview accounts keep free hosting. Prepaid services require explicit price acceptance;
+> bring your own model-provider keys.
 
 ## Get started
 
@@ -38,7 +39,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.75.2 @aexhq/agentloop-pi@6.1.2
+npm install @aexhq/sdk@0.76.0 @aexhq/agentloop-pi@6.1.3
 ```
 
 ```ts
@@ -72,17 +73,23 @@ Consume its events and store your own results. Brain retains history until delet
 
 ## Brain, hosted
 
-Brain owns sessions, execution and events. Aex adds accounts, API keys, usage and hosted access.
+Brain owns sessions, execution and events. Aex hosts Brain and extensions and adds accounts,
+API keys, usage, prepaid credits and hosted access.
 The Aex SDK extends and re-exports Brain, so its SDK and extension contracts remain directly usable.
 
 The dashboard, SDK and CLI use the same Aex HTTP API.
-Manage keys, view your account and usage, or check billing status from whichever client you prefer.
+Manage keys, inspect credit balances and usage, set a spend limit, top up through Stripe Checkout,
+and refund unused credits. See [billing and recovery](docs/billing.md).
+
+`session.submit()` returns a durable receipt for hosted execution without keeping a website request
+open. Read events and the transcript later. Closing the client does not cancel that hosted turn;
+host Tools still require their own process to remain connected.
 
 ## Models and tools
 
 Use your own model keys and Brain-compatible extensions.
 Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.75 uses Brain 0.24 and official extensions 6.1. Custom Wasm Components must target
+SDK 0.76 uses Brain 0.25 and official extensions 6.1. Custom Wasm Components must target
 the matching WIT contract. Prepare application Tool dependencies before registration;
 extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
 
