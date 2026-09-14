@@ -27,7 +27,11 @@ test("CLI commands call shared account routes with the account credential", asyn
   });
   try {
     const cases = [
-      [["account"], "GET", "/v1/account"], [["billing"], "GET", "/v1/account"], [["usage"], "GET", "/v1/usage"],
+      [["account"], "GET", "/v1/account"], [["billing"], "GET", "/v1/billing"], [["usage"], "GET", "/v1/usage"],
+      [["billing","ledger"],"GET","/v1/billing/ledger"],
+      [["billing","set","test-v1","2000000"],"PUT","/v1/billing",{pricebook:"test-v1",spend_limit_micro_usd:2000000}],
+      [["billing","topup","1000","once"],"POST","/v1/billing/topups",{amount_cents:1000}],
+      [["billing","refund","topup_one","1000","refund-once"],"POST","/v1/billing/refunds",{topup:"topup_one",amount_cents:1000}],
       [["keys", "list"], "GET", "/v1/keys"], [["keys", "create", "my key"], "POST", "/v1/keys", { name: "my key" }],
       [["keys", "rename", "key_one", "new name"], "PATCH", "/v1/keys/key_one", { name: "new name" }],
       [["keys", "revoke", "key_one"], "DELETE", "/v1/keys/key_one"], [["logout"], "DELETE", "/v1/account/session"],

@@ -43,7 +43,7 @@ impl Brain {
             .client
             .request(method, format!("{}{path}", self.origin))
             .bearer_auth(host_token.unwrap_or(&self.token));
-        for name in ["content-type", "accept"] {
+        for name in ["content-type", "accept", "prefer"] {
             if let Some(value) = headers.get(name) {
                 request = request.header(name, value);
             }

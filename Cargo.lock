@@ -17,6 +17,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "hex",
+ "hmac",
  "http-body-util",
  "rand 0.9.5",
  "reqwest",
@@ -608,7 +609,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain?rev=32fec58705fd90103d7e9dcf0b753cbaa744258c#32fec58705fd90103d7e9dcf0b753cbaa744258c"
+source = "git+https://github.com/aexhq/brain?rev=e2ee09c84a5432aa337fb0cebf685ee3546ba3c0#e2ee09c84a5432aa337fb0cebf685ee3546ba3c0"
 dependencies = [
  "hex",
  "schemars",
@@ -2049,6 +2050,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

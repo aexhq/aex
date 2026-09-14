@@ -221,13 +221,24 @@ impl Store {
         limits: &Limits,
     ) -> Result<bool> {
         let mut tx = self.0.begin().await?;
-        Self::lock_account(&mut tx, &p.account).await?;
+        let result = Self::reserve_turn_in(&mut tx, p, id, key, limits).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+    pub(crate) async fn reserve_turn_in(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        p: &Principal,
+        id: &str,
+        key: &str,
+        limits: &Limits,
+    ) -> Result<bool> {
+        Self::lock_account(tx, &p.account).await?;
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT active_key FROM sessions WHERE id=$1 AND account=$2 AND state='owned'",
         )
         .bind(id)
         .bind(&p.account)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if let Some(existing) = existing {
             return if existing == key {
@@ -237,7 +248,7 @@ impl Store {
             };
         }
         let row = sqlx::query("SELECT count(active_key) AS active,coalesce(sum(retained_bytes),0)::bigint AS bytes FROM sessions WHERE account=$1 AND state!='deleted'")
-            .bind(&p.account).fetch_one(&mut *tx).await?;
+            .bind(&p.account).fetch_one(&mut **tx).await?;
         if row.get::<i64, _>("active") >= i64::from(limits.active_turns_per_account)
             || (row.get::<i64, _>("bytes") as u64).saturating_add(limits.turn_reserve_bytes)
                 > limits.retained_bytes_per_account
@@ -250,9 +261,8 @@ impl Store {
             .bind(limits.turn_reserve_bytes as i64)
             .bind(now())
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        tx.commit().await?;
         Ok(true)
     }
     pub async fn finish_turn(&self, id: &str) -> Result<()> {

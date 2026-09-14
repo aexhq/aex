@@ -51,6 +51,15 @@ pub enum Operation {
         sessions: std::collections::BTreeMap<String, u64>,
     },
     Maintain,
+    RecordMeteredUsage {
+        report: crate::billing::UsageReport,
+    },
+    AdjustCredits {
+        account: String,
+        reference: String,
+        delta_micro_usd: i64,
+        reason: String,
+    },
     Orphans,
 }
 
@@ -73,6 +82,20 @@ async fn operate(
 pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
     let _operator_guard = app.operator_lock.lock().await;
     let result = match operation {
+        Operation::RecordMeteredUsage { report } => {
+            crate::billing::meter(&app.store, &report).await?;
+            json!({"recorded":true})
+        }
+        Operation::AdjustCredits {
+            account,
+            reference,
+            delta_micro_usd,
+            reason,
+        } => {
+            crate::billing::adjust(&app.store, &account, &reference, delta_micro_usd, &reason)
+                .await?;
+            json!({"recorded":true})
+        }
         Operation::Orphans => {
             require_drained(app)?;
             let response = app
@@ -117,6 +140,7 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
             json!({"recorded":true})
         }
         Operation::Maintain => {
+            let turns = crate::turns::maintain(app).await?;
             let mut deleted = 0;
             for id in app
                 .store
@@ -129,7 +153,7 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
                 }
             }
             let attachments = crate::attachments::maintain(app).await?;
-            json!({"deleted":deleted,"attachments_deleted":attachments.deleted,"attachments_failed":attachments.failed})
+            json!({"turns_reconciled":turns,"deleted":deleted,"attachments_deleted":attachments.deleted,"attachments_failed":attachments.failed})
         }
         Operation::CreateAccount => {
             let id = app.store.create_account(&app.config.limits).await?;
@@ -233,7 +257,9 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
             ) {
                 return Err(Error::conflict("session is still active"));
             }
-            app.store.finish_turn(&session).await?;
+            if !crate::turns::reconcile(app, &session).await? {
+                return Err(Error::conflict("session is still active"));
+            }
             json!({"reconciled":true})
         }
     };

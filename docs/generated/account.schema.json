@@ -37,7 +37,8 @@
     "Billing": {
       "type": "string",
       "enum": [
-        "preview_customer_model_keys"
+        "preview_customer_model_keys",
+        "prepaid_customer_model_keys"
       ]
     },
     "Limits": {

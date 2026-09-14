@@ -1,5 +1,5 @@
 use crate::{
-    App, admission,
+    App,
     error::{Error, Result},
     hosts, identity, sessions,
 };
@@ -20,6 +20,8 @@ pub fn router(app: App) -> Router {
 #[derive(Debug, PartialEq)]
 pub enum Route<'a> {
     Account,
+    Billing,
+    PaymentWebhook,
     Models,
     AttachmentUpload(&'a str),
     AttachmentDelete(&'a str, &'a str),
@@ -44,7 +46,11 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
     if crate::account::route(method, path) {
         return Ok(Route::Account);
     }
+    if crate::billing::route(method, path) {
+        return Ok(Route::Billing);
+    }
     match (method.as_str(), parts.as_slice()) {
+        ("POST", ["", "v1", "webhooks", "stripe"]) => Ok(Route::PaymentWebhook),
         ("GET", ["", "v1", "models"]) => Ok(Route::Models),
         ("POST", ["", "v1", "sessions", session, "attachments"]) => {
             Ok(Route::AttachmentUpload(session))
@@ -121,6 +127,8 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         "route",
         match route {
             Route::Account => "account",
+            Route::Billing => "billing",
+            Route::PaymentWebhook => "stripe_webhook",
             Route::Models => "models",
             Route::AttachmentUpload(_)
             | Route::AttachmentDelete(_, _)
@@ -145,6 +153,19 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         }
         .into_response());
     }
+    if matches!(route, Route::PaymentWebhook) {
+        if parts.uri.query().is_some() {
+            return Err(Error::invalid("unsupported query parameters"));
+        }
+        let body = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            to_bytes(body, 1_048_576),
+        )
+        .await
+        .map_err(|_| Error::invalid("webhook body timed out"))?
+        .map_err(|_| Error::invalid("webhook body exceeds limit"))?;
+        return crate::payments::webhook(&app, &parts.headers, body).await;
+    }
     if !app.accepting.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(Error::capacity());
     }
@@ -164,6 +185,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 .strip_prefix("after=")
                 .is_some_and(|v| v.parse::<u64>().is_ok()),
             Route::Models => true,
+            Route::Billing => path == "/v1/billing/ledger",
             _ => false,
         };
         if !valid {
@@ -175,6 +197,25 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     } else {
         identity::bearer(&parts.headers)?
     };
+    if matches!(route, Route::Billing) {
+        let body = tokio::time::timeout(std::time::Duration::from_secs(10), to_bytes(body, 4096))
+            .await
+            .map_err(|_| Error::invalid("request body timed out"))?
+            .map_err(|_| Error::invalid("request body exceeds limit"))?;
+        let mut response = crate::billing::handle(
+            &app,
+            &parts.method,
+            path,
+            parts.uri.query(),
+            &parts.headers,
+            body,
+        )
+        .await?;
+        response
+            .headers_mut()
+            .insert("cache-control", "no-store".parse().unwrap());
+        return Ok(response);
+    }
     if matches!(route, Route::Account) {
         let body = tokio::time::timeout(std::time::Duration::from_secs(10), to_bytes(body, 4096))
             .await
@@ -215,7 +256,6 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let mut upstream_key = None;
     let mut host_token = None;
     let mut stream_session = None;
-    let mut turn_session = None;
     match route {
         Route::AttachmentUpload(session) => {
             return crate::attachments::upload(&app, &principal, session, &parts.headers, body)
@@ -285,17 +325,14 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                     return sessions::delete(&app, id, &parts.headers, &key).await;
                 }
                 if op == "messages" {
-                    let _: brain_protocol::MessageRequest = serde_json::from_slice(&body)?;
-                    admission::disk(&app).await?;
-                    app.store
-                        .reserve_turn(&principal, id, &key, &app.config.limits)
-                        .await?;
-                    turn_session = Some(id.to_string());
+                    return crate::turns::send(&app, &principal, id, &parts.headers, body).await;
                 }
                 upstream_key = Some(key);
             }
         }
-        Route::Health(_) | Route::Account => unreachable!(),
+        Route::Health(_) | Route::Account | Route::Billing | Route::PaymentWebhook => {
+            unreachable!()
+        }
     }
     let wants_stream = matches!(route, Route::Host(_, "commands"))
         || (matches!(route, Route::Session(_, "events"))
@@ -333,19 +370,6 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             host_token,
         )
         .await?;
-    if let Some(id) = turn_session {
-        // The response can acknowledge a running turn. Only a known terminal state releases capacity.
-        if let Ok(summary) = app.brain.summary(&id).await
-            && !matches!(
-                summary.status,
-                brain_protocol::SessionStatus::Running
-                    | brain_protocol::SessionStatus::Creating
-                    | brain_protocol::SessionStatus::Ending
-            )
-        {
-            app.store.finish_turn(&id).await?;
-        }
-    }
     if !wants_stream || !response.status().is_success() {
         return finite(&app, response).await;
     }
@@ -392,6 +416,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
 pub async fn finite(app: &App, response: reqwest::Response) -> Result<Response> {
     let status = response.status();
     let content_type = response.headers().get("content-type").cloned();
+    let preference = response.headers().get("preference-applied").cloned();
     let body = app.brain.bytes(response).await?;
     if status.is_server_error() {
         let mut error: brain_protocol::ApiError = serde_json::from_slice(&body)
@@ -407,6 +432,9 @@ pub async fn finite(app: &App, response: reqwest::Response) -> Result<Response> 
         .header("cache-control", "no-store");
     if let Some(content_type) = content_type {
         response = response.header("content-type", content_type);
+    }
+    if let Some(preference) = preference {
+        response = response.header("preference-applied", preference);
     }
     Ok(response.body(Body::from(body)).unwrap())
 }

@@ -79,6 +79,9 @@ pub async fn delete(app: &App, id: &str, headers: &HeaderMap, key: &str) -> Resu
     if !app.store.mark_deleting(id).await? {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    if !crate::turns::reconcile(app, id).await? {
+        return Err(Error::conflict("session is still active"));
+    }
     app.changed.send_modify(|v| *v = v.wrapping_add(1));
     let response = app
         .brain

@@ -11,7 +11,9 @@ export async function database() {
   url.searchParams.set("options", `-csearch_path=${schema}`);
   const client = new Client({ connectionString: url.href });
   await client.connect();
-  const tables = ["accounts", "api_keys", "sessions", "hosts", "claims", "storage_report", "dashboard_sessions", "artifacts", "login_grants", "attachments"];
+  const tables = ["accounts", "api_keys", "sessions", "hosts", "claims", "storage_report", "dashboard_sessions", "artifacts", "login_grants", "attachments",
+    "pricebooks", "wallets", "credit_ledger", "credit_reservations", "metered_usage", "session_turns", "attachment_downloads",
+    "topups", "credit_refunds", "payment_events", "payment_disputes"];
   return {
     url: url.href, client,
     async snapshot() {

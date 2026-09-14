@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BillingSettings",
+  "type": "object",
+  "properties": {
+    "pricebook": {
+      "type": "string"
+    },
+    "spend_limit_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "pricebook",
+    "spend_limit_micro_usd"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Topup",
+  "type": "object",
+  "properties": {
+    "amount_cents": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "checkout_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "id": {
+      "type": "string"
+    },
+    "receipt_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "refunded_cents": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "state": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "amount_cents",
+    "state",
+    "refunded_cents",
+    "created"
+  ]
+}

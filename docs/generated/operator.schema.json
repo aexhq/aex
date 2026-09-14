@@ -239,6 +239,53 @@
       "properties": {
         "action": {
           "type": "string",
+          "const": "record_metered_usage"
+        },
+        "report": {
+          "$ref": "#/$defs/UsageReport"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "report"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "const": "adjust_credits"
+        },
+        "delta_micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "account",
+        "reference",
+        "delta_micro_usd",
+        "reason"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
           "const": "orphans"
         }
       },
@@ -247,5 +294,32 @@
         "action"
       ]
     }
-  ]
+  ],
+  "$defs": {
+    "UsageReport": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reservation": {
+          "type": "string"
+        },
+        "terminal": {
+          "type": "boolean"
+        },
+        "units": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reservation",
+        "units",
+        "terminal"
+      ]
+    }
+  }
 }

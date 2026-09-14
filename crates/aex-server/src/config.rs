@@ -13,6 +13,8 @@ pub struct Config {
     pub limits: Limits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<crate::attachments::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<crate::billing::Config>,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -81,6 +83,9 @@ impl Config {
                 "attachments require request capacity for provider downloads"
             );
             config.validate(self.limits.request_bytes)?;
+        }
+        if let Some(config) = &self.billing {
+            config.validate()?;
         }
         Ok(())
     }

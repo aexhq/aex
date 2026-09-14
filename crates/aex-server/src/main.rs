@@ -54,6 +54,32 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "sync-payment",
+                    schemars::schema_for!(aex_server::payments::SyncPayment),
+                ),
+                ("wallet", schemars::schema_for!(aex_server::billing::Wallet)),
+                (
+                    "billing-settings",
+                    schemars::schema_for!(aex_server::billing::BillingSettings),
+                ),
+                (
+                    "ledger-page",
+                    schemars::schema_for!(aex_server::billing::LedgerPage),
+                ),
+                (
+                    "topup-input",
+                    schemars::schema_for!(aex_server::payments::TopupInput),
+                ),
+                ("topup", schemars::schema_for!(aex_server::payments::Topup)),
+                (
+                    "refund-input",
+                    schemars::schema_for!(aex_server::payments::RefundInput),
+                ),
+                (
+                    "refund",
+                    schemars::schema_for!(aex_server::payments::Refund),
+                ),
+                (
                     "attachment",
                     schemars::schema_for!(aex_server::attachments::Attachment),
                 ),

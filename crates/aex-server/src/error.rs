@@ -33,6 +33,11 @@ impl Error {
             ApiError::overloaded("hosted capacity unavailable"),
         )
     }
+    pub fn credits(message: &str) -> Self {
+        let mut error = ApiError::conflict(message);
+        error.code = "insufficient_credits".into();
+        Self(StatusCode::PAYMENT_REQUIRED, error)
+    }
     pub fn ambiguous() -> Self {
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
