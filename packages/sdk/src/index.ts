@@ -1,6 +1,7 @@
 export * from "@aexhq/brain";
 export type * from "./generated.js";
-import { Brain, type BrainOptions } from "@aexhq/brain";
+import { Brain, environment, type BrainOptions, type Environment } from "@aexhq/brain";
+import type { EnvironmentCatalog, EnvironmentSelection } from "./generated.js";
 import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
 
 export type AexConnection = Omit<BrainOptions, "token" | "baseUrl"> & { baseUrl?: string };
@@ -62,6 +63,18 @@ export class Aex extends Brain {
     refunds: (): Promise<Refund[]> => this.request("GET", "/v1/billing/refunds"),
     refund: (input: RefundInput, idempotencyKey: string): Promise<Refund> => this.request("POST", "/v1/billing/refunds", input, idempotencyKey),
     sync: (input: SyncPayment): Promise<Wallet> => this.request("POST", "/v1/billing/sync", input),
+  };
+
+  readonly environments = {
+    list: (): Promise<EnvironmentCatalog> => this.request("GET", "/v1/environments"),
+    /** Select a published profile. Compute is reserved at session creation and allocated on its first Tool invocation. */
+    modal: async ({ name, profile, lifetimeMs }: EnvironmentSelection & { name: string }): Promise<Environment> => {
+      nonnegativeInteger(lifetimeMs, "lifetimeMs");
+      const catalog = await this.environments.list();
+      const selected = catalog.profiles[profile];
+      if (!selected || lifetimeMs < 1000 || lifetimeMs > selected.maxLifetimeMs) throw new TypeError("profile or lifetime is not available in this account's catalog");
+      return environment({ url: () => catalog.driver_url, configure: () => ({ profile, lifetimeMs }) })({ name });
+    },
   };
 
   /** Key management requires an account session; workload API keys cannot create credentials. */

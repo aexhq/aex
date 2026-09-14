@@ -3,3 +3,7 @@ target
 node_modules
 artifacts
 data
+.env
+.env.*
+**/.env
+**/.env.*

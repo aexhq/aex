@@ -54,6 +54,14 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "environment-catalog",
+                    schemars::schema_for!(aex_server::environments::Catalog),
+                ),
+                (
+                    "environment-selection",
+                    schemars::schema_for!(aex_server::environments::Selection),
+                ),
+                (
                     "sync-payment",
                     schemars::schema_for!(aex_server::payments::SyncPayment),
                 ),

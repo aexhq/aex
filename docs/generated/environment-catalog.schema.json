@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentCatalog",
+  "type": "object",
+  "properties": {
+    "driver_url": {
+      "type": "string"
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/EnvironmentProfile"
+      }
+    }
+  },
+  "required": [
+    "driver_url",
+    "profiles"
+  ],
+  "$defs": {
+    "EnvironmentProfile": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "cpu": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "image": {
+          "type": "string"
+        },
+        "maxLifetimeMs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "outboundDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "region": {
+          "type": "string"
+        },
+        "workdir": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "commands",
+        "cpu",
+        "memoryMiB",
+        "maxLifetimeMs",
+        "workdir",
+        "region",
+        "outboundDomains",
+        "maxOutputBytes"
+      ]
+    }
+  }
+}

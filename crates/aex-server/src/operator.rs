@@ -7,7 +7,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, Method},
-    routing::post,
+    routing::{get, post},
 };
 use bytes::Bytes;
 use schemars::JsonSchema;
@@ -66,6 +66,15 @@ pub enum Operation {
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/operate", post(operate))
+        .route(
+            "/environments/config",
+            get(crate::environments::configuration),
+        )
+        .route(
+            "/environments/authorize",
+            post(crate::environments::authorize),
+        )
+        .route("/environments/usage", post(crate::environments::report))
         .with_state(app)
 }
 
@@ -141,6 +150,7 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
         }
         Operation::Maintain => {
             let turns = crate::turns::maintain(app).await?;
+            crate::environments::maintain(app).await?;
             let mut deleted = 0;
             for id in app
                 .store

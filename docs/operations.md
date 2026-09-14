@@ -29,6 +29,11 @@ Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery
 wall-time policy. Keep prices and test/live payment mode explicit; deployments do not enroll preview
 accounts or invent rates. Only the private operator can submit usage or append credit adjustments.
 
+The [managed environment controller](environments.md) uses a distinct narrow credential and its
+own retained directory. Its configuration comes from Aex's immutable profile records. Keep Modal
+credentials in that process only; keep Stripe, S3 and database credentials in Aex. Reconcile
+uncertain resource identities against Modal before releasing their holds; never recreate them.
+
 ## Storage
 
 Aex and Brain access only their own directories. A trusted operator measures file lengths in
@@ -49,9 +54,10 @@ quota or arbitrary hostile-code hosting.
 
 ## Durability
 
-Stop admission and both writers for consistent whole-volume backup. Dump PostgreSQL after stopping Aex and Brain, store the dump in a root-only backup
+Stop admission and all writers for consistent whole-volume backup. Stop Brain before the environment
+controller, then Aex, so cleanup callbacks can finish. Dump PostgreSQL, store the dump in a root-only backup
 directory on EBS, then snapshot that volume. Preserve Brain metadata/key, artifacts,
-format marker and journals alongside the matching product dump. Runtime sockets
+format marker and journals, plus the controller's SQLite directory, alongside the matching product dump. Runtime sockets
 under `run/` are transient. Record compatible source revisions and image digests with backups.
 
 Stop the previous writer before moving a retained volume. Disk loss requires a completed backup

@@ -4,6 +4,20 @@ import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
+test("managed profiles compose without controller credentials or customer-selected provider settings", async () => {
+  const client = new Aex({ apiKey: "key", fetch: async url => {
+    assert.ok(url.endsWith("/v1/environments"));
+    return Response.json({ driver_url: "https://api.aex.dev/environments/modal", profiles: { "python-v1": { maxLifetimeMs: 300000 } } });
+  } });
+  const env = await client.environments.modal({ name: "python", profile: "python-v1", lifetimeMs: 300000 });
+  const calculate = tool({ name: "calculate", description: "Calculate", input: z.object({}), implementation: { type: "modal_command", name: "calculate" } });
+  const descriptor = upstream.inspectEnvironment(upstream.inspectTool(calculate({ env })).environment);
+  assert.deepEqual(descriptor.driver, { driver: "http", url: "https://api.aex.dev/environments/modal" });
+  assert.deepEqual(descriptor.configuration, { profile: "python-v1", lifetimeMs: 300000 });
+  await assert.rejects(client.environments.modal({ name: "python", profile: "unpublished", lifetimeMs: 1000 }), /catalog/);
+  await assert.rejects(client.environments.modal({ name: "python", profile: "python-v1", lifetimeMs: 300001 }), /catalog/);
+});
+
 test("prepaid ceilings and download allowances are explicit headers and billing mutations carry stable keys", async () => {
   const calls=[];
   const client=new Aex({apiKey:"key",maxCostMicroUsd:1000,fetch:async (url,init)=>{calls.push({url,init}); return Response.json({});}});

@@ -19,16 +19,23 @@ pub async fn create(
     body: Bytes,
     key: &str,
 ) -> Result<Response> {
-    let request: CreateSessionRequest = serde_json::from_slice(&body)?;
+    let mut request: CreateSessionRequest = serde_json::from_slice(&body)?;
     admission::create(app, p, &request).await?;
-    let fingerprint =
-        digest(&serde_jcs::to_vec(&request).map_err(|_| Error::invalid("invalid create request"))?);
-    let claim = app
-        .store
-        .claim(p, "create", key, &fingerprint, &app.config.limits)
-        .await?;
+    let ceiling = crate::billing::maximum(headers)?;
+    let mut identity = serde_json::to_value(&request)?;
+    if let Some(maximum) = ceiling {
+        identity = serde_json::json!({"request": identity,"max_cost":maximum});
+    }
+    let fingerprint = digest(
+        &serde_jcs::to_vec(&identity).map_err(|_| Error::invalid("invalid create request"))?,
+    );
+    let mut tx = app.store.0.begin().await?;
+    let claim =
+        crate::store::Store::claim_in(&mut tx, p, "create", key, &fingerprint, &app.config.limits)
+            .await?;
     let upstream = match claim {
         Claim::Complete(value) => {
+            tx.commit().await?;
             let summary: SessionSummary = serde_json::from_value(value)?;
             app.store
                 .owned(p, summary.session_id.as_str(), false)
@@ -37,13 +44,16 @@ pub async fn create(
         }
         Claim::New(upstream) => upstream,
     };
+    crate::environments::reserve_in(app, &mut tx, p, &upstream, &mut request, ceiling).await?;
+    tx.commit().await?;
+    let forwarded = Bytes::from(serde_json::to_vec(&request)?);
     let response = app
         .brain
         .request(
             Method::POST,
             "/v1/sessions",
             headers,
-            body.clone(),
+            forwarded,
             Some(&upstream),
             None,
         )

@@ -5,6 +5,7 @@ pub mod attachments;
 pub mod billing;
 pub mod brain;
 pub mod config;
+pub mod environments;
 pub mod error;
 pub mod hosts;
 pub mod http;
@@ -26,6 +27,7 @@ pub struct App {
     pub store: store::Store,
     pub attachment_storage: Option<Arc<dyn attachments::storage::Storage>>,
     pub payments: Option<Arc<payments::Stripe>>,
+    pub environment_token: Option<String>,
     pub attachment_uploads: Arc<tokio::sync::RwLock<()>>,
     pub brain: brain::Brain,
     pub changed: watch::Sender<u64>,
@@ -58,6 +60,20 @@ impl App {
         );
         std::fs::create_dir_all(&config.data_dir)?;
         let store = store::Store::open(&database_url).await?;
+        let environment_token = if let Some(environments) = &config.environments {
+            let token = std::env::var("AEX_ENVIRONMENT_TOKEN")?;
+            anyhow::ensure!(
+                token.len() >= 32
+                    && token != brain_token
+                    && token != operator_token
+                    && token != site_token,
+                "Environment credential must be distinct and contain at least 32 characters"
+            );
+            environments::initialize(&store, environments).await?;
+            Some(token)
+        } else {
+            None
+        };
         if let Some(billing) = &config.billing {
             billing::initialize(&store, billing).await?;
         }
@@ -84,6 +100,7 @@ impl App {
             store,
             attachment_storage,
             payments,
+            environment_token,
             attachment_uploads: Arc::default(),
             brain,
             changed: watch::channel(0).0,

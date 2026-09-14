@@ -23,6 +23,7 @@ pub enum Route<'a> {
     Billing,
     PaymentWebhook,
     Models,
+    Environments,
     AttachmentUpload(&'a str),
     AttachmentDelete(&'a str, &'a str),
     AttachmentContent(&'a str),
@@ -52,6 +53,7 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
     match (method.as_str(), parts.as_slice()) {
         ("POST", ["", "v1", "webhooks", "stripe"]) => Ok(Route::PaymentWebhook),
         ("GET", ["", "v1", "models"]) => Ok(Route::Models),
+        ("GET", ["", "v1", "environments"]) => Ok(Route::Environments),
         ("POST", ["", "v1", "sessions", session, "attachments"]) => {
             Ok(Route::AttachmentUpload(session))
         }
@@ -130,6 +132,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             Route::Billing => "billing",
             Route::PaymentWebhook => "stripe_webhook",
             Route::Models => "models",
+            Route::Environments => "environments",
             Route::AttachmentUpload(_)
             | Route::AttachmentDelete(_, _)
             | Route::AttachmentContent(_) => "attachments",
@@ -257,6 +260,9 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let mut host_token = None;
     let mut stream_session = None;
     match route {
+        Route::Environments => {
+            return Ok(axum::Json(crate::environments::catalog(&app, &principal)?).into_response());
+        }
         Route::AttachmentUpload(session) => {
             return crate::attachments::upload(&app, &principal, session, &parts.headers, body)
                 .await;

@@ -200,3 +200,12 @@ receives only HTTPS image/PDF references. The [attachment API](docs/api.md) and 
 media contracts. Storage uses one put/get/delete interface with an S3 implementation. PostgreSQL,
 SDK, hosted recovery and real S3 checks pass locally. Exact-source CI, protected storage/provider
 checks and retained-session compatibility inspection remain required before release and deployment.
+
+## Managed execution and prepaid accounts - 2026-09-14
+
+Prepaid price acceptance, reservations, cumulative meters, Stripe topups/refunds and asynchronous
+turn settlement are implemented. Managed Modal profiles add account admission, sealed resource
+grants, fixed commands and controller reconciliation. The SDK selects published profiles and
+sets operation ceilings; official loops supply hosted JSON Schema correction. See
+[billing](docs/billing.md) and [environments](docs/environments.md). Exact-source CI, provider
+checks and deployment proof still gate release. Existing preview accounts are not enrolled by deployment.

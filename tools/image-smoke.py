@@ -36,7 +36,14 @@ with tempfile.TemporaryDirectory() as directory:
             raise RuntimeError('image did not become operable')
         assert docker('inspect','--format','{{.Config.User}}',name)=='10002:10002'
         assert docker('inspect','--format','{{json .HostConfig.PortBindings}}',name) in ('{}','null')
-        print('non-root image, durable writable path and private operator smoke passed')
+        # Both architectures must load the shipped controller dependencies and write its own store.
+        docker('run','--rm','--user','10003:10003','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
+               '--tmpfs','/var/lib/aex-environment:rw,nosuid,noexec,uid=10003,gid=10003,mode=0700',
+               '--workdir','/opt/aex','--entrypoint','node','aex-rewrite:test','--input-type=module','-e',
+               'import {createModalEnvironment} from "@aexhq/env-modal/server"; import {DatabaseSync} from "node:sqlite"; '
+               'import {access} from "node:fs/promises"; await access("environments/modal.mjs"); '
+               'const db = new DatabaseSync("/var/lib/aex-environment/smoke.sqlite"); db.exec("CREATE TABLE proof (id INTEGER)"); db.close();')
+        print('non-root runtime/controller images, separate writable paths and private operator smoke passed')
     finally:
         subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
         subprocess.run(['docker','volume','rm',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)

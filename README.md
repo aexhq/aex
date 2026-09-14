@@ -39,7 +39,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.76.0 @aexhq/agentloop-pi@6.1.3
+npm install @aexhq/sdk@0.76.0 @aexhq/agentloop-pi@6.2.0
 ```
 
 ```ts
@@ -89,11 +89,15 @@ host Tools still require their own process to remain connected.
 
 Use your own model keys and Brain-compatible extensions.
 Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.76 uses Brain 0.25 and official extensions 6.1. Custom Wasm Components must target
+SDK 0.76 uses Brain 0.25 and official loops 6.2. Custom Wasm Components must target
 the matching WIT contract. Prepare application Tool dependencies before registration;
 extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
 
 The preview does not enable arbitrary remote HTTP Environments or general shell execution.
+For Python, data files and retrieval, select a published [managed Modal Environment](docs/environments.md).
+Its finite sandbox shares a workspace across Tools, reserves prepaid credits before allocation,
+and contains no platform or model credentials. Official loops can validate structured output and
+perform bounded corrections inside the hosted turn, with tools disabled during correction.
 See the [supported API](docs/api.md) and [SDK guide](packages/sdk/README.md) for the current boundaries.
 
 ## Packages

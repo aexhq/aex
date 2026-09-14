@@ -50,7 +50,7 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
             }
             Driver::Host { host_id } => app.store.own_host(p, host_id.as_str()).await?,
             Driver::Http { .. } => {
-                return Err(Error::invalid("remote Environments are not hosted"));
+                crate::environments::selection(app, p, environment)?;
             }
         }
     }
@@ -92,6 +92,8 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                         .ok_or_else(|| Error::invalid("Tool content address required"))?,
                 )
                 .await?;
+            } else if matches!(selected.driver, Driver::Http { .. }) {
+                crate::environments::placement(app, p, selected, &placement.implementation)?;
             }
         }
     }
