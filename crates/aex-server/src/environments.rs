@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Config {
     pub url: String,
     pub public_url: String,
-    pub app_name: String,
+    pub configuration: Value,
     pub active_per_account: u32,
     pub profiles: BTreeMap<String, PublishedProfile>,
 }
@@ -28,18 +28,12 @@ pub struct PublishedProfile {
     pub specification: Profile,
 }
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[schemars(rename = "EnvironmentProfile")]
 pub struct Profile {
-    pub image: String,
-    pub commands: BTreeMap<String, Vec<String>>,
-    pub cpu: u32,
-    pub memory_mi_b: u32,
     pub max_lifetime_ms: u32,
-    pub workdir: String,
-    pub region: String,
-    pub outbound_domains: Vec<String>,
-    pub max_output_bytes: u32,
+    #[serde(flatten)]
+    pub configuration: BTreeMap<String, Value>,
 }
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,7 +69,7 @@ pub struct Usage {
     pub environment: String,
     pub authorization: String,
     pub profile: String,
-    pub sandbox_id: Option<String>,
+    pub resource_id: Option<String>,
     pub units_ms: i64,
     pub terminal: bool,
 }
@@ -116,7 +110,7 @@ impl Config {
             );
         }
         anyhow::ensure!(
-            !self.app_name.is_empty() && self.active_per_account > 0 && !self.profiles.is_empty(),
+            self.active_per_account > 0 && !self.profiles.is_empty(),
             "managed Environment configuration is empty"
         );
         for (id, published) in &self.profiles {
@@ -126,45 +120,8 @@ impl Config {
                 "profile requires an identifier and explicit account grants"
             );
             anyhow::ensure!(
-                p.image.strip_prefix("im-").is_some_and(
-                    |id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_alphanumeric())
-                ),
-                "profile requires an immutable Modal image ID"
-            );
-            anyhow::ensure!(
-                p.cpu == 1 && p.memory_mi_b == 1024,
-                "sandbox_ms currently prices the 1-core, 1024-MiB profile"
-            );
-            anyhow::ensure!(
                 (1000..=300_000).contains(&p.max_lifetime_ms),
                 "profile lifetime must be 1 to 300 seconds"
-            );
-            anyhow::ensure!(
-                p.workdir.starts_with('/')
-                    && !p.region.is_empty()
-                    && p.max_output_bytes > 0
-                    && p.max_output_bytes <= 4 * 1024 * 1024,
-                "invalid profile limits"
-            );
-            anyhow::ensure!(
-                !p.commands.is_empty()
-                    && p.commands.iter().all(|(name, argv)| identifier(name)
-                        && !argv.is_empty()
-                        && argv.iter().all(|v| !v.is_empty())),
-                "profile requires fixed named commands"
-            );
-            anyhow::ensure!(
-                p.outbound_domains.iter().all(|domain| {
-                    let host = domain.strip_prefix("*.").unwrap_or(domain);
-                    host.contains('.')
-                        && host.split('.').all(|label| {
-                            !label.is_empty()
-                                && label.bytes().all(|c| {
-                                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'
-                                })
-                        })
-                }),
-                "profile outbound domains require explicit lowercase DNS names"
             );
         }
         Ok(())
@@ -235,33 +192,6 @@ pub fn catalog(app: &App, principal: &Principal) -> Result<Catalog> {
             .map(|(id, p)| (id.clone(), p.specification.clone()))
             .collect(),
     })
-}
-pub fn placement(
-    app: &App,
-    principal: &Principal,
-    environment: &Environment,
-    implementation: &Value,
-) -> Result<()> {
-    let selected = selection(app, principal, environment)?;
-    let object = implementation
-        .as_object()
-        .ok_or_else(|| Error::invalid("invalid managed Tool implementation"))?;
-    let name = object
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::invalid("managed command name is required"))?;
-    if !object
-        .keys()
-        .all(|key| matches!(key.as_str(), "type" | "name" | "configuration"))
-        || object.get("type").and_then(Value::as_str) != Some("modal_command")
-        || !app.config.environments.as_ref().unwrap().profiles[&selected.profile]
-            .specification
-            .commands
-            .contains_key(name)
-    {
-        return Err(Error::invalid("Tool is not in the managed command catalog"));
-    }
-    Ok(())
 }
 pub async fn reserve_in(
     app: &App,
@@ -366,7 +296,9 @@ pub async fn configuration(State(app): State<App>, headers: HeaderMap) -> Result
             serde_json::from_str::<Value>(row.get("document"))?,
         );
     }
-    Ok(Json(json!({"appName":config.app_name,"profiles":profiles})))
+    Ok(Json(
+        json!({"configuration":config.configuration,"profiles":profiles}),
+    ))
 }
 pub async fn authorize(
     State(app): State<App>,
@@ -432,13 +364,13 @@ pub async fn report(
         || input.units_ms < 0
         || input.units_ms > row.get::<i64, _>("lifetime_ms")
         || input
-            .sandbox_id
+            .resource_id
             .as_ref()
-            .is_some_and(|id| !id.starts_with("sb-") || !identifier(id))
+            .is_some_and(|id| id.is_empty() || id.len() > 1024)
         || sandbox
             .as_ref()
-            .is_some_and(|id| Some(id) != input.sandbox_id.as_ref())
-        || (input.sandbox_id.is_none() && input.units_ms != 0)
+            .is_some_and(|id| Some(id) != input.resource_id.as_ref())
+        || (input.resource_id.is_none() && input.units_ms != 0)
     {
         return Err(Error::invalid("resource report does not match its grant"));
     }
@@ -462,7 +394,7 @@ pub async fn report(
         )
         .await?;
         sqlx::query("UPDATE environment_grants SET sandbox_id=$1 WHERE id=$2")
-            .bind(&input.sandbox_id)
+            .bind(&input.resource_id)
             .bind(&input.authorization)
             .execute(&mut *tx)
             .await?;

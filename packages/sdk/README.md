@@ -6,8 +6,8 @@ require an account credential. Configure `maxCostMicroUsd` on a prepaid workload
 per-operation ceiling. Attachment uploads also accept `downloadBudgetBytes` and an optional
 operation-specific `maxCostMicroUsd`. See [billing](../../docs/billing.md) for units and recovery.
 
-`session.submit()` returns the committed turn-start receipt immediately. Hosted Tools keep running
-after client close; host Tools require their process online. Follow Events from the receipt and read
+`session.submit()` returns the saved turn's event sequence immediately. Hosted Tools keep running
+after client close; host Tools require their process online. Follow Events from that sequence and read
 the transcript when the turn terminates. Put structured correction policy in the hosted Agentloop
 when submitting from a short-lived Server Action.
 
@@ -21,7 +21,7 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.76 uses Brain SDK 0.25 and Pi/Codex
+extension builders are Brain's implementations. SDK 0.77 uses Brain SDK 0.27 and Pi/Codex
 6.2. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs
@@ -54,8 +54,8 @@ standalone Brain and require operator deployment. See [official extensions](http
 Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
 executes application functions in your process. Native hosted Components receive no server
 secrets, filesystem or network grants. `await aex.environments.list()` lists your account's
-published profiles. `await aex.environments.modal({name, profile, lifetimeMs})` selects one for
-your Tools; [managed execution](../../docs/environments.md) reserves credits when creating the session.
+published configurations. Import `modal` from `@aexhq/env-modal` and pass the catalog URL and
+granted profile name; [managed execution](../../docs/environments.md) reserves credits at creation.
 Customer-selected HTTP endpoints are denied. Hosted `brainEnv` configuration must be empty; resource access
 is configured by each Environment, not declared through extension `needs`. Prepare dependencies
 for `hostEnv` Tools in your application before registering them. Supply your model key per session.

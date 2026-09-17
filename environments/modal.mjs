@@ -20,9 +20,12 @@ async function control(path, body) {
   return response.json();
 }
 const config = await control("config");
-const environment = await createModalEnvironment({ directory, ...config,
+for (const { cpu, memoryMiB } of Object.values(config.profiles)) {
+  if (cpu !== 1 || memoryMiB !== 1024) throw new Error("sandbox_ms currently prices 1 CPU and 1024 MiB");
+}
+const environment = await createModalEnvironment({ directory, ...config.configuration, profiles: config.profiles,
   authorize: async binding => (await control("authorize", binding)).expiresAt,
-  report: usage => control("usage", usage),
+  report: ({ sandboxId, ...usage }) => control("usage", { ...usage, resourceId: sandboxId }),
 });
 const [command, sessionId, name, sandboxId, ...extra] = process.argv.slice(2);
 if (command === "recover" && sessionId && name && sandboxId && extra.length === 0) {

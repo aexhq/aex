@@ -44,7 +44,7 @@ async fn app() -> (tempfile::TempDir, App, Principal) {
         .await
         .unwrap();
     let managed = serde_json::from_value(json!({"url":"http://127.0.0.1:8083","public_url":"https://api.aex.dev/environments/modal",
-        "app_name":"test","active_per_account":1,"profiles":{"python-v1":{"accounts":[account],"specification":{
+        "configuration":{"appName":"test"},"active_per_account":1,"profiles":{"python-v1":{"accounts":[account],"specification":{
             "image":"im-test","commands":{"calculate":["python","/app/calculate.py"]},"cpu":1,"memoryMiB":1024,
             "maxLifetimeMs":300000,"workdir":"/workspace","region":"us","outboundDomains":[],"maxOutputBytes":4096}}}})).unwrap();
     Arc::make_mut(&mut app.config).environments = Some(managed);
@@ -122,14 +122,14 @@ fn usage(id: &str, units: i64, terminal: bool) -> Usage {
         environment: "python".into(),
         authorization: id.into(),
         profile: "python-v1".into(),
-        sandbox_id: Some("sb-test".into()),
+        resource_id: Some("provider/resource:one".into()),
         units_ms: units,
         terminal,
     }
 }
 
 #[tokio::test]
-async fn only_account_catalog_commands_and_unmodified_selections_are_admitted() {
+async fn only_account_catalog_and_unmodified_selections_are_admitted() {
     let (_dir, app, p) = app().await;
     assert_eq!(environments::catalog(&app, &p).unwrap().profiles.len(), 1);
     let outsider = Principal {
@@ -144,21 +144,7 @@ async fn only_account_catalog_commands_and_unmodified_selections_are_admitted() 
     );
     let mut input = request();
     assert!(environments::selection(&app, &outsider, &input.environments[1]).is_err());
-    assert!(
-        environments::placement(
-            &app,
-            &p,
-            &input.environments[1],
-            &json!({"type":"modal_command","name":"calculate","configuration":{"callback":"run-scoped"}})
-        )
-        .is_ok()
-    );
-    for descriptor in [
-        json!({"type":"modal_command","name":"shell"}),
-        json!({"type":"modal_command","name":"calculate","argv":["sh"]}),
-    ] {
-        assert!(environments::placement(&app, &p, &input.environments[1], &descriptor).is_err());
-    }
+    assert!(environments::selection(&app, &p, &input.environments[1]).is_ok());
     input.environments[1].configuration["authorization"] = json!("forged");
     assert!(environments::selection(&app, &p, &input.environments[1]).is_err());
     input = request();
@@ -173,7 +159,8 @@ async fn only_account_catalog_commands_and_unmodified_selections_are_admitted() 
         .get_mut("python-v1")
         .unwrap()
         .specification
-        .image = "im-other".into();
+        .configuration
+        .insert("image".into(), json!("im-other"));
     assert!(
         environments::initialize(&app.store, &changed)
             .await
@@ -278,7 +265,7 @@ async fn grant_binding_revocation_and_cumulative_settlement_cannot_cross_resourc
             .is_err()
     );
     let mut wrong = usage(&id, 3000, false);
-    wrong.sandbox_id = Some("sb-other".into());
+    wrong.resource_id = Some("sb-other".into());
     assert!(
         environments::report(State(app.clone()), headers(), Json(wrong))
             .await

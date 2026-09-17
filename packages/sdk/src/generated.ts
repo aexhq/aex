@@ -263,17 +263,8 @@ export interface Refund {
  * via the `definition` "EnvironmentProfile".
  */
 export interface EnvironmentProfile {
-  commands: {
-    [k: string]: string[];
-  };
-  cpu: number;
-  image: string;
   maxLifetimeMs: number;
-  maxOutputBytes: number;
-  memoryMiB: number;
-  outboundDomains: string[];
-  region: string;
-  workdir: string;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
