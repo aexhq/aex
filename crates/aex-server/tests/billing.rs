@@ -492,7 +492,7 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         }}))
         .route("/v1/sessions/ses_billing/messages",post(move |headers:HeaderMap| {
             let phase=handler_phase.clone(); let calls=handler_calls.clone(); let received=handler_received.clone(); let accept=handler_accept.clone();
-            async move { assert_eq!(headers["prefer"],"respond-async"); calls.fetch_add(1,Ordering::SeqCst); received.notify_one(); accept.notified().await; phase.store(1,Ordering::SeqCst); (StatusCode::ACCEPTED,Json(json!({"session_id":"ses_billing","sequence":2}))) }
+            async move { assert_eq!(headers["prefer"],"respond-async"); calls.fetch_add(1,Ordering::SeqCst); received.notify_one(); accept.notified().await; phase.store(1,Ordering::SeqCst); (StatusCode::ACCEPTED,Json(json!(2))) }
         }));
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = Arc::make_mut(&mut app.config);

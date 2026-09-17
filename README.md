@@ -39,7 +39,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.76.0 @aexhq/agentloop-pi@6.2.0
+npm install @aexhq/sdk@0.77.0 @aexhq/agentloop-pi@6.2.1
 ```
 
 ```ts
@@ -81,7 +81,7 @@ The dashboard, SDK and CLI use the same Aex HTTP API.
 Manage keys, inspect credit balances and usage, set a spend limit, top up through Stripe Checkout,
 and refund unused credits. See [billing and recovery](docs/billing.md).
 
-`session.submit()` returns a durable receipt for hosted execution without keeping a website request
+`session.submit()` returns the committed `turn_started` sequence without keeping a website request
 open. Read events and the transcript later. Closing the client does not cancel that hosted turn;
 host Tools still require their own process to remain connected.
 
@@ -89,7 +89,7 @@ host Tools still require their own process to remain connected.
 
 Use your own model keys and Brain-compatible extensions.
 Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.76 uses Brain 0.25 and official loops 6.2. Custom Wasm Components must target
+SDK 0.77 uses Brain 0.27 and official loops 6.2. Custom Wasm Components must target
 the matching WIT contract. Prepare application Tool dependencies before registration;
 extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
 

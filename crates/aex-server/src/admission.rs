@@ -93,7 +93,7 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                 )
                 .await?;
             } else if matches!(selected.driver, Driver::Http { .. }) {
-                crate::environments::placement(app, p, selected, &placement.implementation)?;
+                crate::environments::selection(app, p, selected)?;
             }
         }
     }

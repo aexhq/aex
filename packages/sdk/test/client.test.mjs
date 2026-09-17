@@ -4,18 +4,14 @@ import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
-test("managed profiles compose without controller credentials or customer-selected provider settings", async () => {
+test("managed Environment discovery returns provider-owned configuration unchanged", async () => {
+  const catalog = { driver_url: "https://api.aex.dev/environments/modal",
+    profiles: { analysis: { maxLifetimeMs: 300000, image: "im-fixture", commands: { calculate: ["python", "calculate.py"] } } } };
   const client = new Aex({ apiKey: "key", fetch: async url => {
     assert.ok(url.endsWith("/v1/environments"));
-    return Response.json({ driver_url: "https://api.aex.dev/environments/modal", profiles: { "python-v1": { maxLifetimeMs: 300000 } } });
+    return Response.json(catalog);
   } });
-  const env = await client.environments.modal({ name: "python", profile: "python-v1", lifetimeMs: 300000 });
-  const calculate = tool({ name: "calculate", description: "Calculate", input: z.object({}), implementation: { type: "modal_command", name: "calculate" } });
-  const descriptor = upstream.inspectEnvironment(upstream.inspectTool(calculate({ env })).environment);
-  assert.deepEqual(descriptor.driver, { driver: "http", url: "https://api.aex.dev/environments/modal" });
-  assert.deepEqual(descriptor.configuration, { profile: "python-v1", lifetimeMs: 300000 });
-  await assert.rejects(client.environments.modal({ name: "python", profile: "unpublished", lifetimeMs: 1000 }), /catalog/);
-  await assert.rejects(client.environments.modal({ name: "python", profile: "python-v1", lifetimeMs: 300001 }), /catalog/);
+  assert.deepEqual(await client.environments.list(), catalog);
 });
 
 test("prepaid ceilings and download allowances are explicit headers and billing mutations carry stable keys", async () => {

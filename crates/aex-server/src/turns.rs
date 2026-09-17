@@ -136,7 +136,7 @@ pub async fn send(
     .bind(&operation)
     .execute(&app.store.0)
     .await?;
-    // A running receipt keeps its reservation. Maintenance performs the same reconciliation after disconnects/restarts.
+    // An accepted turn keeps its reservation. Maintenance reconciles after disconnects/restarts.
     if let Err(error) = reconcile(app, session).await {
         tracing::warn!(session,code=%error.1.code,"turn reservation awaiting reconciliation");
     }

@@ -21,62 +21,15 @@
     "EnvironmentProfile": {
       "type": "object",
       "properties": {
-        "commands": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "cpu": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "image": {
-          "type": "string"
-        },
         "maxLifetimeMs": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
-        },
-        "maxOutputBytes": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "memoryMiB": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "outboundDomains": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "region": {
-          "type": "string"
-        },
-        "workdir": {
-          "type": "string"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": [
-        "image",
-        "commands",
-        "cpu",
-        "memoryMiB",
-        "maxLifetimeMs",
-        "workdir",
-        "region",
-        "outboundDomains",
-        "maxOutputBytes"
+        "maxLifetimeMs"
       ]
     }
   }
