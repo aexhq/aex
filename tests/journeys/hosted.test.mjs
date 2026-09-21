@@ -41,6 +41,8 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       assert.ok(structuredAnswers.length, "unexpected structured-output model call");
       assert.equal(body.text?.format, undefined);
       text = structuredAnswers.shift();
+    } else if (JSON.stringify(body.input).includes("late hosted result")) {
+      text = "observed background completion";
     } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
       output = [{ type: "function_call", call_id: "lookup-1", name: "lookup", arguments: '{"id":"42"}' }];
       text = undefined;
@@ -104,7 +106,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   }
   const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
   await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
-  const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id})=>{toolCalls++;return `item-${id}`;}});
+  const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id},context)=>{toolCalls++;return context.finish(`item-${id}`);}});
   const session=await client.sessions.create({...options,tools:[lookup({env:hostEnv({name:"app"})})]},{idempotencyKey:"shared-key"});
 
   const otherSession=await other.sessions.create(options,{idempotencyKey:"shared-key"});
@@ -127,6 +129,21 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.ok(hostedEvents.some(e=>e.type==="tool_call_ended"),"published Pi and uploaded Tool run in hosted Brain");
   assert.equal(toolCalls,1,"hosted Tool does not execute the application function");
   await hostedSession.end();await hostedSession.delete();
+
+  let backgroundExecution;
+  const backgroundTool = tool({ name: "lookup", description: "Start work", input: z.object({ id: z.string() }),
+    run: (_, context) => { backgroundExecution = context; return "started"; } });
+  const backgroundSession = await client.sessions.create({ ...options, agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+    tools: [backgroundTool({ env: hostEnv({ name: "background-app" }) })] });
+  await backgroundSession.send("start work");
+  const beforeBackground = []; for await (const event of backgroundSession.events()) beforeBackground.push(event);
+  await backgroundExecution.finish("late hosted result");
+  for await (const event of backgroundSession.stream(beforeBackground.at(-1).sequence)) {
+    assert.notEqual(event.type, "turn_failed", JSON.stringify(event.data));
+    if (event.type === "turn_ended") break;
+  }
+  assert.equal((await backgroundSession.transcript()).messages.at(-1).content[0].text, "observed background completion");
+  await backgroundSession.end(); await backgroundSession.delete();
 
   for (const loop of [pi, codex]) {
     await meter();
@@ -156,10 +173,8 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       returned = outcome;
       await outcomes.send("look it up once");
       const history = []; for await (const event of outcomes.events()) history.push(event);
-      const result = history.filter(event => event.type === "tool_call_ended").at(-1).data.result;
-      assert.equal(result.is_error, true);
-      assert.equal(result.output.code, outcome.status === "error" ? "rate_limited" : outcome.status);
-      if (outcome.status === "error") assert.deepEqual(result.output, outcome.error);
+      const terminal = history.filter(event => event.type === "tool_call_ended").at(-1).data.outcome;
+      assert.deepEqual(terminal, outcome);
       assert.equal(history.some(event => event.type === "environment_unreachable"), false);
     }
     assert.equal(calls, 4);

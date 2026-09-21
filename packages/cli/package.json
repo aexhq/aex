@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.44.0",
+  "version": "0.45.0",
   "description": "Aex account and API key management from the terminal",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/sdk": "0.77.0"
+    "@aexhq/sdk": "0.78.0"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
