@@ -204,10 +204,11 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   for(let i=0;i<configuration.limits.streams_per_account;i++) {
     const abort=new AbortController();
     const r=await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"},signal:abort.signal});assert.equal(r.status,200);
-    subscribers.push({abort,body:r.body});
+    // Node cancels an unread body when its Response is garbage-collected.
+    subscribers.push({abort,response:r});
   }
   assert.equal((await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"}})).status,503,"unread subscribers stay within the account limit");
-  for(const subscriber of subscribers){subscriber.abort.abort();await subscriber.body.cancel().catch(()=>{});}
+  for(const subscriber of subscribers){subscriber.abort.abort();await subscriber.response.body.cancel().catch(()=>{});}
   const premature=await raw(`/v1/sessions/${sweep[0].id}`,b.token,{method:"DELETE",headers:{"idempotency-key":"premature-delete"}});
   assert.equal(premature.status,400);
   assert.equal((await raw(`/v1/sessions/${sweep[0].id}`,b.token)).status,200,"rejected deletion must not hide a live session");
