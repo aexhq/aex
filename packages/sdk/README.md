@@ -21,8 +21,8 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.77 uses Brain SDK 0.27 and Pi/Codex
-6.2. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
+extension builders are Brain's implementations. SDK 0.78 uses Brain SDK 0.28 and Pi/Codex
+7.0. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs
 for a complete session example.
@@ -39,7 +39,16 @@ and transforms before the handler. Ordinary objects strip extra properties and s
 reject them. Pi dispatches in parallel; coordinate shared resources in their owning Tool or
 Environment. The official loops explain unanswered calls after interruption without replaying them.
 
-Host Tools return ordinary successful output or a Brain `Outcome` directly. Structured errors retain
+Tool return and completion are separate. `return ctx.finish(value)` emits an optional result
+and finishes an ordinary Tool. Returning a value alone emits it and releases the synchronous
+caller; the Tool remains open for `ctx.emitResult(value)` and `ctx.finish()` afterward.
+Background observations wake the Agentloop, which chooses whether to call the model and what
+to put in its transcript. Results and finish always enter the journal. Keep the host client
+connected until all its Tools finish. Interrupt cancels unfinished Tools even while idle.
+A forgotten finish stays open until the original deadline, cancellation or Environment loss;
+without a deadline it can remain open indefinitely.
+
+Host Tools accept ordinary successful output or a Brain `Outcome` directly. Structured errors retain
 code, message, retryable and details. The top-level statuses `ok`, `error`, `timeout`, `cancelled`
 and `unknown` declare outcomes; malformed envelopes fail validation, and only successful values
 pass through the output schema. Tool deadlines produce `timeout`, explicit cancellation produces

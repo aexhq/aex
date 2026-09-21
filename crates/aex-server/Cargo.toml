@@ -14,7 +14,7 @@ anyhow = "1"
 async-stream = "0.3"
 axum = "0.8"
 base64 = "0.22"
-brain-protocol = { git = "https://github.com/aexhq/brain", rev = "8d7cfc4dd7ba89f2351cb78a620af25e68f49585" }
+brain-protocol = { git = "https://github.com/aexhq/brain", rev = "01a606e8de0462a3531bf5886833a394a33d426e" }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 fs2 = "0.4"

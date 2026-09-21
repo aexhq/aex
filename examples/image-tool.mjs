@@ -16,7 +16,7 @@ const viewImage = tool({
       await readFile(process.env.IMAGE_FILE, { signal: context.signal }), {
         contentType: "image/png", idempotencyKey: `image-${context.sequence}`, signal: context.signal,
       });
-    return { type: "aex_tool_output", version: 1, content: "Image ready", media: [attachment.media] };
+    return context.finish({ type: "aex_tool_output", version: 1, content: "Image ready", media: [attachment.media] });
   },
 });
 try {

@@ -25,6 +25,9 @@ Prepaid execution requires `x-aex-max-cost-micro-usd`. The SDK's `maxCostMicroUs
 this ceiling for each admitted operation. A turn reserves its configured maximum billing duration
 before dispatch; journaled start and terminal timestamps determine the charge, capped at that
 approved duration. Cancellation or recovery time beyond the cap is absorbed by the service.
+Automatic background activations do not create another paid turn request. Their orchestration
+is included; sandbox and attachment meters, original resource lifetimes and customer-paid model
+usage still apply. The hosted resource offer has no additional active-turn charge.
 The monthly UTC spend limit includes usage already charged that month and all outstanding holds.
 Lowering a limit stops further admission when these commitments exceed the new limit.
 
