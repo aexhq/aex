@@ -35,8 +35,9 @@ URL syntax validation alone is not a hosted network boundary; see
 Customers supply the model key per session using Brain's existing contract. Brain retains
 the credential for model execution and restart; extensions do not receive it. Aex forwards
 the credential over its private channel without persisting it in product tables or logging
-request bodies. Verify that error paths and traces do not expose it. MVP has no Aex-funded
-models, wallet, pricing engine, usage-charge ledger or payment provider integration.
+request bodies. Verify that error paths and traces do not expose it. Model access stays
+customer-funded. Aex's separate prepaid hosting charges use [reported token usage](../billing.md),
+with asynchronous spending controls and no exact per-model-call reservation.
 
 Brain's current metadata encryption stores its master key in its data directory. That
 protects credential representation and session binding, not theft of the entire directory.

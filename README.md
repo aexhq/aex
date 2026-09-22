@@ -39,7 +39,7 @@ Login opens your browser. Save the new API key as `AEX_API_KEY`
 and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
 
 ```sh
-npm install @aexhq/sdk@0.78.0 @aexhq/agentloop-pi@7.0.0
+npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1
 ```
 
 ```ts
@@ -75,6 +75,9 @@ Consume its events and store your own results. Brain retains history until delet
 
 Brain owns sessions, execution and events. Aex hosts Brain and extensions and adds accounts,
 API keys, usage, prepaid credits and hosted access.
+Token pricebooks meter actual reported model tokens for foreground and background work.
+Spending control uses asynchronous observations and best-effort estimates; model keys
+and application end-user pricing remain customer-owned.
 The Aex SDK extends and re-exports Brain, so its SDK and extension contracts remain directly usable.
 
 The dashboard, SDK and CLI use the same Aex HTTP API.
@@ -89,7 +92,7 @@ host Tools still require their own process to remain connected.
 
 Use your own model keys and Brain-compatible extensions.
 Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.78 uses Brain 0.28 and official loops 7.0. Custom Wasm Components must target
+SDK 0.79 uses Brain 0.29 and official loops 7.0.1. Custom Wasm Components must target
 the matching WIT contract. Prepare application Tool dependencies before registration;
 extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
 

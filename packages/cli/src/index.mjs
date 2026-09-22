@@ -20,7 +20,7 @@ const help = `Usage: aex <command>
   billing refund <topup> <cents> <key> Request a refund of unused credits
   billing topups           Show payments and receipt links
   billing refunds          Show refund status
-  usage                    Show current usage
+  usage [session-id]       Show account usage or one session's token usage
   docs                     Open the documentation
 
 Results are JSON on stdout; login progress and errors go to stderr.
@@ -33,7 +33,10 @@ async function main() {
   if (values.help || !positionals.length) { process.stdout.write(help); return; }
   const [command, operation, ...args] = positionals;
   const expected = { "keys list": 0, "keys create": 1, "keys rename": 2, "keys revoke": 1, "billing ledger":0, "billing set":2, "billing topup":2, "billing refund":3, "billing topups":0, "billing refunds":0 };
-  if (command === "keys" || (command === "billing" && operation) ? expected[`${command} ${operation}`] !== args.length : !["login", "logout", "account", "billing", "usage", "docs"].includes(command) || positionals.length !== 1) throw new Error("Unknown command or incorrect arguments. Run aex --help.");
+  const invalid = command === "usage" ? positionals.length > 2
+    : command === "keys" || (command === "billing" && operation) ? expected[`${command} ${operation}`] !== args.length
+    : !["login", "logout", "account", "billing", "docs"].includes(command) || positionals.length !== 1;
+  if (invalid) throw new Error("Unknown command or incorrect arguments. Run aex --help.");
   const explicitApi = values["api-url"] ?? process.env.AEX_API_URL;
   const siteUrl = origin(values["site-url"] ?? "https://aex.dev");
   if (command === "docs") {
@@ -76,7 +79,7 @@ async function main() {
     else if (operation === "refund") result = await client.billing.refund({topup:args[0],amount_cents:integer(args[1])},args[2]);
     else result = await client.billing[operation]();
   }
-  else if (command === "usage") result = await client.account.usage();
+  else if (command === "usage") result = operation ? await client.account.modelUsage(operation) : await client.account.usage();
   else if (operation === "list") result = await client.keys.list();
   else if (operation === "create") result = await client.keys.create({ name: args[0] });
   else if (operation === "rename") result = await client.keys.update(args[0], { name: args[1] });

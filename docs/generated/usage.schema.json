@@ -22,6 +22,9 @@
       ],
       "format": "int64"
     },
+    "model": {
+      "$ref": "#/$defs/TokenUsage"
+    },
     "retained_bytes": {
       "type": "integer",
       "format": "int64"
@@ -32,10 +35,50 @@
     }
   },
   "required": [
+    "model",
     "sessions",
     "active_turns",
     "retained_bytes",
     "attachments",
     "attachment_bytes"
-  ]
+  ],
+  "$defs": {
+    "TokenUsage": {
+      "type": "object",
+      "properties": {
+        "charged_micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "pending_estimate_micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "rated_micro_usd": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "reported_input_tokens": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "reported_output_tokens": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "unmeasured_calls": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "reported_input_tokens",
+        "reported_output_tokens",
+        "unmeasured_calls",
+        "rated_micro_usd",
+        "charged_micro_usd",
+        "pending_estimate_micro_usd"
+      ]
+    }
+  }
 }

@@ -1,7 +1,7 @@
 export * from "@aexhq/brain";
 export type * from "./generated.js";
 import { Brain, type BrainOptions } from "@aexhq/brain";
-import type { EnvironmentCatalog } from "./generated.js";
+import type { EnvironmentCatalog, TokenUsage } from "./generated.js";
 import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
 
 export type AexConnection = Omit<BrainOptions, "token" | "baseUrl"> & { baseUrl?: string };
@@ -20,7 +20,7 @@ export class Aex extends Brain {
     this.maxCostMicroUsd = maxCostMicroUsd;
   }
 
-  /** The ceiling applies separately to each admitted operation. Model BYOK charges remain with the provider. */
+  /** Resource and legacy turn reservations use this ceiling; token hosting follows the account limit. */
   override request<T>(method: string, path: string, body?: unknown, idempotencyKey?: string, contentType = "application/json", signal?: AbortSignal, extraHeaders?: HeadersInit): Promise<T> {
     const headers = new Headers(extraHeaders);
     if (this.maxCostMicroUsd !== undefined && !headers.has("x-aex-max-cost-micro-usd")) headers.set("x-aex-max-cost-micro-usd", String(this.maxCostMicroUsd));
@@ -47,6 +47,7 @@ export class Aex extends Brain {
   readonly account = {
     get: (): Promise<Account> => this.request("GET", "/v1/account"),
     usage: (): Promise<Usage> => this.request("GET", "/v1/usage"),
+    modelUsage: (sessionId: string): Promise<TokenUsage> => this.request("GET", `/v1/usage/${encodeURIComponent(sessionId)}`),
     logout: (): Promise<void> => this.request("DELETE", "/v1/account/session"),
     authorizeLogin: (input: LoginGrantInput): Promise<LoginGrant> => this.request("POST", "/v1/auth/grants", input),
   };

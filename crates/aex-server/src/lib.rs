@@ -10,6 +10,7 @@ pub mod error;
 pub mod hosts;
 pub mod http;
 pub mod identity;
+pub mod model_usage;
 pub mod operator;
 pub mod payments;
 pub mod sessions;

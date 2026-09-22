@@ -365,8 +365,13 @@ async fn create_refund(app: &App, account: &str, key: &str, input: RefundInput) 
         .fetch_one(&mut *tx)
         .await?;
     let credit = input.amount_cents * 10_000;
+    let pending = crate::model_usage::pending_in(&mut tx, account).await?;
     if wallet.get::<bool, _>("suspended")
-        || wallet.get::<i64, _>("balance") - wallet.get::<i64, _>("reserved") < credit
+        || wallet
+            .get::<i64, _>("balance")
+            .saturating_sub(wallet.get::<i64, _>("reserved"))
+            .saturating_sub(pending)
+            < credit
     {
         return Err(Error::credits("refund exceeds available credits"));
     }

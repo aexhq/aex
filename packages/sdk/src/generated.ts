@@ -69,6 +69,18 @@ export interface Limits {
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "TokenUsage".
+ */
+export interface TokenUsage {
+  charged_micro_usd: number;
+  pending_estimate_micro_usd: number;
+  rated_micro_usd: number;
+  reported_input_tokens: number;
+  reported_output_tokens: number;
+  unmeasured_calls: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Usage".
  */
 export interface Usage {
@@ -76,6 +88,7 @@ export interface Usage {
   attachment_bytes: number;
   attachments: number;
   measured_at?: number | null;
+  model: TokenUsage;
   retained_bytes: number;
   sessions: number;
 }
@@ -159,6 +172,7 @@ export interface Pricebook {
   rates: {
     attachment_byte_secs?: Rate;
     egress_bytes?: Rate;
+    model_tokens?: Rate;
     sandbox_ms?: Rate;
     turn_ms?: Rate;
   };
@@ -179,12 +193,14 @@ export interface Rate {
  */
 export interface Wallet {
   accepted_pricebook?: string | null;
+  accepted_rates?: Pricebook | null;
   available_micro_usd: number;
   balance_micro_usd: number;
   currency: string;
   mode: BillingMode;
   offered_pricebook?: Pricebook | null;
   payment_mode?: Mode | null;
+  pending_estimate_micro_usd: number;
   reserved_micro_usd: number;
   spend_limit_micro_usd?: number | null;
   spent_this_month_micro_usd: number;

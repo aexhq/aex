@@ -82,7 +82,7 @@ pub async fn send(
         .bind(&principal.account)
         .fetch_one(&mut *tx)
         .await?;
-    if prepaid {
+    if prepaid && !crate::model_usage::admit_in(&mut tx, &principal.account).await? {
         let config = app
             .config
             .billing

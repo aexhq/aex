@@ -23,7 +23,8 @@ lists are queried within the account. Ownership is immutable in MVP.
 Minimum product records are accounts, API-key verifiers, session ownership, host ownership,
 and create-operation claims. Pending deletion state belongs with session ownership.
 Store lifecycle status only when needed to coordinate an Aex operation; Brain remains the
-source of runtime status. Do not copy transcripts, Events or model usage into a second journal.
+source of runtime status. Do not copy transcripts or Events into a second journal. Aex retains
+the model usage needed for financial receipts, attributed to the original session and sequence.
 
 Host registration requires an account key. Persist its owning account and issuing key before
 returning the registration. Session creation accepts only hosts owned by that account.
@@ -32,7 +33,8 @@ and current account/key status. Scoped host credentials are not general session 
 Key revocation closes streams opened under that key and disallows its host registrations;
 affected applications re-register/recreate as necessary. It does not retroactively undo a
 dispatched effect or silently cancel an accepted turn. Account suspension denies new work
-and access; operator cancellation uses ordinary Brain session operations.
+and access; operator cancellation and asynchronous token spending controls use ordinary Brain
+session operations. Brain never waits for external per-call billing authorization.
 
 ## Create and retry behavior
 

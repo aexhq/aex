@@ -126,7 +126,7 @@
       "type": "object",
       "properties": {
         "max_turn_secs": {
-          "description": "Must bound the paired Brain server's maximum turn duration.",
+          "description": "Legacy turn tariff ceiling; independent of runtime execution limits.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0
@@ -362,6 +362,9 @@
               "$ref": "#/$defs/Rate"
             },
             "egress_bytes": {
+              "$ref": "#/$defs/Rate"
+            },
+            "model_tokens": {
               "$ref": "#/$defs/Rate"
             },
             "sandbox_ms": {

@@ -52,7 +52,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       frames.push({ type: "response.output_text.delta", output_index: 0, delta: text });
       frames.push({ type: "response.output_item.done", output_index: 0, item: { type: "message", content: [{ type: "output_text", text }] } });
     }
-    frames.push({ type: "response.completed", response: { output } });
+    frames.push({ type: "response.completed", response: { output, usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 80 }, output_tokens_details: { reasoning_tokens: 5 } } } });
     res.writeHead(200, { "content-type": "text/event-stream" });
     res.end(frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join(""));
   });
@@ -61,6 +61,10 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   Object.assign(configuration,{listen:`127.0.0.1:${aexPort}`,operator_listen:`127.0.0.1:${adminPort}`,data_dir:join(directory,"aex"),brain_url:brainUrl,
     agentloops:[createHash("sha256").update(await readFile(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP)).digest("hex")]});
   configuration.limits.minimum_free_disk_bytes=1;
+  configuration.billing = { pricebook: { id: "journey-tokens-v1", rates: {
+    model_tokens: { micro_usd: 1, units: 1 }, sandbox_ms: { micro_usd: 1, units: 1000 },
+    attachment_byte_secs: { micro_usd: 1, units: 1000 }, egress_bytes: { micro_usd: 1, units: 1000 },
+  } }, max_turn_secs: 120, payments: null };
   await writeFile(join(directory,"config.json"),JSON.stringify(configuration));
   async function launch(executable,args,env,url){
     const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"],detached:true}); children.add(child);
@@ -130,10 +134,19 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.equal(toolCalls,1,"hosted Tool does not execute the application function");
   await hostedSession.end();await hostedSession.delete();
 
+  const login = await raw("/v1/accounts", "s".repeat(32), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subject: "token-journey", email: "tokens@example.com" }) });
+  assert.equal(login.status, 200);
+  const accountClient = new Aex({ baseUrl, accountToken: (await login.json()).token });
+  await accountClient.billing.update({ pricebook: "journey-tokens-v1", spend_limit_micro_usd: 1000000 });
+  const paid = await accountClient.account.get();
+  await operate({ action: "adjust_credits", account: paid.id, reference: "token-journey", delta_micro_usd: 1000000, reason: "fixture credits" });
+  const paidClient = new Aex({ baseUrl, apiKey: (await accountClient.keys.create({ name: "token journey" })).token });
+  t.after(async () => { await paidClient.close(); await accountClient.close(); });
   let backgroundExecution;
   const backgroundTool = tool({ name: "lookup", description: "Start work", input: z.object({ id: z.string() }),
     run: (_, context) => { backgroundExecution = context; return "started"; } });
-  const backgroundSession = await client.sessions.create({ ...options, agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+  const backgroundSession = await paidClient.sessions.create({ ...options, agentloop: pi({ env: brainEnv({ name: "brain" }) }),
     tools: [backgroundTool({ env: hostEnv({ name: "background-app" }) })] });
   await backgroundSession.send("start work");
   const beforeBackground = []; for await (const event of backgroundSession.events()) beforeBackground.push(event);
@@ -144,6 +157,16 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   }
   assert.equal((await backgroundSession.transcript()).messages.at(-1).content[0].text, "observed background completion");
   await backgroundSession.end(); await backgroundSession.delete();
+  const backgroundEvents = [...beforeBackground];
+  const metered = await paidClient.account.modelUsage(backgroundSession.id);
+  assert.ok(metered.reported_input_tokens > backgroundEvents.filter(event => event.type === "model_call_ended").length * 100,
+    "background model usage is retained after the submitted turn and session deletion");
+  assert.equal(metered.reported_output_tokens, metered.reported_input_tokens / 5);
+  assert.equal(metered.charged_micro_usd, metered.reported_input_tokens + metered.reported_output_tokens, "cache and reasoning subsets are not added twice");
+  assert.equal(metered.rated_micro_usd, metered.charged_micro_usd);
+  assert.equal(metered.unmeasured_calls, 0);
+  assert.equal(metered.pending_estimate_micro_usd, 0);
+  await assert.rejects(other.account.modelUsage(backgroundSession.id), error => error.status === 404);
 
   for (const loop of [pi, codex]) {
     await meter();
@@ -231,6 +254,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   await rm(join(directory,"aex"),{recursive:true});await rm(join(directory,"brain"),{recursive:true});
   await db.restore(productBackup);await cp(join(directory,"backup-aex"),join(directory,"aex"),{recursive:true});await cp(join(directory,"backup-brain"),join(directory,"brain"),{recursive:true});
   await start();assert.equal((await raw(`/v1/sessions/${session.id}`,a.token)).status,401,"restored key remains revoked");
+  assert.deepEqual(await paidClient.account.modelUsage(backgroundSession.id), metered, "paired restore preserves settled token receipts without another debit");
   assert.equal((await raw(`/v1/sessions/${session.id}`,replacement.token)).status,401,"post-backup credentials do not exist in restore");
   assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,200,"restore requires post-backup deletion reconciliation before reopening");
   await db.client.query("UPDATE sessions SET created=0 WHERE id=$1",[otherSession.id]);

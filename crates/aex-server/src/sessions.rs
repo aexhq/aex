@@ -45,6 +45,7 @@ pub async fn create(
         Claim::New(upstream) => upstream,
     };
     crate::environments::reserve_in(app, &mut tx, p, &upstream, &mut request, ceiling).await?;
+    crate::model_usage::admit_in(&mut tx, &p.account).await?;
     tx.commit().await?;
     let forwarded = Bytes::from(serde_json::to_vec(&request)?);
     let response = app
@@ -66,6 +67,7 @@ pub async fn create(
     app.store
         .complete_create(p, &upstream, &summary, body.len() as u64)
         .await?;
+    app.changed.send_modify(|v| *v = v.wrapping_add(1));
     Ok(Json(summary).into_response())
 }
 pub async fn list(app: &App, p: &Principal) -> Result<Response> {
@@ -92,6 +94,7 @@ pub async fn delete(app: &App, id: &str, headers: &HeaderMap, key: &str) -> Resu
     if !crate::turns::reconcile(app, id).await? {
         return Err(Error::conflict("session is still active"));
     }
+    crate::model_usage::reconcile(app, id).await?;
     app.changed.send_modify(|v| *v = v.wrapping_add(1));
     let response = app
         .brain

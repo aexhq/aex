@@ -1,11 +1,12 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.78.0 (Brain SDK 0.28.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.79.0 (Brain SDK 0.29.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
 | --- | --- | --- |
 | GET | `/v1/models?provider=...` | Active key; Brain's model catalogue and known capabilities |
+| GET | `/v1/usage/{session}` | Account session or workload key; owned token usage, charges and pending estimates |
 | GET | `/v1/environments` | Active workload key; account's published managed profile catalog |
 | POST, GET | `/v1/sessions` | Active key; lists contain owned sessions only |
 | GET, DELETE | `/v1/sessions/{id}` | Account ownership |
