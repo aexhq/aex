@@ -73,6 +73,7 @@ pub struct IssuedKey {
 
 #[derive(Serialize, JsonSchema)]
 pub struct Usage {
+    pub model: crate::model_usage::TokenUsage,
     pub sessions: i64,
     pub active_turns: i64,
     pub retained_bytes: i64,
@@ -115,6 +116,13 @@ pub(crate) async fn dashboard_account(app: &App, token: &str) -> Result<String> 
 }
 
 pub fn route(method: &Method, path: &str) -> bool {
+    if method == Method::GET
+        && path
+            .strip_prefix("/v1/usage/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+    {
+        return true;
+    }
     matches!(
         (method.as_str(), path),
         ("POST", "/v1/accounts")
@@ -215,12 +223,13 @@ pub async fn handle(
         tx.commit().await?;
         return Ok(Json(session).into_response());
     }
-    let account =
-        if matches!(path, "/v1/account" | "/v1/usage") && !token.starts_with("aex_account_") {
-            app.store.principal(token).await?.account
-        } else {
-            dashboard_account(app, token).await?
-        };
+    let account = if (matches!(path, "/v1/account" | "/v1/usage") || path.starts_with("/v1/usage/"))
+        && !token.starts_with("aex_account_")
+    {
+        app.store.principal(token).await?.account
+    } else {
+        dashboard_account(app, token).await?
+    };
     tracing::Span::current().record("account", &account);
     if path == "/v1/auth/grants" {
         let input: LoginGrantInput = serde_json::from_slice(&body)?;
@@ -264,12 +273,28 @@ pub async fn handle(
         tx.commit().await?;
         return Ok(Json(LoginGrant { code, expires }).into_response());
     }
+    if let Some(session) = path.strip_prefix("/v1/usage/") {
+        let owned: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1 AND account=$2)")
+                .bind(session)
+                .bind(&account)
+                .fetch_one(&app.store.0)
+                .await?;
+        if !owned {
+            return Err(Error::missing());
+        }
+        return Ok(Json(
+            crate::model_usage::totals_for(&app.store, &account, Some(session)).await?,
+        )
+        .into_response());
+    }
     if matches!(path, "/v1/account" | "/v1/usage") {
         let row=sqlx::query("SELECT count(*) AS sessions,count(active_key) AS active_turns,coalesce(sum(retained_bytes),0)::bigint AS retained_bytes FROM sessions WHERE account=$1 AND state!='deleted'")
             .bind(&account).fetch_one(&app.store.0).await?;
         let attachments = sqlx::query("SELECT count(*) AS count,coalesce(sum(bytes),0)::bigint AS bytes FROM attachments WHERE account=$1")
             .bind(&account).fetch_one(&app.store.0).await?;
         let usage = Usage {
+            model: crate::model_usage::totals(&app.store, &account).await?,
             sessions: row.get("sessions"),
             active_turns: row.get("active_turns"),
             retained_bytes: row.get("retained_bytes"),

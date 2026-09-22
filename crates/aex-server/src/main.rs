@@ -184,6 +184,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             let stop = tokio_util::sync::CancellationToken::new();
+            let metering = tokio::spawn(aex_server::model_usage::run(app.clone(), stop.clone()));
             let public = axum::serve(listener, aex_server::http::router(app.clone()))
                 .with_graceful_shutdown(stop.clone().cancelled_owned());
             let admin = axum::serve(operator, aex_server::operator::router(app))
@@ -196,6 +197,8 @@ async fn main() -> anyhow::Result<()> {
                 result = async { tokio::try_join!(async { public.await }, async { admin.await }) } => { result?; },
                 _ = shutdown => {},
             }
+            stop.cancel();
+            metering.await?;
             drop(lock);
         }
     }

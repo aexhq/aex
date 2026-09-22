@@ -21,8 +21,8 @@ console.log(await aex.account.get());
 ```
 
 `Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.78 uses Brain SDK 0.28 and Pi/Codex
-7.0. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
+extension builders are Brain's implementations. SDK 0.79 uses Brain SDK 0.29 and Pi/Codex
+7.0.1. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
 runtime and extensions together. Retained sessions require a compatibility check before upgrading.
 See https://aex.dev/docs
 for a complete session example.
@@ -108,6 +108,7 @@ await account.keys.update(issued.key.id, { name: "Renamed app" });
 await account.keys.delete(issued.key.id);
 await account.account.get(); // includes billing status and limits
 await account.account.usage();
+await account.account.modelUsage(sessionId);
 await account.account.logout();
 ```
 
@@ -117,3 +118,8 @@ contract for clients. The `@aexhq/cli` package handles opening the browser, PKCE
 loopback callback and local credential storage.
 
 Image and PDF uploads use the [attachment API](../../docs/attachments.md). `models(provider?)` forwards Brain's catalogue unchanged, with models.dev metadata when known. Brain validates model selections; Aex has no separate model allowlist.
+
+Token usage reports separate recorded quantities and hosting charges from pending estimates.
+Foreground and background calls use the same meter. Spending control is asynchronous;
+`maxCostMicroUsd` remains a resource-operation ceiling, not a model token budget.
+Your provider separately bills your model key. See [billing](../../docs/billing.md).

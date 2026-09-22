@@ -9,6 +9,16 @@
         "null"
       ]
     },
+    "accepted_rates": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Pricebook"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "available_micro_usd": {
       "type": "integer",
       "format": "int64"
@@ -43,6 +53,10 @@
         }
       ]
     },
+    "pending_estimate_micro_usd": {
+      "type": "integer",
+      "format": "int64"
+    },
     "reserved_micro_usd": {
       "type": "integer",
       "format": "int64"
@@ -75,6 +89,7 @@
     "balance_micro_usd",
     "reserved_micro_usd",
     "available_micro_usd",
+    "pending_estimate_micro_usd",
     "spent_this_month_micro_usd",
     "suspended",
     "topup_amounts_cents"
@@ -107,6 +122,9 @@
               "$ref": "#/$defs/Rate"
             },
             "egress_bytes": {
+              "$ref": "#/$defs/Rate"
+            },
+            "model_tokens": {
               "$ref": "#/$defs/Rate"
             },
             "sandbox_ms": {

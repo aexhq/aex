@@ -209,3 +209,15 @@ grants, fixed commands and controller reconciliation. The SDK selects published 
 sets operation ceilings; official loops supply hosted JSON Schema correction. See
 [billing](docs/billing.md) and [environments](docs/environments.md). Exact-source CI, provider
 checks and deployment proof still gate release. Existing preview accounts are not enrolled by deployment.
+
+## Token hosting - 2026-09-22
+
+Model hosting supports reported input plus output tokens across foreground and background
+work. Aex observes public Brain events asynchronously, estimates unfinished work and requests
+ordinary interruption near the account limit. Durable receipts settle once; missing quantities
+remain unknown and Aex absorbs charges beyond prepaid or monthly headroom. Customers retain
+their own model keys. The SDK, CLI and dashboard expose reported usage and charges separately
+from estimates. Existing offers remain valid until explicitly replaced by the account.
+
+Exact-source CI, provider evidence and deployment checks gate release. Numeric production
+rates belong to the operator's private offer, as described in [billing](docs/billing.md).

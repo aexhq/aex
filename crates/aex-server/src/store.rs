@@ -179,13 +179,14 @@ impl Store {
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
         sqlx::query(
-            "INSERT INTO sessions(id,account,created,retained_bytes,changed_at) VALUES ($1,$2,$3,$4,$5)",
+            "INSERT INTO sessions(id,account,created,retained_bytes,changed_at,model_observed_at) VALUES ($1,$2,$3,$4,$5,$6)",
         )
         .bind(summary.session_id.as_str())
         .bind(&p.account)
         .bind(now())
         .bind(initial_bytes as i64)
         .bind(now())
+        .bind(crate::model_usage::now_ms())
         .execute(&mut *tx)
         .await?;
         sqlx::query(

@@ -28,6 +28,7 @@ test("CLI commands call shared account routes with the account credential", asyn
   try {
     const cases = [
       [["account"], "GET", "/v1/account"], [["billing"], "GET", "/v1/billing"], [["usage"], "GET", "/v1/usage"],
+      [["usage", "ses_example"], "GET", "/v1/usage/ses_example"],
       [["billing","ledger"],"GET","/v1/billing/ledger"],
       [["billing","set","test-v1","2000000"],"PUT","/v1/billing",{pricebook:"test-v1",spend_limit_micro_usd:2000000}],
       [["billing","topup","1000","once"],"POST","/v1/billing/topups",{amount_cents:1000}],

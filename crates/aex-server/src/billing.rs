@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "snake_case")]
 pub enum Meter {
     TurnMs,
+    ModelTokens,
     SandboxMs,
     AttachmentByteSecs,
     EgressBytes,
@@ -28,6 +29,7 @@ impl Meter {
     pub fn name(self) -> &'static str {
         match self {
             Self::TurnMs => "turn_ms",
+            Self::ModelTokens => "model_tokens",
             Self::SandboxMs => "sandbox_ms",
             Self::AttachmentByteSecs => "attachment_byte_secs",
             Self::EgressBytes => "egress_bytes",
@@ -63,7 +65,7 @@ pub struct Pricebook {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub pricebook: Pricebook,
-    /// Must bound the paired Brain server's maximum turn duration.
+    /// Legacy turn tariff ceiling; independent of runtime execution limits.
     pub max_turn_secs: u32,
     pub payments: Option<crate::payments::Config>,
 }
@@ -80,8 +82,12 @@ impl Config {
             "invalid pricebook id"
         );
         anyhow::ensure!(self.max_turn_secs > 0, "invalid billing limits");
+        anyhow::ensure!(
+            self.pricebook.rates.contains_key(&Meter::TurnMs)
+                != self.pricebook.rates.contains_key(&Meter::ModelTokens),
+            "offer exactly one execution meter"
+        );
         for meter in [
-            Meter::TurnMs,
             Meter::SandboxMs,
             Meter::AttachmentByteSecs,
             Meter::EgressBytes,
@@ -91,6 +97,9 @@ impl Config {
                 .rates
                 .get(&meter)
                 .ok_or_else(|| anyhow::anyhow!("missing {} price", meter.name()))?;
+            anyhow::ensure!(rate.units > 0 && rate.micro_usd >= 0, "invalid rate");
+        }
+        for rate in self.pricebook.rates.values() {
             anyhow::ensure!(rate.units > 0 && rate.micro_usd >= 0, "invalid rate");
         }
         if let Some(config) = &self.payments {
@@ -113,10 +122,12 @@ pub struct Wallet {
     pub balance_micro_usd: i64,
     pub reserved_micro_usd: i64,
     pub available_micro_usd: i64,
+    pub pending_estimate_micro_usd: i64,
     pub spent_this_month_micro_usd: i64,
     pub spend_limit_micro_usd: Option<i64>,
     pub suspended: bool,
     pub accepted_pricebook: Option<String>,
+    pub accepted_rates: Option<Pricebook>,
     pub offered_pricebook: Option<Pricebook>,
     pub topup_amounts_cents: Vec<i64>,
     pub payment_mode: Option<crate::payments::Mode>,
@@ -192,7 +203,7 @@ pub(crate) async fn entry(
     Ok(())
 }
 
-async fn spent(tx: &mut Transaction<'_, Postgres>, account: &str) -> Result<i64> {
+pub(crate) async fn spent(tx: &mut Transaction<'_, Postgres>, account: &str) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT -coalesce(sum(delta),0)::bigint FROM credit_ledger WHERE account=$1 AND kind='usage' AND created >= extract(epoch FROM (date_trunc('month',to_timestamp($2) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::bigint")
         .bind(account).bind(now() as f64).fetch_one(&mut **tx).await?)
 }
@@ -206,10 +217,12 @@ pub async fn wallet(app: &App, account: &str) -> Result<Wallet> {
         balance_micro_usd: 0,
         reserved_micro_usd: 0,
         available_micro_usd: 0,
+        pending_estimate_micro_usd: 0,
         spent_this_month_micro_usd: 0,
         spend_limit_micro_usd: None,
         suspended: false,
         accepted_pricebook: None,
+        accepted_rates: None,
         offered_pricebook: config.map(|c| c.pricebook.clone()),
         topup_amounts_cents: payments
             .map(|p| p.topup_amounts_cents.clone())
@@ -231,6 +244,16 @@ pub async fn wallet(app: &App, account: &str) -> Result<Wallet> {
         result.spend_limit_micro_usd = Some(row.get("spend_limit"));
         result.suspended = row.get("suspended");
         result.accepted_pricebook = Some(row.get("pricebook"));
+        let document: String = sqlx::query_scalar("SELECT document FROM pricebooks WHERE id=$1")
+            .bind(row.get::<String, _>("pricebook"))
+            .fetch_one(&mut *tx)
+            .await?;
+        result.accepted_rates = Some(serde_json::from_str(&document)?);
+        result.pending_estimate_micro_usd =
+            crate::model_usage::pending_in(&mut tx, account).await?;
+        result.available_micro_usd = result
+            .available_micro_usd
+            .saturating_sub(result.pending_estimate_micro_usd);
     }
     tx.commit().await?;
     Ok(result)
@@ -249,8 +272,19 @@ pub async fn settings(app: &App, account: &str, input: BillingSettings) -> Resul
     }
     let mut tx = app.store.0.begin().await?;
     Store::lock_account(&mut tx, account).await?;
+    if config.pricebook.rates.contains_key(&Meter::ModelTokens) {
+        let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE account=$1 AND meter='turn_ms' AND state='open')")
+            .bind(account).fetch_one(&mut *tx).await?;
+        if legacy {
+            return Err(Error::conflict(
+                "settle outstanding legacy turns before accepting token prices",
+            ));
+        }
+    }
     sqlx::query("INSERT INTO wallets(account,pricebook,accepted_at,spend_limit) VALUES($1,$2,$3,$4) ON CONFLICT(account) DO UPDATE SET pricebook=$2,accepted_at=$3,spend_limit=$4")
         .bind(account).bind(&input.pricebook).bind(now()).bind(input.spend_limit_micro_usd).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO model_price_history(account,pricebook,effective_ms) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM model_price_history WHERE account=$1 AND id=(SELECT max(id) FROM model_price_history WHERE account=$1) AND pricebook=$2)")
+        .bind(account).bind(&input.pricebook).bind(crate::model_usage::now_ms()).execute(&mut *tx).await?;
     entry(
         &mut tx,
         account,
@@ -321,7 +355,9 @@ pub async fn reserve_in(
     let max_cost = input
         .max_cost
         .ok_or_else(|| Error::invalid("prepaid work requires x-aex-max-cost-micro-usd"))?;
-    let reserved: i64 = wallet.get("reserved");
+    let reserved = wallet
+        .get::<i64, _>("reserved")
+        .saturating_add(crate::model_usage::pending_in(tx, account).await?);
     let balance: i64 = wallet.get("balance");
     let monthly = spent(tx, account).await?;
     if wallet.get::<bool, _>("suspended")
