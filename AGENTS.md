@@ -1,5 +1,9 @@
 # Working in Aex
 
+- Public docs serve newcomers: purpose, benefit, then usage. Follow the shared
+  [documentation design and wording guide](https://github.com/aexhq/brain/blob/main/references/documentation.md).
+  Lead with hosted setup and runnable examples; link to Brain for shared concepts and contracts.
+
 - Aex is the official hosted composition of Brain. Consume Brain's neutral contracts and
   runtime from immutable releases; never copy its session engine, journal, SDK transport,
   model adapters, or Environment protocol.

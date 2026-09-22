@@ -7,59 +7,60 @@
   Aex
 </h1>
 
-<p align="center">
-  Hosted <a href="https://github.com/aexhq/brain">Brain</a> and extensions, with accounts and metered services.
-</p>
+<p align="center">Run AI agents without operating an agent server.</p>
 
 <p align="center">
-  Bring your models and tools. Run sessions, listen to events, and keep what you need.
+  <a href="https://aex.dev/docs">Quickstart</a> ·
+  <a href="https://aex.dev/dashboard">Dashboard</a> ·
+  <a href="https://aex.dev/brain">Brain</a>
 </p>
 
-<p align="center">
-  <a href="https://aex.dev">Website</a> · <a href="https://aex.dev/docs">Docs</a> · <a href="https://aex.dev/dashboard">Dashboard</a>
-</p>
+Aex hosts [Brain](https://github.com/aexhq/brain), the open-source server for AI agents.
+Bring your model key, connect your tools, and send messages from your application.
+Aex keeps the conversation and progress available for you to read later.
 
-> [!NOTE]
-> Aex is in early preview. APIs and limits may change.
-> Existing preview accounts keep free hosting. Prepaid services require explicit price acceptance;
-> bring your own model-provider keys.
+- Connect functions from your app as tools the agent can call.
+- Read saved conversations and follow live output.
+- Use Brain's loops and extensions with managed hosting, API keys and usage tracking.
+
+> **Early preview.** APIs and limits may change. Maintenance can interrupt work;
+> interrupted actions are not automatically retried. You pay your model provider separately.
 
 ## Get started
 
-Sign in and create an API key in the [dashboard](https://aex.dev/dashboard),
-or use the CLI with Node.js 22 or newer:
+You need Node.js 22 or newer and an OpenAI API key. Sign in to the
+[dashboard](https://aex.dev/dashboard) and create an Aex API key. Set `AEX_API_KEY` and
+`OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install -g @aexhq/cli
-aex login
-aex keys create "My application"
+npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1 zod@4
 ```
 
-Login opens your browser. Save the new API key as `AEX_API_KEY`
-and your OpenAI key as `OPENAI_API_KEY`, then install the SDK:
+Save this as `order.mjs`:
 
-```sh
-npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1
-```
-
-```ts
-import { Aex, brainEnv } from "@aexhq/sdk";
+```js
+import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
+import { z } from "zod";
 
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+const lookupOrder = tool({
+  name: "lookup_order",
+  description: "Look up an order by id.",
+  input: z.object({ id: z.string() }),
+  run: ({ id }, ctx) => ctx.finish({ id, status: "shipped" }),
+});
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
   const session = await aex.sessions.create({
+    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    model: {
-      provider: "openai",
-      name: "gpt-4.1-mini",
-      apiKey: process.env.OPENAI_API_KEY!,
-    },
+    tools: [lookupOrder({ env: hostEnv({ name: "app" }) })],
   });
-
   try {
-    await session.send("Explain what an agent session is in one sentence.");
-    for await (const event of session.events()) console.log(event);
+    await session.send("Look up order A-1001. Has it shipped?");
+    console.log(JSON.stringify(await session.transcript(), null, 2));
+    console.log("Session:", session.id);
   } finally {
     await session.end();
   }
@@ -68,49 +69,32 @@ try {
 }
 ```
 
-Your script runs in your application; the session runs in hosted Brain.
-Consume its events and store your own results. Brain retains history until deletion or expiry.
+Run `node order.mjs`. The printed transcript includes the lookup result and an answer that
+order A-1001 has shipped. Replace the sample lookup with your own data. The loop runs on Aex;
+the lookup runs in your application, which must stay connected while its tools are needed.
 
-## Brain, hosted
+For shell setup and more detail, see the [quickstart](docs/quickstart.md).
 
-Brain owns sessions, execution and events. Aex hosts Brain and extensions and adds accounts,
-API keys, usage, prepaid credits and hosted access.
-Token pricebooks meter actual reported model tokens for foreground and background work.
-Spending control uses asynchronous observations and best-effort estimates; model keys
-and application end-user pricing remain customer-owned.
-The Aex SDK extends and re-exports Brain, so its SDK and extension contracts remain directly usable.
+## Build your application
 
-The dashboard, SDK and CLI use the same Aex HTTP API.
-Manage keys, inspect credit balances and usage, set a spend limit, top up through Stripe Checkout,
-and refund unused credits. See [billing and recovery](docs/billing.md).
-
-`session.submit()` returns the committed `turn_started` sequence without keeping a website request
-open. Read events and the transcript later. Closing the client does not cancel that hosted turn;
-host Tools still require their own process to remain connected.
-
-## Models and tools
-
-Use your own model keys and Brain-compatible extensions.
-Hosted Wasm Agentloops and Tools run in Brain; `hostEnv` Tools run in your application.
-SDK 0.79 uses Brain 0.29 and official loops 7.0.1. Custom Wasm Components must target
-the matching WIT contract. Prepare application Tool dependencies before registration;
-extensions no longer declare `needs`. Hosted `brainEnv` configuration must remain empty.
-
-The preview does not enable arbitrary remote HTTP Environments or general shell execution.
-For Python, data files and retrieval, select a published [managed Modal Environment](docs/environments.md).
-Its finite sandbox shares a workspace across Tools, reserves prepaid credits before allocation,
-and contains no platform or model credentials. Official loops can validate structured output and
-perform bounded corrections inside the hosted turn, with tools disabled during correction.
-See the [supported API](docs/api.md) and [SDK guide](packages/sdk/README.md) for the current boundaries.
-
-## Packages
-
-| Package | Purpose |
+| Task | Guide |
 | --- | --- |
-| [@aexhq/sdk](packages/sdk) | Brain's SDK with Aex account methods and hosted defaults |
-| [@aexhq/cli](packages/cli) | Browser login, key CRUD, account, billing status, usage and docs |
+| Continue a session, stream output or stop work | [Sessions](https://aex.dev/brain/docs/concepts/sessions) |
+| Write a tool or customize the agent loop | [Brain guides](https://aex.dev/brain/docs/guides/write-a-tool) |
+| Submit work from a short-lived request | [Managed tools and submission](docs/environments.md) |
+| Send an image or PDF | [Attachments](docs/attachments.md) |
+| Get a typed JSON answer | [Structured output](https://aex.dev/brain/docs/guides/structured-output) |
+| Manage keys and inspect usage in a terminal | [CLI](packages/cli/README.md) |
+| Check prices, credits and spending | [Billing](docs/billing.md) |
 
-For source builds and self-hosting, see [Development](docs/development.md)
-and [Operations](docs/operations.md). Product plans live in the [roadmap](ROADMAP.md).
+## Hosting and costs
 
-Licensed under [MIT](LICENSE).
+The dashboard shows the prices offered to your account before you accept them. Existing preview
+accounts stay in preview until acceptance. Model hosting, managed compute and attachments have
+separate usage charges; your model-provider bill remains separate.
+
+Application tools can use your installed dependencies. Hosted tools and managed environments
+have different access limits; see [where code runs](docs/quickstart.md#where-code-runs).
+
+For self-hosting or contributions, see [Development](docs/development.md) and
+[Operations](docs/operations.md). [MIT license](LICENSE).
