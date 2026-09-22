@@ -1,9 +1,15 @@
-# Managed tool environments
+# Run tools in a managed environment
 
-Aex hosts Brain and extensions. A managed Modal profile runs fixed Python, Node or other commands
-with their prepared dependencies and data. One session binding shares one temporary workspace;
-different bindings have isolated files. Code and data are built into an immutable Modal image.
-This API does not accept arbitrary shell commands, images, dependencies or provider credentials.
+Use a managed environment when your tools need Python, dependencies or a temporary workspace
+on Aex. They can keep running after the request that submitted the work has ended.
+
+First complete the [quickstart](quickstart.md), then call `await aex.environments.list()`.
+Choose a profile and command that your account's catalog actually lists. Profiles are granted
+to accounts; this API does not upload your own code or accept arbitrary commands and images.
+
+Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
+Install `@aexhq/env-modal@0.3.1` and `@aexhq/agentloop-codex@7.0.1` for the example below.
+Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
 import { Aex, brainEnv, tool } from "@aexhq/sdk";

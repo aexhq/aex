@@ -1,40 +1,54 @@
 # Aex CLI
 
-Node.js 22 or newer. The CLI uses `@aexhq/sdk` and the same public Aex HTTP API as
-the dashboard. No dashboard cookies, site credentials or operator credentials are needed.
+Manage your Aex API keys, account and usage from the terminal. To run an agent, use the
+[SDK quickstart](https://aex.dev/docs).
+
+## Get started
+
+Requires Node.js 22 or newer:
 
 ```sh
 npm install -g @aexhq/cli@0.46.0
 aex login
 aex keys create "My application"
-aex keys list
-aex keys rename KEY_ID "New name"
-aex keys revoke KEY_ID
-aex account
-aex billing
-aex usage
-aex usage SESSION_ID
-aex docs
-aex logout
 ```
 
-`login` opens your browser for Google sign-in or registration. Confirm the account on
-the Aex page, then return to your terminal. The browser must run on the same computer
-as the CLI. `--no-browser` prints the URL instead of opening it. A loopback listener,
-state and S256 PKCE bind a one-use, 60-second code to the initiating CLI. Account
-credentials expire after seven days; run `login` again. `logout` revokes this session.
+`login` opens your browser. Sign in, confirm the account, and return to the terminal on the same
+computer. Save the new key's token as `AEX_API_KEY` in your application's server environment.
+The secret is shown only once.
 
-Results are JSON on stdout; errors and login progress go to stderr. A created key's
-token is returned once. Existing keys expose only their metadata and prefix.
-`billing` reports preview or prepaid status, available and reserved credits, prices and the monthly
-spend limit. `billing ledger`, `billing topups` and `billing refunds` show account history.
-`billing set PRICEBOOK MICRO_USD` accepts the offered prices and sets the monthly limit.
-`billing topup CENTS KEY` returns a Stripe Checkout URL; `billing refund TOPUP CENTS KEY`
-requests return of unused credits. Reuse the operation key for the same payment intent.
+## Common commands
 
+| Task | Command |
+| --- | --- |
+| List keys | `aex keys list` |
+| Rename a key | `aex keys rename KEY_ID "New name"` |
+| Revoke a key | `aex keys revoke KEY_ID` |
+| Read account details | `aex account` |
+| Check credits, prices and limits | `aex billing` |
+| Read account usage | `aex usage` |
+| Read one session's usage | `aex usage SESSION_ID` |
+| Open the docs | `aex docs` |
+| Sign out | `aex logout` |
+
+Results are JSON on stdout; errors and login progress go to stderr. Account logins expire after
+seven days; run `aex login` again. Use `--no-browser` to print the login URL instead.
+
+## Billing
+
+`aex billing ledger`, `aex billing topups` and `aex billing refunds` show account history.
+`aex billing set PRICEBOOK MICRO_USD` accepts the offered prices and sets a monthly limit.
+One dollar is 1,000,000 micro-USD.
+
+`aex billing topup CENTS KEY` returns a Checkout URL; `aex billing refund TOPUP CENTS KEY`
+requests a refund of unused credits. Reuse the same operation key when recovering the same
+payment request. See [billing](https://github.com/aexhq/aex/blob/main/docs/billing.md).
+
+## Automation and configuration
+
+Use `AEX_ACCOUNT_TOKEN` for account automation; a workload API key cannot manage other keys.
 The credential file is `~/.aex/account.json` on Unix or `%LOCALAPPDATA%/.aex/account.json`
-on Windows, restricted to the current user (and Windows SYSTEM). `AEX_CONFIG_DIR`
-overrides its directory. For automation, supply `AEX_ACCOUNT_TOKEN`; a workload API
-key cannot manage account credentials. `AEX_API_URL` or `--api-url` changes the API
-origin; stored credentials cannot be reused against a different origin. `--site-url`
-selects the matching login website for a self-hosted installation.
+on Windows. `AEX_CONFIG_DIR` overrides the directory.
+
+For self-hosting, `AEX_API_URL` or `--api-url` selects the API and `--site-url` selects its login
+website. Stored credentials are bound to their API origin.

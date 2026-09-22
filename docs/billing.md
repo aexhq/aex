@@ -1,14 +1,25 @@
-# Credits and metered hosting
+# Credits and hosting costs
 
-Aex accounts belong to developers and organizations. Application end users authenticate in the
-application's own identity system. Aex does not create a second wallet for each application user.
-Applications choose their own end-user prices. Customers supply model credentials and
-pay their provider directly; Aex's token-based hosting fee is a separate charge.
+Aex charges for hosting your agents and the resources they use. Bring your model-provider key;
+your provider bills model calls separately. Your application's own user pricing is up to you.
 
-Existing accounts remain in preview until an account credential accepts an offered pricebook.
-Omitting `billing` from the server configuration offers no prepaid enrollment or checkout. Configuring
-a pricebook does not migrate existing accounts. Stripe is optional; when configured, its secret and
-webhook credentials must match the selected `test` or `live` mode or startup fails.
+## Check your prices and usage
+
+Open **Account / Billing / Usage** in the [dashboard](https://aex.dev/dashboard), or run
+`aex billing` and `aex usage` in the [CLI](../packages/cli/README.md). The dashboard shows
+your offered prices, accepted prices, available credits and spending limit.
+
+Existing preview accounts remain in preview until you accept an offered pricebook. To enable
+prepaid services, accept the prices and set your monthly limit, then add credits through Checkout
+where offered. There are no automatic topups. You can request a refund of unused credits.
+
+Model hosting charges count reported input and output tokens, including background work.
+Managed compute, attachment storage and downloads have separate rates. Pending estimates are
+shown separately from settled charges. Aex may interrupt work near a credit or spending limit;
+these controls do not cap your model-provider bill.
+
+The sections below describe units, SDK/API operations and recovery for applications that manage
+billing programmatically. Server billing configuration belongs to [operations](operations.md).
 
 ## Amounts, prices and limits
 

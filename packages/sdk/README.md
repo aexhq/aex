@@ -1,125 +1,81 @@
 # Aex SDK
 
-`aex.billing` reads credits and ledger entries, accepts a pricebook and spend limit, creates
-idempotent Stripe topups/refunds, and synchronizes provider status and receipt links. Mutations
-require an account credential. Configure `maxCostMicroUsd` on a prepaid workload client for its
-per-operation ceiling. Attachment uploads also accept `downloadBudgetBytes` and an optional
-operation-specific `maxCostMicroUsd`. See [billing](../../docs/billing.md) for units and recovery.
+Run AI agents on [Aex](https://aex.dev) from JavaScript or TypeScript. Connect your model and
+tools, send messages, and read saved conversations without operating a Brain server.
 
-`session.submit()` returns the saved turn's event sequence immediately. Hosted Tools keep running
-after client close; host Tools require their process online. Follow Events from that sequence and read
-the transcript when the turn terminates. Put structured correction policy in the hosted Agentloop
-when submitting from a short-lived Server Action.
+## Get started
 
-Install `@aexhq/sdk`. Create an API key at https://aex.dev/dashboard.
+Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
-```ts
-import { Aex, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
+```sh
+npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1 zod@4
+```
 
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
+run `node order.mjs`:
+
+```js
+import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
+import { pi } from "@aexhq/agentloop-pi";
+import { z } from "zod";
+
+const lookupOrder = tool({
+  name: "lookup_order",
+  description: "Look up an order by id.",
+  input: z.object({ id: z.string() }),
+  run: ({ id }, ctx) => ctx.finish({ id, status: "shipped" }),
+});
+
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
+try {
+  const session = await aex.sessions.create({
+    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
+    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+    tools: [lookupOrder({ env: hostEnv({ name: "app" }) })],
+  });
+  try {
+    await session.send("Look up order A-1001. Has it shipped?");
+    console.log(JSON.stringify(await session.transcript(), null, 2));
+    console.log("Session:", session.id);
+  } finally {
+    await session.end();
+  }
+} finally {
+  await aex.close();
+}
+```
+
+The transcript includes an order lookup and the agent's answer. The lookup function runs in your
+process; keep it connected while the agent needs that tool. The [quickstart](https://aex.dev/docs)
+explains setup and where other tools run.
+
+## Sessions and tools
+
+The SDK uses Brain's session API and extension helpers. You can import `tool`, `agentloop`,
+`brainEnv`, `hostEnv`, `component` and `environment` from `@aexhq/sdk`.
+
+- [Sessions](https://aex.dev/brain/docs/concepts/sessions): send, submit, stream, reconnect and stop.
+- [Tools](https://aex.dev/brain/docs/guides/write-a-tool): application functions and packaged tools.
+- [Structured output](https://aex.dev/brain/docs/guides/structured-output): validated JSON answers.
+- [Managed environments](https://github.com/aexhq/aex/blob/main/docs/environments.md): hosted tools and workspaces.
+- [Attachments](https://github.com/aexhq/aex/blob/main/docs/attachments.md): upload images and PDFs.
+
+Use `ctx.finish(value)` to complete a tool. Use `aex.close()` in `finally` to close client
+connections. Closing the client keeps stored sessions; tools in your process still require it.
+
+## Account and usage
+
+```js
 console.log(await aex.account.get());
+console.log(await aex.account.usage());
+console.log(await aex.account.modelUsage(sessionId));
+console.log(await aex.environments.list());
 ```
 
-`Aex` extends the pinned Brain client. Its sessions, registration, Events, Components and
-extension builders are Brain's implementations. SDK 0.79 uses Brain SDK 0.29 and Pi/Codex
-7.0.1. Images and PDFs use HTTPS URLs; Aex owns attachment publication and expiry. Deploy the matching
-runtime and extensions together. Retained sessions require a compatibility check before upgrading.
-See https://aex.dev/docs
-for a complete session example.
+Run these before closing the client. Workload keys can read account and usage information.
+Creating keys, accepting prices, topups and refunds require an account login; use the
+[dashboard](https://aex.dev/dashboard) or [CLI](https://www.npmjs.com/package/@aexhq/cli).
 
-Put client use, including session creation, inside `try/finally` and `await aex.close()` in
-`finally`. The client retains one shared host connection until close, even if creation fails.
-Close releases client I/O and local handlers while retaining stored sessions. Use
-`session.interrupt()` to stop the current turn, `session.end()` to finish the conversation,
-and `session.delete()` to remove an ended or failed session. `interrupt()` replaces SDK
-`cancel()`; the HTTP route is unchanged. See the [session example](../../examples/session.mjs).
-
-Tool schemas describe accepted inputs. Defaulted arguments are optional; Zod applies defaults
-and transforms before the handler. Ordinary objects strip extra properties and strict objects
-reject them. Pi dispatches in parallel; coordinate shared resources in their owning Tool or
-Environment. The official loops explain unanswered calls after interruption without replaying them.
-
-Tool return and completion are separate. `return ctx.finish(value)` emits an optional result
-and finishes an ordinary Tool. Returning a value alone emits it and releases the synchronous
-caller; the Tool remains open for `ctx.emitResult(value)` and `ctx.finish()` afterward.
-Background observations wake the Agentloop, which chooses whether to call the model and what
-to put in its transcript. Results and finish always enter the journal. Keep the host client
-connected until all its Tools finish. Interrupt cancels unfinished Tools even while idle.
-A forgotten finish stays open until the original deadline, cancellation or Environment loss;
-without a deadline it can remain open indefinitely.
-
-Host Tools accept ordinary successful output or a Brain `Outcome` directly. Structured errors retain
-code, message, retryable and details. The top-level statuses `ok`, `error`, `timeout`, `cancelled`
-and `unknown` declare outcomes; malformed envelopes fail validation, and only successful values
-pass through the output schema. Tool deadlines produce `timeout`, explicit cancellation produces
-`cancelled`, and missing reliable results after dispatch produce `unknown`. All are failed Tool
-results. Timeout and cancellation do not promise rollback. See
-[the full return contract](https://aex.dev/brain/docs/guides/write-a-tool#return-values-and-outcomes).
-
-`@aexhq/tools-mcp` runs selected MCP Tools in your application host, preserving structured failures
-and original JSON Schema constraints. The official Docker and browser HTTP Environments target
-standalone Brain and require operator deployment. See [official extensions](https://github.com/aexhq/extensions).
-
-Place uploaded Wasm Agentloops and Tools in `brainEnv` for hosted execution. `hostEnv`
-executes application functions in your process. Native hosted Components receive no server
-secrets, filesystem or network grants. `await aex.environments.list()` lists your account's
-published configurations. Import `modal` from `@aexhq/env-modal` and pass the catalog URL and
-granted profile name; [managed execution](../../docs/environments.md) reserves credits at creation.
-Customer-selected HTTP endpoints are denied. Hosted `brainEnv` configuration must be empty; resource access
-is configured by each Environment, not declared through extension `needs`. Prepare dependencies
-for `hostEnv` Tools in your application before registering them. Supply your model key per session.
-
-`account.get()` and `account.usage()` accept a workload API key. `keys` management requires
-an authenticated account session and is normally performed in the dashboard. API keys do
-not grant authority to create more credentials. New key secrets are returned once.
-
-## Structured output
-
-For asynchronous hosted work, configure the official loop with
-`output: {schema: z.toJSONSchema(answerType), maxCorrections: 2}` and use `session.submit()`.
-Validation and bounded corrections run inside that turn. Corrections cannot dispatch Tools;
-only a schema-valid final answer emits an assistant message. Business refinements belong in
-your Tools or application, and are not encoded by JSON Schema.
-
-Pass `output: { type: z.object({ name: z.string() }), maxRetries: 2 }` in the second
-argument to `session.send`. The SDK prompts for JSON, validates with Zod locally,
-and returns the inferred parsed value. Two additional correction turns are allowed
-by default; set zero to disable retries. Ordinary sends keep returning session state;
-`idle` alone does not mean the turn succeeded. No terminal Tool is needed for structured output.
-
-See the [executable example](https://github.com/aexhq/aex/blob/main/examples/structured-output.mjs)
-and [full contract](https://aex.dev/brain/docs/guides/structured-output).
-Exhaustion throws `StructuredOutputError` with `attempts`, `lastOutput`, and `issues`.
-Retries run in your client and are ordinary turns with the session's existing tools.
-Use exclusive ownership of sends during the operation. An optional top-level
-`signal` cancels the active turn and stops corrections. Raw attempts remain visible
-in history and streams; validation does not change the Agentloop or provider format.
-
-## Account management
-
-Use an account session obtained through browser login for account management. Workload
-API keys remain scoped to runtime operations and read-only account/usage access.
-
-```ts
-const account = new Aex({ accountToken: process.env.AEX_ACCOUNT_TOKEN! });
-await account.keys.list();
-const issued = await account.keys.create({ name: "My app" });
-await account.keys.update(issued.key.id, { name: "Renamed app" });
-await account.keys.delete(issued.key.id);
-await account.account.get(); // includes billing status and limits
-await account.account.usage();
-await account.account.modelUsage(sessionId);
-await account.account.logout();
-```
-
-`account.account.authorizeLogin({code_challenge, redirect_uri})` and
-`Aex.exchangeLogin({code, code_verifier, redirect_uri})` expose the shared HTTP login
-contract for clients. The `@aexhq/cli` package handles opening the browser, PKCE,
-loopback callback and local credential storage.
-
-Image and PDF uploads use the [attachment API](../../docs/attachments.md). `models(provider?)` forwards Brain's catalogue unchanged, with models.dev metadata when known. Brain validates model selections; Aex has no separate model allowlist.
-
-Token usage reports separate recorded quantities and hosting charges from pending estimates.
-Foreground and background calls use the same meter. Spending control is asynchronous;
-`maxCostMicroUsd` remains a resource-operation ceiling, not a model token budget.
-Your provider separately bills your model key. See [billing](../../docs/billing.md).
+See the [billing guide](https://github.com/aexhq/aex/blob/main/docs/billing.md) for account API
+methods and `maxCostMicroUsd`, the ceiling for a resource operation. Aex spending controls do
+not cap your separate model-provider bill.
