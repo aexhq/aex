@@ -73,7 +73,9 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
             Ok(Route::Artifact(kind, Some(id)))
         }
         ("GET", ["", "v1", "hosts", id, "commands"]) => Ok(Route::Host(id, "commands")),
-        ("POST", ["", "v1", "hosts", id, op @ ("results" | "events")]) => Ok(Route::Host(id, op)),
+        ("POST", ["", "v1", "hosts", id, op @ ("results" | "events" | "model")]) => {
+            Ok(Route::Host(id, op))
+        }
         ("GET" | "DELETE", ["", "v1", "sessions", id]) => Ok(Route::Session(id, "")),
         ("GET", ["", "v1", "sessions", id, op @ ("events" | "transcript")]) => {
             Ok(Route::Session(id, op))
@@ -308,6 +310,15 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 app.store
                     .owned(&principal, result.session_id.as_str(), false)
                     .await?;
+            } else if op == "model" {
+                let call: brain_protocol::HostModelRequest = serde_json::from_slice(&body)?;
+                app.store
+                    .owned(&principal, call.session_id.as_str(), false)
+                    .await?;
+                let mut tx = app.store.0.begin().await?;
+                crate::store::Store::lock_account(&mut tx, &principal.account).await?;
+                crate::model_usage::admit_in(&mut tx, &principal.account).await?;
+                tx.commit().await?;
             } else if op == "events" {
                 let event: brain_protocol::HostEvent = serde_json::from_slice(&body)?;
                 app.store

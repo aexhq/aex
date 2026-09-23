@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.79.0 (Brain SDK 0.29.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.80.0 (Brain SDK 0.30.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -21,6 +21,7 @@ full revision in Cargo. Customer keys never authorize direct access to private B
 | POST | `/v1/hosts` | Active account key |
 | GET | `/v1/hosts/{id}/commands` | Scoped token and active issuing key/account |
 | POST | `/v1/hosts/{id}/results`, `/events` | Scoped token and owned target session |
+| POST | `/v1/hosts/{id}/model` | Scoped token, owned session and available model budget |
 | GET | `/health/live`, `/health/ready` | No customer data |
 
 Other methods/routes fail closed. Customer-selected Environment endpoints, execution
@@ -31,6 +32,11 @@ host resource grants can run in Brain. Committed event cursors and shapes are
 preserved. Keepalive comments have no event identity and are inserted only between frames.
 Server-error text is redacted while retaining the Brain error code. Bodies and credentials
 are never logged.
+
+Host Tools can call `ctx.model(request)` within their invocation lifetime, using the session's
+model authority and shared call budget. These calls have independent messages and metered
+usage; they do not modify the conversation transcript. `ctx.finish(value, { content })` keeps
+the structured result in the journal while supplying optional model-facing text to the loop.
 
 Host Tools may return Brain Outcomes directly. Structured failures retain code, message, retryable
 and details. Tool deadlines produce `timeout`, explicit cancellation produces `cancelled`, and a

@@ -327,18 +327,30 @@ async fn cumulative_rating_covers_background_calls_and_retains_unknown_usage() {
     )
     .await
     .unwrap();
-    let mut spoof = event(10, "model_call_started", json!({}));
-    spoof.origin = Some(serde_json::from_value(json!({"kind":"tool","sequence":2})).unwrap());
-    model_usage::record(&app, "ses_background", &spoof)
+    let mut start = event(10, "model_call_started", json!({"tool_sequence":2}));
+    start.origin = Some(serde_json::from_value(json!({"kind":"tool","sequence":2})).unwrap());
+    model_usage::record(&app, "ses_background", &start)
+        .await
+        .unwrap();
+    model_usage::record(&app, "ses_background", &event(11, "turn_failed", json!({})))
+        .await
+        .unwrap();
+    let mut end = event(
+        12,
+        "model_call_ended",
+        json!({"sequence":10,"result":{"usage":{"total_input_tokens":7,"output_tokens":3}}}),
+    );
+    end.origin = start.origin;
+    model_usage::record(&app, "ses_background", &end)
         .await
         .unwrap();
     let totals = model_usage::totals(&app.store, &account).await.unwrap();
-    assert_eq!(totals.reported_input_tokens, 3);
-    assert_eq!(totals.reported_output_tokens, 2);
+    assert_eq!(totals.reported_input_tokens, 10);
+    assert_eq!(totals.reported_output_tokens, 5);
     assert_eq!(totals.unmeasured_calls, 1);
-    assert_eq!(totals.charged_micro_usd, 1);
+    assert_eq!(totals.charged_micro_usd, 5);
     let rows = sqlx::query("SELECT input_tokens,terminal FROM model_usage WHERE session='ses_background' ORDER BY sequence").fetch_all(&app.store.0).await.unwrap();
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 5);
     assert!(rows[3].get::<Option<i64>, _>("input_tokens").is_none());
 }
 
