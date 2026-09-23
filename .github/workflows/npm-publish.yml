@@ -35,6 +35,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Find the original archives on a rerun
+        id: archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq "[.artifacts[] | select(.name == \"aex-npm-release-$GITHUB_SHA\")] | length")
+          test "$count" -le 1
+          echo "exists=$count" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        if: steps.archives.outputs.exists == '1'
+        with:
+          name: aex-npm-release-${{ github.sha }}
+          path: ${{ runner.temp }}/aex-npm-release
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -44,9 +57,11 @@ jobs:
       - run: npm run test:sdk
       - run: npm run test:cli
       - run: node tools/npm-release.mjs pack "$RUNNER_TEMP/aex-npm-release"
+        if: steps.archives.outputs.exists == '0'
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
       - uses: actions/upload-artifact@v7
+        if: steps.archives.outputs.exists == '0'
         with:
           name: aex-npm-release-${{ github.sha }}
           path: ${{ runner.temp }}/aex-npm-release
