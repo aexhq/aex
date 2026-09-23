@@ -7,6 +7,7 @@ cargo run --locked -q -p aex-server -- contract --output docs/generated
 git diff --exit-code -- docs/generated
 npm ci --ignore-scripts
 npm audit --audit-level=high
+node --test tools/*.test.mjs
 npm run gen --workspace @aexhq/sdk
 git diff --exit-code -- packages/sdk/src/generated.ts
 npm run test:sdk
