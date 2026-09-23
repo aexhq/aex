@@ -24,7 +24,7 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1 zod@4
+npm install @aexhq/sdk@0.80.0 @aexhq/agentloop-pi@7.1.0 zod@4
 ```
 
 ## 3. Create a session
@@ -32,7 +32,7 @@ npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1 zod@4
 Save this as `order.mjs`. The same API works in TypeScript.
 
 ```js
-import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
+import { Aex, brainEnv, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -48,7 +48,7 @@ try {
   const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    tools: [lookupOrder({ env: hostEnv({ name: "app" }) })],
+    tools: [lookupOrder()],
   });
   try {
     await session.send("Look up order A-1001. Has it shipped?");

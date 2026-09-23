@@ -111,7 +111,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
   await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
   const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id},context)=>{toolCalls++;return context.finish(`item-${id}`);}});
-  const session=await client.sessions.create({...options,tools:[lookup({env:hostEnv({name:"app"})})]},{idempotencyKey:"shared-key"});
+  const session=await client.sessions.create({...options,tools:[lookup()]},{idempotencyKey:"shared-key"});
 
   const otherSession=await other.sessions.create(options,{idempotencyKey:"shared-key"});
   const direct=await measure(`${brainUrl}/v1/sessions/${otherSession.id}`,internal);
@@ -121,6 +121,13 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   for(const [method,suffix] of [["GET",""],["GET","/transcript"],["GET","/events"],["POST","/messages"],["POST","/cancel"],["POST","/end"],["DELETE",""]]){
     const r=await raw(`/v1/sessions/${session.id}${suffix}`,b.token,{method,headers:{"idempotency-key":"x","content-type":"application/json"},...(method==="POST"?{body:'{"input":{"message":"x"}}'}:{})});assert.equal(r.status,404,`${method} ${suffix}`);
   }
+  const foreignHost = await (await raw("/v1/hosts", b.token, { method: "POST" })).json();
+  const foreignModel = await raw(`/v1/hosts/${foreignHost.host_id}/model`, foreignHost.token, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session_id: session.id, sequence: 1, request: { messages: [] } }),
+  });
+  assert.equal(foreignModel.status, 404, "host model requests cannot cross account ownership");
+  assert.equal(modelCalls, 0, "denied host model requests never reach the provider");
   const listed=await (await raw("/v1/sessions",b.token)).json();assert.deepEqual(listed.sessions.map(s=>s.session_id),[otherSession.id]);
   assert.equal((await raw(`/v1/sessions/${session.id}/executions/1/call`,a.token,{method:"POST"})).status,404);
   assert.equal((await raw("/v1/tools",a.token,{method:"POST"})).status,400);
@@ -150,7 +157,10 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     tools: [backgroundTool({ env: hostEnv({ name: "background-app" }) })] });
   await backgroundSession.send("start work");
   const beforeBackground = []; for await (const event of backgroundSession.events()) beforeBackground.push(event);
-  await backgroundExecution.finish("late hosted result");
+  const independent = await Promise.all(["one", "two"].map(text => backgroundExecution.model({ messages: [{ role: "user", content: [{ type: "text", text }] }] })));
+  assert.equal(independent.length, 2);
+  assert.ok(!JSON.stringify((await backgroundSession.transcript()).messages).includes('"text":"one"'));
+  await backgroundExecution.finish({ large: "private structured data" }, { content: "late hosted result" });
   for await (const event of backgroundSession.stream(beforeBackground.at(-1).sequence)) {
     assert.notEqual(event.type, "turn_failed", JSON.stringify(event.data));
     if (event.type === "turn_ended") break;

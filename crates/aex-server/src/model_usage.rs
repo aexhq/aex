@@ -109,7 +109,7 @@ fn quantity(value: Option<u64>) -> Result<Option<i64>> {
         .transpose()
 }
 
-/// Only authenticated Brain journal records reach this path. Tool-origin emissions cannot meter usage.
+/// Only authenticated Brain journal records reach this path; model event names are reserved by Brain.
 pub async fn record(app: &App, session: &str, event: &Event) -> Result<()> {
     let account: String = sqlx::query_scalar("SELECT account FROM sessions WHERE id=$1")
         .bind(session)
@@ -125,7 +125,12 @@ pub async fn record(app: &App, session: &str, event: &Event) -> Result<()> {
     if sequence <= cursor {
         return Ok(());
     }
-    if event.origin.is_none() {
+    if event.origin.is_none()
+        || matches!(
+            event.event_type.as_str(),
+            "model_call_started" | "model_call_ended" | "model_call_failed"
+        )
+    {
         match event.event_type.as_str() {
             "model_call_started" => {
                 let started = quantity(Some(event.recorded_at_ms))?.unwrap();
@@ -155,7 +160,7 @@ pub async fn record(app: &App, session: &str, event: &Event) -> Result<()> {
                 )
                 .await?;
             }
-            "turn_failed" | "session_ended" | "session_creation_failed" => {
+            "session_ended" | "session_creation_failed" => {
                 let pending = sqlx::query(
                     "SELECT sequence,usage FROM model_usage WHERE session=$1 AND NOT terminal",
                 )

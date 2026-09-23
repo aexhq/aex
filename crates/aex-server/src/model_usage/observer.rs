@@ -216,27 +216,26 @@ async fn watch(app: &App, session: &str) -> Result<()> {
                 for frame in decoder.feed(&chunk, app.config.limits.response_bytes)? {
                     if frame.id {
                         let event: Event = serde_json::from_str(&frame.data)?;
-                        if event.origin.is_none() && matches!(event.event_type.as_str(), "model_call_ended" | "model_call_failed" | "turn_failed") {
+                        if matches!(event.event_type.as_str(), "model_call_ended" | "model_call_failed") {
                             flush(app, session, &calls).await?;
-                            if let Some(sequence) = event.data["sequence"].as_u64()
+                            if event.origin.is_none() && let Some(sequence) = event.data["sequence"].as_u64()
                                 && let Some(call) = calls.get(&sequence)
                                 && let Some(input) = event.data["result"]["usage"]["total_input_tokens"].as_u64() {
                                     previous_input = Some((input,call.estimate.input_bytes));
                             }
                         }
                         record(app, session, &event).await?;
-                        if event.origin.is_none() && event.event_type == "model_call_started" {
+                        if event.event_type == "model_call_started" {
                             let mut refreshed = self::calls(app, session).await?;
                             if let Some(mut call) = refreshed.remove(&event.sequence) {
-                                call.estimate.previous_input = previous_input;
+                                if event.origin.is_none() { call.estimate.previous_input = previous_input; }
                                 calls.insert(event.sequence, call);
                             }
                         }
-                        if event.origin.is_none() && matches!(event.event_type.as_str(), "model_call_ended" | "model_call_failed")
+                        if matches!(event.event_type.as_str(), "model_call_ended" | "model_call_failed")
                             && let Some(sequence) = event.data["sequence"].as_u64() {
                             calls.remove(&sequence);
                         }
-                        if event.origin.is_none() && event.event_type == "turn_failed" { calls.clear(); }
                         if event.origin.is_none() && matches!(event.event_type.as_str(), "session_ended" | "session_creation_failed") { return Ok(()); }
                     } else {
                         let data: serde_json::Value = serde_json::from_str(&frame.data)?;

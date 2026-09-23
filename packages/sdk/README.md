@@ -8,14 +8,14 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.79.0 @aexhq/agentloop-pi@7.0.1 zod@4
+npm install @aexhq/sdk@0.80.0 @aexhq/agentloop-pi@7.1.0 zod@4
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
 run `node order.mjs`:
 
 ```js
-import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
+import { Aex, brainEnv, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -31,7 +31,7 @@ try {
   const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    tools: [lookupOrder({ env: hostEnv({ name: "app" }) })],
+    tools: [lookupOrder()],
   });
   try {
     await session.send("Look up order A-1001. Has it shipped?");
@@ -79,3 +79,9 @@ Creating keys, accepting prices, topups and refunds require an account login; us
 See the [billing guide](https://github.com/aexhq/aex/blob/main/docs/billing.md) for account API
 methods and `maxCostMicroUsd`, the ceiling for a resource operation. Aex spending controls do
 not cap your separate model-provider bill.
+
+Inline Tools default to the process registering them. Published libraries use Brain's generated
+bindings and the selected Environment's prepared runtime. `ctx.finish(value, { content: summary })`
+retains the structured result while offering concise model text. `ctx.model({ messages })` runs an
+independent request within the invocation's lifetime and the session's model authority; hosted
+usage and spending controls include those requests. The Agentloop owns the shared conversation.

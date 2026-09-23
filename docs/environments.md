@@ -8,7 +8,7 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.3.1` and `@aexhq/agentloop-codex@7.0.1` for the example below.
+Install `@aexhq/env-modal@0.4.0` and `@aexhq/agentloop-codex@7.1.0` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
