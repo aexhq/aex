@@ -35,6 +35,58 @@ export type SyncPayment =
 export interface AexContracts {}
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "HttpCatalog".
+ */
+export interface HttpCatalog {
+  bindings: {
+    [k: string]: number;
+  };
+  driver_url: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "HttpSelection".
+ */
+export interface HttpSelection {
+  binding: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "UploadGrantInput".
+ */
+export interface UploadGrantInput {
+  bytes: number;
+  content_type: string;
+  expires_at?: number | null;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "UploadGrant".
+ */
+export interface UploadGrant {
+  attachment_expires_at: number;
+  bytes: number;
+  content_type: string;
+  expires_at: number;
+  id: string;
+  token: string;
+  upload_url: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "AttachmentLimits".
+ */
+export interface AttachmentLimits {
+  bytes_per_account: number;
+  count_per_account: number;
+  max_bytes: number;
+  region: string;
+  session_retention_secs: number;
+  ttl_secs: number;
+  upload_grant_secs: number;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Attachment".
  */
 export interface Attachment {

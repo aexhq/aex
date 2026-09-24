@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AttachmentLimits",
+  "type": "object",
+  "properties": {
+    "bytes_per_account": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "count_per_account": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "max_bytes": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "region": {
+      "type": "string"
+    },
+    "session_retention_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ttl_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "upload_grant_secs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "max_bytes",
+    "count_per_account",
+    "bytes_per_account",
+    "ttl_secs",
+    "session_retention_secs",
+    "region",
+    "upload_grant_secs"
+  ]
+}

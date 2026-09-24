@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UploadGrant",
+  "type": "object",
+  "properties": {
+    "attachment_expires_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "bytes": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "id": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string"
+    },
+    "upload_url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "upload_url",
+    "token",
+    "expires_at",
+    "attachment_expires_at",
+    "bytes",
+    "content_type"
+  ]
+}

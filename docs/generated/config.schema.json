@@ -46,6 +46,16 @@
         }
       ]
     },
+    "http_environments": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Config5"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "limits": {
       "$ref": "#/$defs/Limits"
     },
@@ -66,6 +76,31 @@
     "limits"
   ],
   "$defs": {
+    "Binding": {
+      "type": "object",
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolDefinition"
+          }
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "timeoutMs",
+        "tools"
+      ]
+    },
     "Config": {
       "type": "object",
       "properties": {
@@ -108,6 +143,14 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "upload_origins": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
         }
       },
       "additionalProperties": false,
@@ -204,6 +247,29 @@
         "configuration",
         "active_per_account",
         "profiles"
+      ]
+    },
+    "Config5": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PublishedBinding"
+          }
+        },
+        "public_url": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "public_url",
+        "bindings"
       ]
     },
     "EnvironmentProfile": {
@@ -383,6 +449,30 @@
         "rates"
       ]
     },
+    "PublishedBinding": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "credential_env": {
+          "type": "string"
+        },
+        "specification": {
+          "$ref": "#/$defs/Binding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accounts",
+        "credential_env",
+        "specification"
+      ]
+    },
     "PublishedProfile": {
       "type": "object",
       "properties": {
@@ -420,6 +510,32 @@
       "required": [
         "micro_usd",
         "units"
+      ]
+    },
+    "ToolDefinition": {
+      "description": "What the model may be told about a Tool.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "output_schema": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "output_schema"
       ]
     }
   }

@@ -133,6 +133,12 @@ impl Store {
         if let Some(row) = sqlx::query("SELECT fingerprint,state,result FROM claims WHERE account=$1 AND operation=$2 AND client_key=$3")
             .bind(&p.account).bind(operation).bind(key).fetch_optional(&mut **tx).await? {
             if row.get::<String,_>("fingerprint") != fingerprint { return Err(Error::conflict("operation key reused with different request")); }
+            if row.get::<String,_>("state") == "rejected" {
+                let upstream = random("op");
+                sqlx::query("UPDATE claims SET state='pending',result=NULL,upstream_key=$1 WHERE account=$2 AND operation=$3 AND client_key=$4")
+                    .bind(&upstream).bind(&p.account).bind(operation).bind(key).execute(&mut **tx).await?;
+                return Ok(Claim::New(upstream));
+            }
             return if row.get::<String,_>("state") == "complete" {
                 Ok(Claim::Complete(serde_json::from_str(row.get("result"))?))
             } else { Err(Error::ambiguous()) };

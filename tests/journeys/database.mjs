@@ -13,7 +13,8 @@ export async function database() {
   await client.connect();
   const tables = ["accounts", "api_keys", "sessions", "hosts", "claims", "storage_report", "dashboard_sessions", "artifacts", "login_grants", "attachments",
     "pricebooks", "wallets", "credit_ledger", "credit_reservations", "metered_usage", "session_turns", "attachment_downloads",
-    "topups", "credit_refunds", "payment_events", "payment_disputes", "environment_profiles", "environment_grants", "model_price_history", "model_usage", "model_usage_totals"];
+    "topups", "credit_refunds", "payment_events", "payment_disputes", "environment_profiles", "environment_grants", "model_price_history", "model_usage", "model_usage_totals",
+    "http_bindings", "http_grants", "attachment_upload_grants"];
   return {
     url: url.href, client,
     async snapshot() {

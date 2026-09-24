@@ -99,6 +99,7 @@ async fn fixture(path: &std::path::Path) -> (App, Arc<Objects>, String, String, 
     .await
     .unwrap();
     config.attachments = Some(attachments::Config {
+        upload_origins: ["https://desktop.example".into()].into(),
         public_origin: "https://media.example.com".into(),
         bucket: "test".into(),
         region: "us-east-1".into(),
@@ -155,6 +156,169 @@ async fn call(
         .oneshot(request.body(Body::from(bytes)).unwrap())
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn scoped_uploads_reserve_capacity_and_only_publish_verified_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, objects, _, token, other) = fixture(dir.path()).await;
+    let input = br#"{"content_type":"application/pdf","bytes":12}"#;
+    let created = call(
+        &app,
+        Method::POST,
+        "/v1/sessions/session/attachment-grants",
+        Some(&token),
+        "grant",
+        input,
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let grant: serde_json::Value =
+        serde_json::from_slice(&to_bytes(created.into_body(), 4096).await.unwrap()).unwrap();
+    let id = grant["id"].as_str().unwrap();
+    let scoped = grant["token"].as_str().unwrap();
+    assert!(grant.get("media").is_none());
+    let path = format!("/v1/attachments/{id}/upload");
+    let metadata = format!("/v1/sessions/session/attachments/{id}");
+    assert_eq!(
+        call(&app, Method::GET, &metadata, Some(&token), "", b"")
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(&app, Method::GET, &metadata, Some(scoped), "", b"")
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, Method::GET, &metadata, Some(&other), "", b"")
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let changed = br#"{"content_type":"application/pdf","bytes":13}"#;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/sessions/session/attachment-grants",
+            Some(&token),
+            "grant",
+            changed
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(&token), "", b"%PDF-1.7\nabc")
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(scoped), "", b"invalid-data")
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(scoped), "", b"%PDF-1.7\nabc")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(scoped), "", b"%PDF-1.7\nabc")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(scoped), "", b"%PDF-1.7\nxyz")
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let ready = call(&app, Method::GET, &metadata, Some(&token), "", b"").await;
+    assert_eq!(ready.status(), StatusCode::OK);
+    let ready: Attachment =
+        serde_json::from_slice(&to_bytes(ready.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(ready.id, id);
+    assert_eq!(objects.bytes.lock().unwrap().len(), 1);
+    assert_eq!(
+        call(&app, Method::DELETE, &metadata, Some(&token), "", b"")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, Method::PUT, &path, Some(scoped), "", b"%PDF-1.7\nabc")
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(attachments::maintain(&app).await.unwrap().deleted, 1);
+    assert!(objects.bytes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upload_grants_expire_and_cors_does_not_grant_account_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, _, _, token, _) = fixture(dir.path()).await;
+    let reply = call(
+        &app,
+        Method::POST,
+        "/v1/sessions/session/attachment-grants",
+        Some(&token),
+        "grant",
+        br#"{"content_type":"application/pdf","bytes":12}"#,
+    )
+    .await;
+    let grant: serde_json::Value =
+        serde_json::from_slice(&to_bytes(reply.into_body(), 4096).await.unwrap()).unwrap();
+    let path = format!("/v1/attachments/{}/upload", grant["id"].as_str().unwrap());
+    for (origin, expected) in [
+        ("https://desktop.example", StatusCode::NO_CONTENT),
+        ("https://evil.example", StatusCode::UNAUTHORIZED),
+    ] {
+        let response = aex_server::http::router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(&path)
+                    .header("origin", origin)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        if expected == StatusCode::NO_CONTENT {
+            assert_eq!(response.headers()["access-control-allow-origin"], origin);
+        }
+    }
+    sqlx::query("UPDATE attachment_upload_grants SET expires_at=$1")
+        .bind(aex_server::store::now())
+        .execute(&app.store.0)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            &path,
+            grant["token"].as_str(),
+            "",
+            b"%PDF-1.7\nabc"
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(attachments::maintain(&app).await.unwrap().deleted, 1);
 }
 
 async fn attachment(response: Response) -> Attachment {
@@ -471,6 +635,7 @@ async fn process_death_after_object_write_preserves_pending_reservation() {
         .unwrap();
     assert_eq!(pending, 1);
     config.attachments = Some(attachments::Config {
+        upload_origins: ["https://desktop.example".into()].into(),
         public_origin: "https://example.com".into(),
         bucket: "test".into(),
         region: "us-east-1".into(),

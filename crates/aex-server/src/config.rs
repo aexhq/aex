@@ -17,6 +17,8 @@ pub struct Config {
     pub billing: Option<crate::billing::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environments: Option<crate::environments::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_environments: Option<crate::environments::http::Config>,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -87,6 +89,9 @@ impl Config {
             config.validate(self.limits.request_bytes)?;
         }
         if let Some(config) = &self.billing {
+            config.validate()?;
+        }
+        if let Some(config) = &self.http_environments {
             config.validate()?;
         }
         if let Some(config) = &self.environments {

@@ -1,5 +1,7 @@
 # Run tools in a managed environment
 
+For short functions in an existing application API, use [HTTP tools](http-tools.md).
+
 Use a managed environment when your tools need Python, dependencies or a temporary workspace
 on Aex. They can keep running after the request that submitted the work has ended.
 
@@ -8,7 +10,7 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.4.0` and `@aexhq/agentloop-codex@7.1.0` for the example below.
+Install `@aexhq/env-modal@0.4.1` and `@aexhq/agentloop-codex@7.1.1` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts

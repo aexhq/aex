@@ -8,7 +8,7 @@ Manage your Aex API keys, account and usage from the terminal. To run an agent, 
 Requires Node.js 22 or newer:
 
 ```sh
-npm install -g @aexhq/cli@0.47.0
+npm install -g @aexhq/cli@0.47.1
 aex login
 aex keys create "My application"
 ```

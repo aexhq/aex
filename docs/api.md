@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.80.0 (Brain SDK 0.30.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.81.0 (Brain SDK 0.31.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -107,3 +107,15 @@ This follows the external-browser and loopback pattern in RFC 8252 and S256 PKCE
 RFC 7636. The website handles identity-provider integration, not separate product APIs.
 
 Image and PDF uploads use the [attachment API](attachments.md). `models(provider?)` forwards Brain's catalogue unchanged, with models.dev metadata when known. Brain validates model selections; Aex has no separate model allowlist.
+
+## Application integration
+
+- `GET /v1/environments/http`: account-approved HTTP bindings and per-call limits.
+- `GET /v1/attachments/limits`: effective size, quota, retention and storage region.
+- `POST /v1/sessions/{id}/attachment-grants`: reserve an upload using an account credential and idempotency key.
+- `PUT /v1/attachments/{id}/upload`: send exact bytes with its upload-only bearer token.
+- `GET /v1/sessions/{session}/attachments/{id}`: authenticated metadata for a verified ready file.
+
+See [HTTP tools](http-tools.md) and [desktop uploads](attachments.md#upload-from-a-desktop-without-an-account-key).
+Errors carrying `details.admission: "rejected"` did not dispatch a turn and leave the original
+operation key retryable. Unknown outcomes remain unresolved; do not start them again with a new key.

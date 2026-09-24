@@ -32,6 +32,14 @@ export class Aex extends Brain {
   }
 
   readonly attachments = {
+    limits: (): Promise<import("./generated.js").AttachmentLimits> => this.request("GET", "/v1/attachments/limits"),
+    grant: (sessionId: string, input: import("./generated.js").UploadGrantInput, options: { idempotencyKey: string; downloadBudgetBytes?: number; maxCostMicroUsd?: number }): Promise<import("./generated.js").UploadGrant> => {
+      const headers = new Headers();
+      if (options.downloadBudgetBytes !== undefined) { nonnegativeInteger(options.downloadBudgetBytes, "downloadBudgetBytes"); headers.set("x-aex-download-budget-bytes", String(options.downloadBudgetBytes)); }
+      if (options.maxCostMicroUsd !== undefined) { nonnegativeInteger(options.maxCostMicroUsd, "maxCostMicroUsd"); headers.set("x-aex-max-cost-micro-usd", String(options.maxCostMicroUsd)); }
+      return this.request("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/attachment-grants`, input, options.idempotencyKey, "application/json", undefined, headers);
+    },
+    get: (sessionId: string, id: string): Promise<Attachment> => this.request("GET", `/v1/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(id)}`),
     upload: (sessionId: string, bytes: Uint8Array, options: { contentType: string; expiresAt?: number; idempotencyKey: string; downloadBudgetBytes?: number; maxCostMicroUsd?: number; signal?: AbortSignal }): Promise<Attachment> => {
       if (options.expiresAt !== undefined && (!Number.isSafeInteger(options.expiresAt) || options.expiresAt <= 0)) throw new TypeError("expiresAt must be positive Unix seconds");
       const headers: Record<string, string> = {};
@@ -67,6 +75,7 @@ export class Aex extends Brain {
   };
 
   readonly environments = {
+    http: (): Promise<import("./generated.js").HttpCatalog> => this.request("GET", "/v1/environments/http"),
     list: (): Promise<EnvironmentCatalog> => this.request("GET", "/v1/environments"),
   };
 

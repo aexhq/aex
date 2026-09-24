@@ -43,6 +43,13 @@ with tempfile.TemporaryDirectory() as directory:
                'import {createModalEnvironment} from "@aexhq/env-modal/server"; import {DatabaseSync} from "node:sqlite"; '
                'import {access} from "node:fs/promises"; await access("environments/modal.mjs"); '
                'const db = new DatabaseSync("/var/lib/aex-environment/smoke.sqlite"); db.exec("CREATE TABLE proof (id INTEGER)"); db.close();')
+        docker('run','--rm','--user','10004:10004','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
+               '--workdir','/opt/aex','--entrypoint','node','aex-rewrite:test','--input-type=module','-e',
+               'import {createHttpEnvironment,serveEnvironment} from "@aexhq/env-http/server"; '
+               'import {access} from "node:fs/promises"; await access("environments/http.mjs"); '
+               'const environment=createHttpEnvironment({authorize:()=>{throw new Error("denied")}}); '
+               'const server=await serveEnvironment(environment.handle,{token:"e".repeat(32)}); '
+               'try { if ((await fetch(server.url)).status!==401) throw new Error("unauthenticated HTTP bridge"); } finally { await server.close(); }')
         print('non-root runtime/controller images, separate writable paths and private operator smoke passed')
     finally:
         subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)

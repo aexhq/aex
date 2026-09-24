@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.80.0 @aexhq/agentloop-pi@7.1.0 zod@4
+npm install @aexhq/sdk@0.81.0 @aexhq/agentloop-pi@7.1.1 zod@4
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -85,3 +85,9 @@ bindings and the selected Environment's prepared runtime. `ctx.finish(value, { c
 retains the structured result while offering concise model text. `ctx.model({ messages })` runs an
 independent request within the invocation's lifetime and the session's model authority; hosted
 usage and spending controls include those requests. The Agentloop owns the shared conversation.
+
+Connect short application functions through an authenticated HTTP route with
+[HTTP tools](https://github.com/aexhq/aex/blob/main/docs/http-tools.md). Submit a turn, close the
+request and read its committed outcome later. Desktop apps can use
+[upload-only grants](https://github.com/aexhq/aex/blob/main/docs/attachments.md#upload-from-a-desktop-without-an-account-key)
+without receiving an account credential.
