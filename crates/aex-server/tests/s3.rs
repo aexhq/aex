@@ -19,6 +19,7 @@ async fn s3_preserves_immutable_objects_and_deletion_is_repeatable() {
         bytes_per_account: 1024,
         ttl_secs: 60,
         transfer_timeout_secs: 30,
+        upload_origins: Default::default(),
     })
     .unwrap();
     let key = format!(
