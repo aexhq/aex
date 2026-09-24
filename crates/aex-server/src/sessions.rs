@@ -45,6 +45,7 @@ pub async fn create(
         Claim::New(upstream) => upstream,
     };
     crate::environments::reserve_in(app, &mut tx, p, &upstream, &mut request, ceiling).await?;
+    crate::environments::http::reserve_in(app, &mut tx, p, &upstream, &mut request).await?;
     crate::model_usage::admit_in(&mut tx, &p.account).await?;
     tx.commit().await?;
     let forwarded = Bytes::from(serde_json::to_vec(&request)?);

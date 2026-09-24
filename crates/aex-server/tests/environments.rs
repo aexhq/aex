@@ -78,6 +78,118 @@ fn request() -> CreateSessionRequest {
         "model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],
         "environments":[{"name":"brain","driver":"brain"},{"name":"python","driver":"http","url":"https://api.aex.dev/environments/modal","configuration":{"profile":"python-v1","lifetimeMs":10000}}]})).unwrap()
 }
+
+#[tokio::test]
+async fn http_bindings_keep_their_contract_without_sandbox_money_or_lifetime() {
+    let (_dir, mut app, p) = app().await;
+    let definition = json!({"name":"read","description":"Read", "input_schema":{"type":"object"}});
+    let config: environments::http::Config = serde_json::from_value(json!({
+        "url":"http://127.0.0.1:8084", "public_url":"https://api.aex.dev/environments/http", "bindings":{
+            "app-v1":{"accounts":[p.account], "credential_env":"PATH", "specification":{
+                "url":"https://app.example/tools", "timeoutMs":25000, "tools":[definition]
+            }}
+        }
+    })).unwrap();
+    config.validate().unwrap();
+    environments::http::initialize(&app.store, &config)
+        .await
+        .unwrap();
+    Arc::make_mut(&mut app.config).http_environments = Some(config.clone());
+    let mut input = request();
+    input.environments[1].driver = brain_protocol::Driver::Http {
+        url: config.public_url.clone(),
+        credential: None,
+    };
+    input.environments[1].configuration = json!({"binding":"app-v1"});
+    let (_, binding) = environments::http::selection(&app, &p, &input.environments[1]).unwrap();
+    let tool: brain_protocol::Tool = serde_json::from_value(json!({"name":"read","description":"Read","input_schema":{"type":"object"},"placements":{"python":{"implementation":{"type":"http_tool","definition":{"name":"read","description":"Read","inputSchema":{"type":"object"}}}}}})).unwrap();
+    environments::http::validate_tool(binding, &tool, tool.placements.values().next().unwrap())
+        .unwrap();
+    let mut changed = tool.clone();
+    changed.input_schema = json!({"type":"string"});
+    assert!(
+        environments::http::validate_tool(
+            binding,
+            &changed,
+            changed.placements.values().next().unwrap()
+        )
+        .is_err()
+    );
+    let Claim::New(operation) = app
+        .store
+        .claim(&p, "create", "http", "http", &app.config.limits)
+        .await
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let mut tx = app.store.0.begin().await.unwrap();
+    environments::reserve_in(&app, &mut tx, &p, &operation, &mut input, None)
+        .await
+        .unwrap();
+    environments::http::reserve_in(&app, &mut tx, &p, &operation, &mut input)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        billing::wallet(&app, &p.account)
+            .await
+            .unwrap()
+            .reserved_micro_usd,
+        0
+    );
+    let setup = json!({"sessionId":"saved-session","environment":"python","configuration":input.environments[1].configuration});
+    let _ = environments::http::authorize(
+        State(app.clone()),
+        headers(),
+        Json(serde_json::from_value(setup.clone()).unwrap()),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO sessions(id,account,created) VALUES('saved-session',$1,$2)")
+        .bind(&p.account)
+        .bind(aex_server::store::now() - 86400)
+        .execute(&app.store.0)
+        .await
+        .unwrap();
+    let invocation = || {
+        serde_json::from_value(json!({"sessionId":"saved-session","environment":"python"})).unwrap()
+    };
+    let Json(resolved) =
+        environments::http::authorize(State(app.clone()), headers(), Json(invocation()))
+            .await
+            .unwrap();
+    assert_eq!(resolved["url"], "https://app.example/tools");
+    let mut changed = config.clone();
+    changed
+        .bindings
+        .get_mut("app-v1")
+        .unwrap()
+        .specification
+        .url = "https://other.example/tools".into();
+    assert!(
+        environments::http::initialize(&app.store, &changed)
+            .await
+            .is_err()
+    );
+    let mut wrong = setup;
+    wrong["sessionId"] = json!("another-session");
+    assert!(
+        environments::http::authorize(
+            State(app.clone()),
+            headers(),
+            Json(serde_json::from_value(wrong).unwrap())
+        )
+        .await
+        .is_err()
+    );
+    app.store.revoke_key(&p.key).await.unwrap();
+    assert!(
+        environments::http::authorize(State(app.clone()), headers(), Json(invocation()))
+            .await
+            .is_err()
+    );
+}
 async fn reserve(
     app: &App,
     p: &Principal,

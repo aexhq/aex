@@ -129,6 +129,43 @@ pub async fn send(
         status: status.as_u16(),
         body: serde_json::from_slice(&bytes).map_err(|_| Error::ambiguous())?,
     };
+    if (status.is_client_error() || status.is_server_error())
+        && reply
+            .body
+            .get("details")
+            .and_then(|d| d.get("admission"))
+            .and_then(|v| v.as_str())
+            == Some("rejected")
+    {
+        let mut tx = app.store.0.begin().await?;
+        Store::lock_account(&mut tx, &principal.account).await?;
+        let reserved: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE id=$1 AND state='open')",
+        )
+        .bind(&operation)
+        .fetch_one(&mut *tx)
+        .await?;
+        if reserved {
+            billing::meter_in(
+                &mut tx,
+                &UsageReport {
+                    id: format!("turn-rejected:{operation}"),
+                    reservation: operation.clone(),
+                    units: 0,
+                    terminal: true,
+                },
+            )
+            .await?;
+        }
+        sqlx::query("UPDATE sessions SET active_key=NULL,active_since=NULL,retained_bytes=greatest(0,retained_bytes-$1) WHERE id=$2 AND active_key=$3").bind(app.config.limits.turn_reserve_bytes as i64).bind(session).bind(&operation).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM session_turns WHERE operation=$1")
+            .bind(&operation)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE claims SET state='rejected',result=NULL WHERE upstream_key=$1 AND state='pending'").bind(&operation).execute(&mut *tx).await?;
+        tx.commit().await?;
+        return reply.response();
+    }
     sqlx::query(
         "UPDATE claims SET state='complete',result=$1 WHERE upstream_key=$2 AND state='pending'",
     )

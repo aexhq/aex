@@ -14,6 +14,31 @@ test("managed Environment discovery returns provider-owned configuration unchang
   assert.deepEqual(await client.environments.list(), catalog);
 });
 
+test("HTTP catalogs and scoped upload grants keep account authority on the backend", async () => {
+  const calls = [];
+  const client = new Aex({ apiKey: "backend-key", maxCostMicroUsd: 1000,
+    fetch: async (url, init) => { calls.push({ url, init }); return Response.json({}); } });
+  await client.environments.http();
+  await client.attachments.limits();
+  await client.attachments.grant("session/a", { content_type: "application/pdf", bytes: 20 * 1024 * 1024 },
+    { idempotencyKey: "upload-once", downloadBudgetBytes: 40 * 1024 * 1024, maxCostMicroUsd: 2000 });
+  await client.attachments.get("session/a", "attachment/b");
+  assert.deepEqual(calls.map(({ url }) => new URL(url).pathname), [
+    "/v1/environments/http", "/v1/attachments/limits", "/v1/sessions/session%2Fa/attachment-grants",
+    "/v1/sessions/session%2Fa/attachments/attachment%2Fb",
+  ]);
+  const grant = calls[2].init;
+  assert.equal(grant.method, "POST");
+  assert.deepEqual(JSON.parse(grant.body), { content_type: "application/pdf", bytes: 20971520 });
+  const headers = new Headers(grant.headers);
+  assert.equal(headers.get("authorization"), "Bearer backend-key");
+  assert.equal(headers.get("idempotency-key"), "upload-once");
+  assert.equal(headers.get("x-aex-max-cost-micro-usd"), "2000");
+  assert.equal(headers.get("x-aex-download-budget-bytes"), "41943040");
+  assert.throws(() => client.attachments.grant("s", { content_type: "application/pdf", bytes: 1 },
+    { idempotencyKey: "invalid", downloadBudgetBytes: -1 }), /safe integer/);
+});
+
 test("prepaid ceilings and download allowances are explicit headers and billing mutations carry stable keys", async () => {
   const calls=[];
   const client=new Aex({apiKey:"key",maxCostMicroUsd:1000,fetch:async (url,init)=>{calls.push({url,init}); return Response.json({});}});

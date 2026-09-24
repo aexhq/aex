@@ -54,6 +54,26 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "http-catalog",
+                    schemars::schema_for!(aex_server::environments::http::HttpCatalog),
+                ),
+                (
+                    "http-selection",
+                    schemars::schema_for!(aex_server::environments::http::HttpSelection),
+                ),
+                (
+                    "upload-grant-input",
+                    schemars::schema_for!(aex_server::attachments::grants::UploadGrantInput),
+                ),
+                (
+                    "upload-grant",
+                    schemars::schema_for!(aex_server::attachments::grants::UploadGrant),
+                ),
+                (
+                    "attachment-limits",
+                    schemars::schema_for!(aex_server::attachments::grants::AttachmentLimits),
+                ),
+                (
                     "environment-catalog",
                     schemars::schema_for!(aex_server::environments::Catalog),
                 ),

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HttpCatalog",
+  "type": "object",
+  "properties": {
+    "bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "driver_url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "driver_url",
+    "bindings"
+  ]
+}

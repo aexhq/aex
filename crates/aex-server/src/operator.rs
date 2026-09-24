@@ -74,6 +74,10 @@ pub fn router(app: App) -> Router {
             "/environments/authorize",
             post(crate::environments::authorize),
         )
+        .route(
+            "/environments/http/authorize",
+            post(crate::environments::http::authorize),
+        )
         .route("/environments/usage", post(crate::environments::report))
         .with_state(app)
 }

@@ -1,3 +1,4 @@
+pub mod grants;
 pub mod storage;
 
 use crate::{
@@ -36,6 +37,8 @@ pub struct Config {
     pub bytes_per_account: u64,
     pub ttl_secs: u64,
     pub transfer_timeout_secs: u64,
+    #[serde(default)]
+    pub upload_origins: std::collections::BTreeSet<String>,
 }
 
 impl Config {
@@ -51,6 +54,19 @@ impl Config {
                     && url.fragment().is_none()
                     && url.path() == "/",
                 "attachment URLs must be HTTPS origins without credentials"
+            );
+        }
+        for origin in &self.upload_origins {
+            let url = url::Url::parse(origin)?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https" | "tauri")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && matches!(url.path(), "" | "/"),
+                "upload CORS grants must be exact origins"
             );
         }
         anyhow::ensure!(
@@ -149,32 +165,29 @@ pub async fn upload(
         &app.config.limits,
     )
     .await?;
-    sqlx::query("SELECT id FROM sessions WHERE id=$1 AND account=$2 AND state='owned' FOR UPDATE")
-        .bind(session)
-        .bind(&principal.account)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(Error::missing)?;
+    let session_created: i64 = sqlx::query_scalar(
+        "SELECT created FROM sessions WHERE id=$1 AND account=$2 AND state='owned' FOR UPDATE",
+    )
+    .bind(session)
+    .bind(&principal.account)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(Error::missing)?;
     let operation = match claim {
         Claim::Complete(value) => {
             return Ok(Json(serde_json::from_value::<Attachment>(value)?).into_response());
         }
         Claim::New(operation) => operation,
     };
-    let expires_at = requested_expiry.unwrap_or(now() + config.ttl_secs as i64);
-    if expires_at <= now() || expires_at > now() + config.ttl_secs as i64 {
+    let latest = (now() + config.ttl_secs as i64)
+        .min(session_created + app.config.limits.retention_secs as i64);
+    let expires_at = requested_expiry.unwrap_or(latest);
+    if expires_at <= now() || expires_at > latest {
         return Err(Error::invalid(
             "attachment expiry is outside the configured lifetime",
         ));
     }
-    let usage = sqlx::query("SELECT count(*) AS count,coalesce(sum(bytes),0)::bigint AS bytes FROM attachments WHERE account=$1")
-        .bind(&principal.account).fetch_one(&mut *tx).await?;
-    if usage.get::<i64, _>("count") >= i64::from(config.count_per_account)
-        || (usage.get::<i64, _>("bytes") as u64).saturating_add(bytes.len() as u64)
-            > config.bytes_per_account
-    {
-        return Err(Error::capacity());
-    }
+    capacity(&mut tx, principal, config, bytes.len()).await?;
     let id = identity::random("att");
     let token = identity::random("read");
     let object_key = format!("attachments/{id}");
@@ -201,22 +214,7 @@ pub async fn upload(
         .await?;
     tx.commit().await?;
     storage.put_new(&object_key, content_type, bytes).await?;
-    let url = format!(
-        "{}/v1/attachments/{id}/content?token={token}",
-        config.public_origin.trim_end_matches('/')
-    );
-    let attachment = Attachment {
-        id: id.clone(),
-        expires_at,
-        media: if content_type == "application/pdf" {
-            Media::File {
-                media_type: FileMediaType::Pdf,
-                url,
-            }
-        } else {
-            Media::Image { url }
-        },
-    };
+    let attachment = media(config, &id, &token, content_type, expires_at);
     let mut tx = app.store.0.begin().await?;
     Store::lock_account(&mut tx, &principal.account).await?;
     let owned = sqlx::query("SELECT s.id FROM sessions s JOIN accounts a ON a.id=s.account WHERE s.id=$1 AND s.account=$2 AND s.state='owned' AND a.active=1 FOR UPDATE OF s")
@@ -232,10 +230,11 @@ pub async fn upload(
         ));
     }
     let updated = sqlx::query(
-        "UPDATE attachments SET state='ready',published_at=$2 WHERE id=$1 AND state='pending'",
+        "UPDATE attachments SET state='ready',published_at=$2,metadata=$3 WHERE id=$1 AND state='pending'",
     )
     .bind(&id)
     .bind(now())
+    .bind(serde_json::to_string(&attachment)?)
     .execute(&mut *tx)
     .await?;
     if updated.rows_affected() != 1 {
@@ -364,7 +363,7 @@ pub async fn maintain(app: &App) -> Result<Cleanup> {
         return Ok(Cleanup::default());
     };
     let drained = !app.accepting.load(Ordering::SeqCst);
-    let rows = sqlx::query("SELECT f.id,f.account,f.object_key,f.bytes,f.published_at FROM attachments f JOIN sessions s ON s.id=f.session WHERE f.state='deleting' OR f.expires_at<=$1 OR s.state!='owned' OR ($2 AND f.state='pending') ORDER BY f.expires_at,f.id LIMIT 100")
+    let rows = sqlx::query("SELECT f.id,f.account,f.object_key,f.bytes,f.published_at FROM attachments f JOIN sessions s ON s.id=f.session WHERE f.state='deleting' OR f.expires_at<=$1 OR s.state!='owned' OR (f.state='pending' AND ($2 OR EXISTS(SELECT 1 FROM attachment_upload_grants g WHERE g.attachment=f.id AND g.expires_at<=$1))) ORDER BY f.expires_at,f.id LIMIT 100")
         .bind(now()).bind(drained).fetch_all(&app.store.0).await?;
     let mut result = Cleanup::default();
     // Storage outages must not hold up the local-disk meter until its usage report is stale.
@@ -574,4 +573,46 @@ async fn record_download(app: &App, download: &str, bytes: i64) -> Result<()> {
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+async fn capacity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    principal: &Principal,
+    config: &Config,
+    bytes: usize,
+) -> Result<()> {
+    let usage = sqlx::query("SELECT count(*) AS count,coalesce(sum(bytes),0)::bigint AS bytes FROM attachments WHERE account=$1")
+        .bind(&principal.account).fetch_one(&mut **tx).await?;
+    if usage.get::<i64, _>("count") >= i64::from(config.count_per_account)
+        || (usage.get::<i64, _>("bytes") as u64).saturating_add(bytes as u64)
+            > config.bytes_per_account
+    {
+        return Err(Error::capacity());
+    }
+    Ok(())
+}
+
+fn media(
+    config: &Config,
+    id: &str,
+    token: &str,
+    content_type: &str,
+    expires_at: i64,
+) -> Attachment {
+    let url = format!(
+        "{}/v1/attachments/{id}/content?token={token}",
+        config.public_origin.trim_end_matches('/')
+    );
+    Attachment {
+        id: id.to_string(),
+        expires_at,
+        media: if content_type == "application/pdf" {
+            Media::File {
+                media_type: FileMediaType::Pdf,
+                url,
+            }
+        } else {
+            Media::Image { url }
+        },
+    }
 }

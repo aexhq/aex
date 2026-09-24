@@ -61,20 +61,26 @@ impl App {
         );
         std::fs::create_dir_all(&config.data_dir)?;
         let store = store::Store::open(&database_url).await?;
-        let environment_token = if let Some(environments) = &config.environments {
-            let token = std::env::var("AEX_ENVIRONMENT_TOKEN")?;
-            anyhow::ensure!(
-                token.len() >= 32
-                    && token != brain_token
-                    && token != operator_token
-                    && token != site_token,
-                "Environment credential must be distinct and contain at least 32 characters"
-            );
-            environments::initialize(&store, environments).await?;
-            Some(token)
-        } else {
-            None
-        };
+        let environment_token =
+            if config.environments.is_some() || config.http_environments.is_some() {
+                let token = std::env::var("AEX_ENVIRONMENT_TOKEN")?;
+                anyhow::ensure!(
+                    token.len() >= 32
+                        && token != brain_token
+                        && token != operator_token
+                        && token != site_token,
+                    "Environment credential must be distinct and contain at least 32 characters"
+                );
+                if let Some(environments) = &config.environments {
+                    environments::initialize(&store, environments).await?;
+                }
+                if let Some(http) = &config.http_environments {
+                    environments::http::initialize(&store, http).await?;
+                }
+                Some(token)
+            } else {
+                None
+            };
         if let Some(billing) = &config.billing {
             billing::initialize(&store, billing).await?;
         }

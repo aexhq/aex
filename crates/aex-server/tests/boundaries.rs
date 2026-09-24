@@ -66,6 +66,101 @@ fn summary(id: &str) -> brain_protocol::SessionSummary {
 }
 
 #[tokio::test]
+async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let (dir, mut app, p, _) = app().await;
+    sqlx::query(
+        "INSERT INTO sessions(id,account,created,active_key) VALUES('session',$1,$2,'busy')",
+    )
+    .bind(&p.account)
+    .bind(aex_server::store::now())
+    .execute(&app.store.0)
+    .await
+    .unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let calls = count.clone();
+    let upstream = Router::new()
+        .route("/v1/sessions/session", get(|| async { Json(summary("session")) }))
+        .route("/v1/sessions/session/messages", post(move || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                match n {
+                    0 => (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"code":"overloaded","message":"busy","retryable":true,"details":{"admission":"rejected"}}))),
+                    1 => (StatusCode::ACCEPTED, Json(serde_json::json!({"sequence":2}))),
+                    _ => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"code":"ambiguous","message":"lost response","retryable":false}))),
+                }
+            }
+        }));
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    Arc::make_mut(&mut app.config).brain_url = format!("http://{}", socket.local_addr().unwrap());
+    app.brain = aex_server::brain::Brain::new(&app.config, "b".repeat(32)).unwrap();
+    let server = tokio::spawn(async move { axum::serve(socket, upstream).await.unwrap() });
+    let headers = |key: &str| {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("prefer", "respond-async".parse().unwrap());
+        headers.insert("idempotency-key", key.parse().unwrap());
+        headers
+    };
+    let body = axum::body::Bytes::from_static(br#"{"input":{"message":"read"}}"#);
+    assert!(
+        aex_server::turns::send(&app, &p, "session", &headers("retry"), body.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    app.store.finish_turn("session").await.unwrap();
+    let rejected = aex_server::turns::send(&app, &p, "session", &headers("retry"), body.clone())
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT state FROM claims WHERE client_key='retry'")
+            .fetch_one(&app.store.0)
+            .await
+            .unwrap(),
+        "rejected"
+    );
+    app.store = Store::open(&common::database(dir.path()).await)
+        .await
+        .unwrap();
+    let changed = axum::body::Bytes::from_static(br#"{"input":{"message":"write"}}"#);
+    assert!(
+        aex_server::turns::send(&app, &p, "session", &headers("retry"), changed)
+            .await
+            .is_err()
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            aex_server::turns::send(&app, &p, "session", &headers("retry"), body.clone())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::ACCEPTED
+        );
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+    app.store.finish_turn("session").await.unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            aex_server::turns::send(&app, &p, "session", &headers("uncertain"), body.clone())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    server.abort();
+}
+
+#[tokio::test]
 async fn operation_claims_are_account_scoped_durable_and_never_resend_pending_work() {
     let (dir, app, p, _) = app().await;
     let a2 = execute(&app, Operation::CreateAccount).await.unwrap()["account"]

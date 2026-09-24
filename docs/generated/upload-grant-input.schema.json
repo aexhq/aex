@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UploadGrantInput",
+  "type": "object",
+  "properties": {
+    "bytes": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "content_type",
+    "bytes"
+  ]
+}

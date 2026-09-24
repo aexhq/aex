@@ -1,24 +1,10 @@
 import { createModalEnvironment, serveEnvironment } from "@aexhq/env-modal/server";
 import { setTimeout } from "node:timers/promises";
 
-const token = process.env.AEX_ENVIRONMENT_TOKEN;
-if (!token || token.length < 32) throw new Error("AEX_ENVIRONMENT_TOKEN requires at least 32 characters");
-const origin = new URL(process.env.AEX_OPERATOR_URL ?? "http://127.0.0.1:8082");
-if (origin.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(origin.hostname)
-  || origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/") {
-  throw new Error("AEX_OPERATOR_URL must be a literal loopback HTTP origin");
-}
+import { token, control } from "./control.mjs";
+
 const directory = process.env.AEX_ENVIRONMENT_DATA_DIR;
 if (!directory) throw new Error("AEX_ENVIRONMENT_DATA_DIR is required on retained disk");
-async function control(path, body) {
-  const response = await fetch(new URL(`/environments/${path}`, origin), {
-    method: body === undefined ? "GET" : "POST", redirect: "error", signal: AbortSignal.timeout(10_000),
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  if (!response.ok) throw new Error(`Environment ${path} rejected: HTTP ${response.status}`);
-  return response.json();
-}
 const config = await control("config");
 for (const { cpu, memoryMiB } of Object.values(config.profiles)) {
   if (cpu !== 1 || memoryMiB !== 1024) throw new Error("sandbox_ms currently prices 1 CPU and 1024 MiB");

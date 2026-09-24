@@ -24,7 +24,7 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.80.0 @aexhq/agentloop-pi@7.1.0 zod@4
+npm install @aexhq/sdk@0.81.0 @aexhq/agentloop-pi@7.1.1 zod@4
 ```
 
 ## 3. Create a session

@@ -24,6 +24,11 @@ pub enum Route<'a> {
     PaymentWebhook,
     Models,
     Environments,
+    HttpEnvironments,
+    AttachmentLimits,
+    AttachmentGrant(&'a str),
+    AttachmentPut(&'a str),
+    AttachmentMetadata(&'a str, &'a str),
     AttachmentUpload(&'a str),
     AttachmentDelete(&'a str, &'a str),
     AttachmentContent(&'a str),
@@ -53,7 +58,16 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
     match (method.as_str(), parts.as_slice()) {
         ("POST", ["", "v1", "webhooks", "stripe"]) => Ok(Route::PaymentWebhook),
         ("GET", ["", "v1", "models"]) => Ok(Route::Models),
+        ("GET", ["", "v1", "environments", "http"]) => Ok(Route::HttpEnvironments),
         ("GET", ["", "v1", "environments"]) => Ok(Route::Environments),
+        ("GET", ["", "v1", "attachments", "limits"]) => Ok(Route::AttachmentLimits),
+        ("POST", ["", "v1", "sessions", session, "attachment-grants"]) => {
+            Ok(Route::AttachmentGrant(session))
+        }
+        ("PUT", ["", "v1", "attachments", id, "upload"]) => Ok(Route::AttachmentPut(id)),
+        ("GET", ["", "v1", "sessions", session, "attachments", id]) => {
+            Ok(Route::AttachmentMetadata(session, id))
+        }
         ("POST", ["", "v1", "sessions", session, "attachments"]) => {
             Ok(Route::AttachmentUpload(session))
         }
@@ -95,14 +109,55 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
 }
 
 async fn handle(State(app): State<App>, request: Request) -> Response {
+    let upload_path = request
+        .uri()
+        .path()
+        .strip_prefix("/v1/attachments/")
+        .and_then(|p| p.strip_suffix("/upload"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'));
+    let origin = if upload_path {
+        request.headers().get("origin").cloned()
+    } else {
+        None
+    };
+    if let Some(origin) = &origin
+        && !origin.to_str().ok().is_some_and(|origin| {
+            app.config
+                .attachments
+                .as_ref()
+                .is_some_and(|c| c.upload_origins.contains(origin))
+        })
+    {
+        return Error::denied().into_response();
+    }
+    let preflight = upload_path && request.method() == Method::OPTIONS && origin.is_some();
     let request_id = identity::random("req");
     let span = tracing::info_span!("request", request_id, method = %request.method(), route = tracing::field::Empty, account = tracing::field::Empty, session = tracing::field::Empty);
     async move {
         let started = std::time::Instant::now();
-        let mut response = match dispatch(app, request).await {
-            Ok(response) => response,
-            Err(error) => error.into_response(),
+        let mut response = if preflight {
+            StatusCode::NO_CONTENT.into_response()
+        } else {
+            match dispatch(app, request).await {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            }
         };
+        if let Some(origin) = origin {
+            response
+                .headers_mut()
+                .insert("access-control-allow-origin", origin);
+            response
+                .headers_mut()
+                .insert("vary", "Origin".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("access-control-allow-methods", "PUT".parse().unwrap());
+            response.headers_mut().insert(
+                "access-control-allow-headers",
+                "authorization,content-type".parse().unwrap(),
+            );
+        }
         tracing::info!(
             status = response.status().as_u16(),
             header_ms = started.elapsed().as_secs_f64() * 1000.0,
@@ -134,8 +189,12 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             Route::Billing => "billing",
             Route::PaymentWebhook => "stripe_webhook",
             Route::Models => "models",
-            Route::Environments => "environments",
-            Route::AttachmentUpload(_)
+            Route::Environments | Route::HttpEnvironments => "environments",
+            Route::AttachmentLimits
+            | Route::AttachmentGrant(_)
+            | Route::AttachmentPut(_)
+            | Route::AttachmentMetadata(_, _)
+            | Route::AttachmentUpload(_)
             | Route::AttachmentDelete(_, _)
             | Route::AttachmentContent(_) => "attachments",
             Route::Health(_) => "health",
@@ -233,6 +292,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         return Ok(response);
     }
     let principal = match route {
+        Route::AttachmentPut(id) => crate::attachments::grants::principal(&app, id, token).await?,
         Route::Host(id, _) => app.store.host(id, token).await?,
         _ => app.store.principal(token).await?,
     };
@@ -262,8 +322,33 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let mut host_token = None;
     let mut stream_session = None;
     match route {
+        Route::HttpEnvironments => {
+            return Ok(
+                axum::Json(crate::environments::http::catalog(&app, &principal)?).into_response(),
+            );
+        }
         Route::Environments => {
             return Ok(axum::Json(crate::environments::catalog(&app, &principal)?).into_response());
+        }
+        Route::AttachmentLimits => {
+            return Ok(axum::Json(crate::attachments::grants::limits(&app)?).into_response());
+        }
+        Route::AttachmentGrant(session) => {
+            return crate::attachments::grants::create(
+                &app,
+                &principal,
+                session,
+                &parts.headers,
+                serde_json::from_slice(&body)?,
+            )
+            .await;
+        }
+        Route::AttachmentPut(id) => {
+            return crate::attachments::grants::receive(&app, &principal, id, &parts.headers, body)
+                .await;
+        }
+        Route::AttachmentMetadata(session, id) => {
+            return crate::attachments::grants::metadata(&app, &principal, session, id).await;
         }
         Route::AttachmentUpload(session) => {
             return crate::attachments::upload(&app, &principal, session, &parts.headers, body)
@@ -441,7 +526,9 @@ pub async fn finite(app: &App, response: reqwest::Response) -> Result<Response> 
         error.message =
             "Brain operation failed; inspect committed session events or contact the operator"
                 .into();
-        error.details = None;
+        error.details = error
+            .details
+            .filter(|details| details == &serde_json::json!({"admission":"rejected"}));
         return Ok((status, axum::Json(error)).into_response());
     }
     let mut response = Response::builder()

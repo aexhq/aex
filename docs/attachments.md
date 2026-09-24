@@ -25,6 +25,31 @@ when it is no longer needed. Expiry or deletion prevents future reads.
 Keep returned URLs private: anyone who has one can fetch the file until access expires or is
 revoked. Ending a session keeps its attachments; deleting it revokes them.
 
+## Upload from a desktop without an account key
+
+The trusted backend calls `aex.attachments.grant(sessionId, { content_type, bytes },
+{ idempotencyKey })` after authorizing the application's user. Prepaid accounts also supply
+`downloadBudgetBytes` and `maxCostMicroUsd`. Capacity is reserved before returning the grant.
+
+Send only that grant to the desktop. It PUTs the exact file bytes to `grant.upload_url` with
+`Authorization: Bearer <grant.token>` and the granted `Content-Type`. This bypasses the
+application API's file-size and request-time limits. The token authorizes one upload and
+cannot read files, submit turns or access account APIs. Repeating identical verified bytes is
+safe; a lost storage acknowledgement remains unresolved until cleanup, without another write.
+
+Aex checks actual size and file signature before committing readiness. The backend confirms
+completion with `aex.attachments.get(sessionId, grant.id)` and only then receives the media
+reference. A desktop's completion assertion never marks a file ready. Grants expire within
+ten minutes; failed or expired pending uploads keep their capacity until confirmed deletion.
+
+Call `aex.attachments.limits()` for deployed size, account quota, region, file TTL and session
+retention. File expiry cannot exceed the session's remaining retention. Read the actual grant
+and attachment expiry; defaults do not promise indefinite storage. Configure exact browser or
+WebView origins under `attachments.upload_origins`; upload authentication is still required.
+
+DeepSeek Responses cannot read PDF file inputs. Keep local OCR for the text sent to that model
+and retain the original separately. Successful storage does not make a file model-readable.
+
 ## Return media from a tool
 
 For Tool-result images, call `return context.finish({ type: "aex_tool_output", version: 1, content, media: [attachment.media] })`
