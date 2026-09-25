@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.82.0 (Brain SDK 0.32.1) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.83.0 (Brain SDK 0.33.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -40,7 +40,7 @@ model authority and shared call budget. These calls have independent messages an
 usage; they do not modify the conversation transcript. `ctx.finish(value, { content })` keeps
 the structured result in the journal while supplying optional model-facing text to the loop.
 
-Sessions explicitly select `environmentLifecycle`. Environment controls use Brain's public
+Sessions default to automatic lifecycle; override it with `environment.lifecycle`. Environment controls use Brain's public
 `session.environments` and scoped `ctx.environments` interfaces. Aex checks account ownership;
 Brain checks invocation lifetime, grants and instance references. Model-facing diagnostics are
 ordinary Tools, enabled separately from lifecycle policy. See [Environment control](environments.md#lifecycle-and-diagnostics).

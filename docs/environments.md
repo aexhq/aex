@@ -10,7 +10,7 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.5.0` and `@aexhq/agentloop-codex@7.2.0` for the example below.
+Install `@aexhq/env-modal@0.5.1` and `@aexhq/agentloop-codex@7.2.1` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
@@ -27,7 +27,7 @@ try {
     input: z.object({ value: z.number() }),
     implementation: { type: "modal_command", name: "calculate", configuration: { context: "application-owned" } },
   });
-  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
+  const session = await aex.sessions.create({
     agentloop: codex({ env: brainEnv({ name: "brain" }), output: { schema: { type: "object" }, maxCorrections: 2 } }),
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY! },
     tools: [calculate({ env: workspace })],
@@ -60,8 +60,8 @@ and scoped configuration. Brain's privileged invocation callback is not passed t
 
 ### Lifecycle and diagnostics
 
-Set `environmentLifecycle: { default: "automatic" }` on session creation to let Brain prepare
-and close Environments. Use per-binding `manual` policy when your application or a Tool should
+Brain prepares and closes Environments automatically by default. Set
+`environment: { lifecycle: { bindings: { workspace: "manual" } } }` when your application or a Tool should
 explicitly call `setup`. A call to an unprepared Environment returns its recorded state.
 The Agentloop's own Environment must be automatic so it can start.
 

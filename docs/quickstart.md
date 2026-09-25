@@ -24,7 +24,7 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.82.0 @aexhq/agentloop-pi@7.2.0 zod@4
+npm install @aexhq/sdk@0.83.0 @aexhq/agentloop-pi@7.2.1 zod@4
 ```
 
 ## 3. Create a session
@@ -45,7 +45,7 @@ const lookupOrder = tool({
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
-  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
+  const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
     tools: [lookupOrder()],
