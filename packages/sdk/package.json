@@ -28,7 +28,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "0.33.0",
+    "@aexhq/brain": "0.34.0",
     "zod": "4.4.3"
   },
   "scripts": {

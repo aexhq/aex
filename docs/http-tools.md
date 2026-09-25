@@ -33,8 +33,8 @@ An idle session is not a save receipt or evidence that a background report has c
 
 Configure structured answers on Pi or Codex using `output: { schema, maxCorrections }` so
 formatting corrections happen inside the hosted turn with tools unavailable. Client-side
-structured `send()` issues ordinary turns that can still invoke tools. See Brain's
-[structured-output guide](https://aex.dev/brain/docs/guides/structured-output).
+structured `send()` issues ordinary turns that can still invoke tools. See Aex's
+[structured-output guide](https://aex.dev/docs#structured-output).
 
 ## Lifetime and failures
 
