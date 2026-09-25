@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.83.0 @aexhq/agentloop-pi@7.2.1 zod@4
+npm install @aexhq/sdk@0.84.0 @aexhq/agentloop-pi@7.2.1 zod@4
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -56,12 +56,82 @@ The SDK uses Brain's session API and extension helpers. You can import `tool`, `
 
 - [Sessions](https://aex.dev/brain/docs/concepts/sessions): send, submit, stream, reconnect and stop.
 - [Tools](https://aex.dev/brain/docs/guides/write-a-tool): application functions and packaged tools.
-- [Structured output](https://aex.dev/brain/docs/guides/structured-output): validated JSON answers.
+- [Structured output](#structured-output): validated JSON answers.
 - [Managed environments](https://github.com/aexhq/aex/blob/main/docs/environments.md): hosted tools and workspaces.
 - [Attachments](https://github.com/aexhq/aex/blob/main/docs/attachments.md): upload images and PDFs.
 
 Use `ctx.finish(value)` to complete a tool. Use `aex.close()` in `finally` to close client
 connections. Closing the client keeps stored sessions; tools in your process still require it.
+
+## Structured output
+
+Ask for a typed application answer on one send. Before ending the session, pass a Zod
+schema alongside the message:
+
+```ts
+const answer = await session.send("Return the order status", {
+  output: { type: z.object({ id: z.string(), status: z.string() }), maxRetries: 2 },
+});
+console.log(answer.status);
+```
+
+Aex adds schema instructions to the prompt, reads that completed turn's assistant output,
+parses JSON and validates it locally. The result has the schema's inferred output type.
+Ordinary sends still return session state. The
+[executable example](../../examples/structured-output.mjs) shows a complete session;
+the [hosted guide](https://aex.dev/docs#structured-output) describes the same contract.
+
+`maxRetries` counts additional correction turns and defaults to two. Zero validates one
+candidate. Invalid JSON or Zod issues produce a follow-up asking for a complete corrected
+answer. Fences and surrounding prose fail parsing. Normal Zod semantics apply: ordinary
+objects strip unknown properties, strict objects reject them, and defaults, transforms and
+async refinements run locally. The prompt describes the input shape; the returned value is
+the parsed output. Unrepresentable schemas fail before sending, and custom-validator
+exceptions propagate without corrections.
+
+Exhaustion throws `StructuredOutputError` with `attempts`, `lastOutput` and `issues`.
+Provider, transport, failed-turn and unsupported-output errors do not trigger corrections.
+The loop must emit an Agentloop-origin `output_emitted` assistant message, as Pi and Codex do.
+Aex reads the last such message within the exact completed turn, including idempotent
+receipts from earlier history. It does not scrape internal model calls or infer refusals
+from arbitrary text. No provider response format is set or cleared; avoid conflicting
+session-level `responseFormat` settings.
+
+Each attempt is an ordinary durable turn and can invoke Tools. Asking the agent not to
+repeat actions is not enforcement. The caller must remain alive; rejected answers stay in
+history and streams, and local validation failure does not rewrite a completed server turn.
+Use exclusive ownership of sends during a typed operation. Overlapping send/submit calls
+on the same wrapper fail; other handles and processes need application coordination.
+An optional top-level `signal` cancels the active turn, aborts event reads and stops further
+corrections. Async validators finish before their result is checked for cancellation.
+
+The initial turn uses the supplied `idempotencyKey`; corrections use distinct derived keys.
+Re-entry reuses completed turns when prompts and validation feedback are identical. This
+is not an atomic server operation; nondeterministic validation can conflict on replay.
+
+For work submitted by a short-lived caller, configure the official Agentloop with
+`output: { schema: z.toJSONSchema(answerType), maxCorrections: 2 }` and use `submit()`.
+That separate extension policy validates inside the hosted turn and prohibits Tools during
+correction. It supports JSON Schema, not arbitrary local Zod refinements or transforms.
+
+### Migrating from Brain SDK typed sends
+
+Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
+owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
+Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
+
+An existing standalone Brain handle can use Aex's policy without changing servers:
+
+```ts
+import { AexSessionHandle } from "@aexhq/sdk";
+const session = new AexSessionHandle(await brain.sessions.get(sessionId));
+```
+
+`Aex` and `AexSessionHandle` use composition, so they are not instances of the upstream
+`Brain` and `SessionHandle` classes. Use `AexSessionHandle` for explicit product-handle
+annotations. Neutral Brain classes and extension helpers are still re-exported with their
+original identities; `withToken()` still returns a raw Brain client. Stored sessions,
+server contracts, native model formats and Tool schemas are unchanged.
 
 ## Account and usage
 

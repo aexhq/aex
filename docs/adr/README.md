@@ -13,6 +13,7 @@ does not mean its implementation is complete.
 | [005 — One node and explicit durability](005-storage.md) | Stores, recovery boundaries and scaling ceiling |
 | [006 — Evidence gates and release contracts](006-verification.md) | Performance, tests, compatibility and release |
 | [007 — Environment control and hosted resource authority](007-environment-control.md) | Lifecycle policy, ordinary Tools and paid instance admission |
+| [008 — Typed responses](008-typed-responses.md) | Product-owned prompting, validation and correction; SDK composition |
 
 These records define the current MVP. Future possibilities belong in the
 [roadmap](../../ROADMAP.md), with new ADRs written when those decisions become necessary.

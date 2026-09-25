@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Aex, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
+import { Aex, AexSessionHandle, Brain, agentloop, environment, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
@@ -54,7 +54,7 @@ test("prepaid ceilings and download allowances are explicit headers and billing 
   assert.throws(()=>client.attachments.upload("s",new Uint8Array([1]),{contentType:"image/png",idempotencyKey:"image",downloadBudgetBytes:-1}),/safe integer/);
 });
 
-test("inherited client close aborts an attachment upload and rejects later work", async () => {
+test("client close aborts an attachment upload and rejects later work", async () => {
   const entered = Promise.withResolvers();
   let requests = 0;
   const client = new Aex({ apiKey: "customer-key", fetch: async (_, { signal }) => {
@@ -70,7 +70,7 @@ test("inherited client close aborts an attachment upload and rejects later work"
   await assert.rejects(upload(), { name: "AbortError" });
   await assert.rejects(client.account.get(), { name: "AbortError" });
   assert.equal(requests, 1);
-  assert.equal(client.close, upstream.Brain.prototype.close);
+  assert.equal(client.close(), client.close());
 });
 
 test("attachment upload sends bytes and immutable expiry through Brain's transport", async () => {
@@ -95,22 +95,42 @@ test("attachment upload sends bytes and immutable expiry through Brain's transpo
   assert.equal(requests.at(-1).url, "https://api.aex.dev/v1/sessions/session/attachments/att_one");
 });
 
-test("Aex sessions inherit typed structured output from the pinned Brain SDK", async () => {
-  const client = new Aex({ apiKey: "customer-key", fetch: async (url, init) => {
+for (const method of ["create", "get"]) test(`Aex ${method} handles own typed corrections and preserve account headers`, async () => {
+  const records = [], messages = [];
+  const add = (event_type, data, origin) => records.push({ sequence: records.length + 1, recorded_at_ms: 1, event_type, data, ...(origin ? { origin } : {}) });
+  const client = new Aex({ apiKey: "customer-key", maxCostMicroUsd: 1000, fetch: async (url, init) => {
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer customer-key");
+    assert.equal(new Headers(init.headers).get("x-aex-max-cost-micro-usd"), "1000");
     if (url.endsWith("/messages")) {
-      assert.match(JSON.parse(init.body).input.message, /For this response only/);
-      return Response.json({ session_id: "s", status: "idle", last_sequence: 3 });
+      const { input } = JSON.parse(init.body);
+      messages.push(input.message);
+      add("turn_started", { input });
+      add("output_emitted", { type: "assistant_message", message: messages.length === 1 ? "not JSON" : '{"age":37}' }, { kind: "agentloop", sequence: records.length });
+      add("turn_ended", { result: null });
+      return Response.json({ session_id: "s", status: "idle", last_sequence: records.length });
     }
-    if (url.includes("/events?")) return Response.json({ events: [
-      { sequence: 1, recorded_at_ms: 1, event_type: "turn_started", data: {} },
-      { sequence: 2, recorded_at_ms: 1, event_type: "output_emitted", origin: { kind: "agentloop", sequence: 1 }, data: { type: "assistant_message", message: '{"age":37}' } },
-      { sequence: 3, recorded_at_ms: 1, event_type: "turn_ended", data: { result: null } },
-    ], next_cursor: 3 });
+    if (url.includes("/events?")) {
+      const after = Number(new URL(url).searchParams.get("after"));
+      const events = records.filter(event => event.sequence > after);
+      return Response.json({ events, next_cursor: events.at(-1)?.sequence ?? after });
+    }
     return Response.json({ session_id: "s", status: "idle", last_sequence: 0 });
   } });
-  const session = await client.sessions.get("s");
-  assert.ok(session instanceof upstream.SessionHandle);
+  const remote = environment({ url: () => "https://environment.example" });
+  const session = method === "get" ? await client.sessions.get("s") : await client.sessions.create({
+    model: { provider: "openai", name: "gpt-5", apiKey: "model-key" },
+    agentloop: agentloop({ implementation: { type: "test" } })({ env: remote({ name: "remote" }) }),
+  });
+  assert.ok(session instanceof AexSessionHandle);
+  assert.equal(session instanceof upstream.SessionHandle, false);
   assert.deepEqual(await session.send("Extract age", { output: { type: z.object({ age: z.number() }) } }), { age: 37 });
+  assert.match(messages[0], /Extract age[\s\S]*For this response only/);
+  assert.match(messages[1], /Validation feedback/);
+  assert.equal(session.state.lastSequence, 6);
+  assert.equal((await session.outcome(1)).status, "ended");
+  assert.equal((await session.send("Chat")).lastSequence, 9);
+  assert.equal(messages[2], "Chat");
+  await client.close();
 });
 
 test("Aex preserves Brain and its extension identities and uses the account API", async () => {
@@ -123,7 +143,7 @@ test("Aex preserves Brain and its extension identities and uses the account API"
     requests.push({url,init});
     return Response.json({id:"account"});
   }});
-  assert.ok(client instanceof upstream.Brain);
+  assert.equal(client instanceof upstream.Brain, false);
   assert.equal((await client.account.get()).id,"account");
   assert.equal(requests[0].url,"https://api.aex.dev/v1/account");
   assert.equal(new Headers(requests[0].init.headers).get("authorization"),"Bearer customer-key");

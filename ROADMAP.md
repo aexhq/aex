@@ -18,6 +18,8 @@ with admission criteria, not architecture decisions or delivery promises.
 
 Host Brain reliably for developers who want an agent runtime without operating it.
 Brain remains the source of session semantics; Aex owns the customer boundary around it.
+Aex also owns prompt-based typed answers, local validation and corrective turns through
+composed SDK handles, as specified in [ADR 008](docs/adr/008-typed-responses.md).
 
 The first customer journey is: register on the website, create an API key, install the thin
 Aex TypeScript SDK, define an Agentloop, model, Tools and Environments using Brain contracts,

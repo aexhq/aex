@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { Aex, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
+import { Aex, StructuredOutputError, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
 import { database } from "./database.mjs";
 import { pi } from "@aexhq/agentloop-pi";
 import { codex } from "@aexhq/agentloop-codex";
@@ -41,6 +41,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       assert.ok(structuredAnswers.length, "unexpected structured-output model call");
       assert.equal(body.text?.format, undefined);
       text = structuredAnswers.shift();
+      if (typeof text === "function") { text(); return; }
     } else if (JSON.stringify(body.input).includes("late hosted result")) {
       text = "observed background completion";
     } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
@@ -194,12 +195,38 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     await meter();
     const before = modelCalls;
     structuredAnswers = ["not JSON", '{"age":"wrong"}', '{"age":37}'];
-    assert.deepEqual(await structured.send("Extract Ada's age", { output: { type: z.object({ age: z.number() }) } }), { age: 37 });
+    const outputOptions = { output: { type: z.object({ age: z.number() }) }, idempotencyKey: "structured-once" };
+    assert.deepEqual(await structured.send("Extract Ada's age", outputOptions), { age: 37 });
     assert.equal(modelCalls - before, 3);
     assert.equal(structuredAnswers.length, 0);
+    assert.deepEqual(await structured.send("Extract Ada's age", outputOptions), { age: 37 });
+    assert.equal(modelCalls - before, 3, "replaying correction turns does not rerun inference");
+    structuredAnswers = ['["Ada"]'];
+    assert.deepEqual(await structured.send("List names", { output: { type: z.array(z.string()) } }), ["Ada"]);
     const reopened = await client.sessions.get(structured.id);
     const history = []; for await (const event of reopened.events()) history.push(event);
-    assert.equal(history.filter(e => e.type === "turn_ended").length, 3);
+    assert.equal(history.filter(e => e.type === "turn_ended").length, 4);
+    structuredAnswers = ["{}", "{}", "{}"];
+    await assert.rejects(reopened.send("Extract a name", { output: { type: z.object({ name: z.string() }) } }), error => {
+      assert.ok(error instanceof StructuredOutputError);
+      assert.equal(error.attempts, 3);
+      return true;
+    });
+    const exhausted = []; for await (const event of reopened.events()) exhausted.push(event);
+    assert.equal(exhausted.filter(e => e.type === "turn_ended").length, 7);
+    assert.equal(exhausted.filter(e => e.type === "turn_failed").length, 0, "local validation does not rewrite completed turns");
+
+    const correcting = Promise.withResolvers();
+    const controller = new AbortController();
+    const beforeCancellation = modelCalls;
+    structuredAnswers = ["not JSON", () => correcting.resolve()];
+    const pending = reopened.send("Extract one string", { output: { type: z.string() }, signal: controller.signal }).catch(error => error);
+    await Promise.race([correcting.promise, pending.then(error => { throw error; })]);
+    controller.abort();
+    assert.ok(await pending instanceof Error);
+    assert.equal(modelCalls - beforeCancellation, 2);
+    const cancelled = []; for await (const event of reopened.events()) cancelled.push(event);
+    assert.ok(cancelled.some(e => e.type === "turn_failed"));
     structuredAnswers = undefined;
     await structured.end(); await structured.delete();
 
@@ -223,6 +250,13 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(calls, 4);
     await outcomes.end(); await outcomes.delete();
   }
+  const unsupported = await client.sessions.create(options);
+  const beforeUnsupported = modelCalls;
+  structuredAnswers = ['"unused"'];
+  await assert.rejects(unsupported.send("Extract", { output: { type: z.string() } }), /requires a completed turn/);
+  assert.equal(modelCalls - beforeUnsupported, 1, "missing assistant output does not trigger corrections");
+  structuredAnswers = undefined;
+  await unsupported.end(); await unsupported.delete();
   await meter();
 
   const events=[];for await(const event of session.events())events.push(event);assert.ok(events.some(e=>e.type==="tool_call_ended"));
