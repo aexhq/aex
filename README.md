@@ -19,9 +19,11 @@ Aex hosts [Brain](https://github.com/aexhq/brain), the open-source server for AI
 Bring your model key, connect your tools, and send messages from your application.
 Aex keeps the conversation and progress available for you to read later.
 
-- Connect functions from your app as tools the agent can call.
-- Read saved conversations and follow live output.
-- Use Brain's loops and extensions with managed hosting, API keys and usage tracking.
+- Start with Brain's minimal core and compose the agent loop, tools and environments you need.
+- Keep conversation history and failure evidence when a tool's execution environment fails.
+- Choose where tools run, let Brain manage setup, and optionally give the model diagnostic tools.
+
+Aex adds hosting, account authorization and usage tracking around these public interfaces.
 
 > **Early preview.** APIs and limits may change. Maintenance can interrupt work;
 > interrupted actions are not automatically retried. You pay your model provider separately.
@@ -33,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.81.0 @aexhq/agentloop-pi@7.1.1 zod@4
+npm install @aexhq/sdk@0.82.0 @aexhq/agentloop-pi@7.2.0 zod@4
 ```
 
 Save this as `order.mjs`:
@@ -52,7 +54,7 @@ const lookupOrder = tool({
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
-  const session = await aex.sessions.create({
+  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
     tools: [lookupOrder()],
@@ -82,6 +84,7 @@ For shell setup and more detail, see the [quickstart](docs/quickstart.md).
 | Continue a session, stream output or stop work | [Sessions](https://aex.dev/brain/docs/concepts/sessions) |
 | Write a tool or customize the agent loop | [Brain guides](https://aex.dev/brain/docs/guides/write-a-tool) |
 | Submit work from a short-lived request | [Managed tools and submission](docs/environments.md) |
+| Choose setup policy and optional environment diagnostics | [Lifecycle and diagnostics](docs/environments.md#lifecycle-and-diagnostics) |
 | Send an image or PDF | [Attachments](docs/attachments.md) |
 | Get a typed JSON answer | [Structured output](https://aex.dev/brain/docs/guides/structured-output) |
 | Manage keys and inspect usage in a terminal | [CLI](packages/cli/README.md) |

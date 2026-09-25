@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.81.0 (Brain SDK 0.31.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.82.0 (Brain SDK 0.32.1) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -16,12 +16,14 @@ full revision in Cargo. Customer keys never authorize direct access to private B
 | DELETE | `/v1/sessions/{id}/attachments/{attachment}` | Ownership; revokes new reads |
 | GET, HEAD | `/v1/attachments/{id}/content?token=...` | Scoped read capability; active account, owned session and unexpired file |
 | POST | `/v1/sessions/{id}/messages`, `/cancel`, `/end` | Ownership and operation key |
+| POST | `/v1/sessions/{id}/environments` | Ownership and operation key; Brain's Environment control contract |
 | POST | `/v1/agentloops`, `/v1/tools` | Active key; bounded account-owned Wasm Components |
 | GET | `/v1/agentloops/{id}`, `/v1/tools/{id}` | Account-owned or operator-approved content address |
 | POST | `/v1/hosts` | Active account key |
 | GET | `/v1/hosts/{id}/commands` | Scoped token and active issuing key/account |
 | POST | `/v1/hosts/{id}/results`, `/events` | Scoped token and owned target session |
 | POST | `/v1/hosts/{id}/model` | Scoped token, owned session and available model budget |
+| POST | `/v1/hosts/{id}/call` | Scoped token and owned session; model calls also require available model budget |
 | GET | `/health/live`, `/health/ready` | No customer data |
 
 Other methods/routes fail closed. Customer-selected Environment endpoints, execution
@@ -37,6 +39,11 @@ Host Tools can call `ctx.model(request)` within their invocation lifetime, using
 model authority and shared call budget. These calls have independent messages and metered
 usage; they do not modify the conversation transcript. `ctx.finish(value, { content })` keeps
 the structured result in the journal while supplying optional model-facing text to the loop.
+
+Sessions explicitly select `environmentLifecycle`. Environment controls use Brain's public
+`session.environments` and scoped `ctx.environments` interfaces. Aex checks account ownership;
+Brain checks invocation lifetime, grants and instance references. Model-facing diagnostics are
+ordinary Tools, enabled separately from lifecycle policy. See [Environment control](environments.md#lifecycle-and-diagnostics).
 
 Host Tools may return Brain Outcomes directly. Structured failures retain code, message, retryable
 and details. Tool deadlines produce `timeout`, explicit cancellation produces `cancelled`, and a

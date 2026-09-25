@@ -10,7 +10,7 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.4.1` and `@aexhq/agentloop-codex@7.1.1` for the example below.
+Install `@aexhq/env-modal@0.5.0` and `@aexhq/agentloop-codex@7.2.0` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
@@ -27,7 +27,7 @@ try {
     input: z.object({ value: z.number() }),
     implementation: { type: "modal_command", name: "calculate", configuration: { context: "application-owned" } },
   });
-  const session = await aex.sessions.create({
+  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
     agentloop: codex({ env: brainEnv({ name: "brain" }), output: { schema: { type: "object" }, maxCorrections: 2 } }),
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY! },
     tools: [calculate({ env: workspace })],
@@ -57,6 +57,28 @@ model, Modal, Stripe and AWS credentials outside the sandbox. The command must v
 and scoped configuration. Brain's privileged invocation callback is not passed to the process.
 
 ## Lifetime and credits
+
+### Lifecycle and diagnostics
+
+Set `environmentLifecycle: { default: "automatic" }` on session creation to let Brain prepare
+and close Environments. Use per-binding `manual` policy when your application or a Tool should
+explicitly call `setup`. A call to an unprepared Environment returns its recorded state.
+The Agentloop's own Environment must be automatic so it can start.
+
+Lifecycle policy does not expose a Tool to the model. Include `env()` from `@aexhq/env` only
+when needed, with explicit Environment grants such as `read` and `call` for `inspect`. It uses
+the same `ctx.environments` interface as any Tool; Agentloops and Environments can use that
+interface under their own grants. The session owner can also use `session.environments`.
+`get` reads journal state, while `call(reference, "inspect", {})` invokes a method supplied
+by the chosen Environment. Brain has no universal inspect or restart method.
+
+Hosted profiles and HTTP bindings each authorize one declared resource. Aex therefore rejects
+dynamic templates and replacement methods for those bindings. Caller-operated Host Environments
+can authorize Brain templates within their own resource budget. Supporting additional hosted
+instances requires product admission and billing for each instance; a Brain grant alone does
+not authorize spending. See [ADR-007](adr/007-environment-control.md).
+
+### Resource charges
 
 First-version profiles use one physical core and 1 GiB of memory, with at most 300 seconds of
 lifetime from session admission. The request's cost ceiling covers all selected environments.

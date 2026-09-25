@@ -293,6 +293,7 @@ async fn every_session_route_denies_another_account_before_contacting_brain() {
         ("POST", "/messages"),
         ("POST", "/cancel"),
         ("POST", "/end"),
+        ("POST", "/environments"),
         ("DELETE", ""),
     ] {
         let response = aex_server::http::router(app.clone())
@@ -431,7 +432,7 @@ fn configuration_and_routes_fail_closed() {
 #[tokio::test]
 async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_ambient_grants() {
     let (_dir, app, p, _) = app().await;
-    let base = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","driver":"brain"}]});
+    let base = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
     for provider in ["openai", "deepseek", "customer-provider"] {
         let mut request = base.clone();
         request["model"]["provider"] = serde_json::json!(provider);
@@ -446,7 +447,19 @@ async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_
     for (pointer, value) in [
         (
             "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain","configuration":{"network":["http://169.254.169.254"]}}]),
+            serde_json::json!([{"name":"brain","driver":"brain","lifecycle":"automatic","template":{"max_instances":2,"configuration_schema":true}}]),
+        ),
+        (
+            "/environments",
+            serde_json::json!([{"name":"brain","driver":"brain","lifecycle":"automatic","methods":{"inspect":{"effect":"replace","description":"Inspect","input_schema":true}}}]),
+        ),
+        (
+            "/environments",
+            serde_json::json!([{"name":"brain","driver":"brain"}]),
+        ),
+        (
+            "/environments",
+            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"network":["http://169.254.169.254"]}}]),
         ),
         (
             "/agentloop/implementation/id",
@@ -454,19 +467,19 @@ async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_
         ),
         (
             "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),
+            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),
         ),
         (
             "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain","configuration":{"secrets":["AEX_OPERATOR_TOKEN"]}}]),
+            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"secrets":["AEX_OPERATOR_TOKEN"]}}]),
         ),
         (
             "/environments",
-            serde_json::json!([{"name":"brain","driver":"http","url":"http://169.254.169.254"}]),
+            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"http","url":"http://169.254.169.254"}]),
         ),
         (
             "/environments",
-            serde_json::json!([{"name":"brain","driver":"host","host_id":"host_another_account"}]),
+            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"host","host_id":"host_another_account"}]),
         ),
     ] {
         let mut value_request = base.clone();
