@@ -35,6 +35,21 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
     crate::artifacts::owned(app, p, "agentloops", descriptor["id"].as_str().unwrap()).await?;
     let mut names = std::collections::HashSet::new();
     for environment in &request.environments {
+        if environment.lifecycle.is_none() {
+            return Err(Error::invalid(
+                "each Environment requires an explicit lifecycle",
+            ));
+        }
+        if !matches!(environment.driver, Driver::Host { .. })
+            && (environment.template.is_some()
+                || environment.methods.values().any(|method| {
+                    method.effect == brain_protocol::EnvironmentMethodEffect::Replace
+                }))
+        {
+            return Err(Error::invalid(
+                "hosted Environment grants cover one declared resource; templates and replacement methods require caller-operated Environments",
+            ));
+        }
         if !names.insert(environment.name.as_str()) {
             return Err(Error::invalid("duplicate Environment"));
         }

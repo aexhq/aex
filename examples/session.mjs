@@ -8,7 +8,7 @@ for (const name of ["AEX_API_KEY", "MODEL_API_KEY", "AGENTLOOP_FILE"]) {
 const aex = new Aex({ ...(process.env.AEX_URL ? { baseUrl: process.env.AEX_URL } : {}), apiKey: process.env.AEX_API_KEY });
 const lookup = tool({ name: "lookup", description: "Look up an application value", input: z.object({ id: z.string() }), run: ({ id }, context) => context.finish({ id, value: "example" }) });
 try {
-  const session = await aex.sessions.create({
+  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
     agentloop: agentloop({ implementation: component(pathToFileURL(process.env.AGENTLOOP_FILE)) })({ env: brainEnv({ name: "brain" }) }),
     tools: [lookup({ env: hostEnv({ name: "app" }) })],

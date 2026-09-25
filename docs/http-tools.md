@@ -15,7 +15,9 @@ An operator approves a binding for your account with an HTTPS endpoint, fixed to
 credential reference and call timeout. Call `await aex.environments.http()` to discover your
 binding IDs, timeout limits and driver URL. Instantiate `http({ name: "app", url: catalog.driver_url,
 binding: "your-binding-id" })`, and place each declared tool using `httpTool(placedTool, { env })`.
-Pass those tools to the ordinary session create operation.
+Pass those tools and `environmentLifecycle: { default: "automatic" }` to the ordinary
+session create operation. See [lifecycle and diagnostics](environments.md#lifecycle-and-diagnostics)
+for manual setup and optional model access to Environment methods.
 
 Before submitting the first turn, save the mapping from the Aex session to the authenticated
 application user and company. The route's authorizer verifies the bridge credential and checks

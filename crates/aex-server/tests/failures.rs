@@ -67,7 +67,7 @@ async fn lost_upstream_create_response_does_not_create_a_second_resource() {
     .await
     .unwrap();
     app.accepting.store(true, Ordering::SeqCst);
-    let body = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","driver":"brain"}]});
+    let body = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
     for _ in 0..2 {
         let response = aex_server::http::router(app.clone())
             .oneshot(

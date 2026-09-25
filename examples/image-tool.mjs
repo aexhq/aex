@@ -20,7 +20,7 @@ const viewImage = tool({
   },
 });
 try {
-  const session = await aex.sessions.create({
+  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
     tools: [viewImage({ env: hostEnv({ name: "app" }) })],

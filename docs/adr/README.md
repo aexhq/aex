@@ -1,6 +1,6 @@
 # MVP architecture decision records
 
-All records below are **Accepted**, following owner approval on 2026-09-07. Owner requirements are identified
+ADRs 001–006 are **Accepted**, following owner approval on 2026-09-07. Later records carry their own decision dates. Owner requirements are identified
 separately from recommendations. Release requires the documented evidence; a decision's acceptance
 does not mean its implementation is complete.
 
@@ -12,7 +12,8 @@ does not mean its implementation is complete.
 | [004 — Restricted execution and customer model keys](004-execution.md) | MVP execution surface, capabilities and admission |
 | [005 — One node and explicit durability](005-storage.md) | Stores, recovery boundaries and scaling ceiling |
 | [006 — Evidence gates and release contracts](006-verification.md) | Performance, tests, compatibility and release |
+| [007 — Environment control and hosted resource authority](007-environment-control.md) | Lifecycle policy, ordinary Tools and paid instance admission |
 
-These records decide only the proposed MVP. Future possibilities belong in the
+These records define the current MVP. Future possibilities belong in the
 [roadmap](../../ROADMAP.md), with new ADRs written when those decisions become necessary.
 Cloud-account configuration, launch budgets and commercial policy are private Platform concerns.

@@ -51,7 +51,7 @@ They are separate scope changes; “official host” alone does not settle them.
 | Account-owned sessions and host registrations | Shared sessions, cross-account sharing |
 | Brain extension compatibility and customer-defined hosted Tools/Environments with verified isolation | A general shell sandbox fleet and custom images unless required by the selected launch Environment |
 | Supported provider catalogue and per-session customer keys | Aex-funded inference, pricing, credits, payments, refunds |
-| Brain lifecycle, transcript, committed Events and live SSE | A second event system, workflow retries, mutable placement |
+| Brain lifecycle, scoped Environment control, committed Events and live SSE | A second event system, automatic retries, widening placement authority |
 | Immutable session image/PDF attachments, HTTPS capability URLs and bounded S3 storage | Inline Brain media, multipart uploads, URL refresh and R2 deployment |
 | Bounded admission, storage and stream usage | Fair scheduling across arbitrary hostile workloads |
 | One serving node, PostgreSQL product state, persistent Brain disk, coordinated backup/restore and interruption semantics | Automatic failover, horizontal session placement, multi-region |

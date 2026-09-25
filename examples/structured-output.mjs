@@ -7,7 +7,7 @@ for (const name of ["AEX_API_KEY", "MODEL_API_KEY"]) {
 }
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
-  const session = await aex.sessions.create({
+  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
   });

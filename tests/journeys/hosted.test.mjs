@@ -108,17 +108,18 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(hosted.status, upstream.status);
     assert.equal(await hosted.text(), await upstream.text(), "Brain owns catalogue query validation");
   }
-  const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
+  const options={environmentLifecycle:{default:"automatic"},model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
   await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
-  const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:({id},context)=>{toolCalls++;return context.finish(`item-${id}`);}});
-  const session=await client.sessions.create({...options,tools:[lookup()]},{idempotencyKey:"shared-key"});
+  const environmentReads = [];
+  const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:async({id},context)=>{toolCalls++;environmentReads.push(await context.environments.list());return context.finish(`item-${id}`);}});
+  const session=await client.sessions.create({...options,tools:[lookup({ environments: [{ environment: "brain", permissions: ["read"], methods: [] }] })]},{idempotencyKey:"shared-key"});
 
   const otherSession=await other.sessions.create(options,{idempotencyKey:"shared-key"});
   const direct=await measure(`${brainUrl}/v1/sessions/${otherSession.id}`,internal);
   const hosted=await measure(`${baseUrl}/v1/sessions/${otherSession.id}`,b.token);
   t.diagnostic(JSON.stringify({operation:"warm_session_read",direct,hosted,added_p95_ms:hosted.p95_ms-direct.p95_ms}));
   assert.notEqual(session.id,otherSession.id);
-  for(const [method,suffix] of [["GET",""],["GET","/transcript"],["GET","/events"],["POST","/messages"],["POST","/cancel"],["POST","/end"],["DELETE",""]]){
+  for(const [method,suffix] of [["GET",""],["GET","/transcript"],["GET","/events"],["POST","/messages"],["POST","/cancel"],["POST","/end"],["POST","/environments"],["DELETE",""]]){
     const r=await raw(`/v1/sessions/${session.id}${suffix}`,b.token,{method,headers:{"idempotency-key":"x","content-type":"application/json"},...(method==="POST"?{body:'{"input":{"message":"x"}}'}:{})});assert.equal(r.status,404,`${method} ${suffix}`);
   }
   const foreignHost = await (await raw("/v1/hosts", b.token, { method: "POST" })).json();
@@ -127,12 +128,21 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     body: JSON.stringify({ session_id: session.id, sequence: 1, request: { messages: [] } }),
   });
   assert.equal(foreignModel.status, 404, "host model requests cannot cross account ownership");
+  for (const call of [{ method: "environments", input: { operation: "list" } }, { method: "model", input: { messages: [] } }]) {
+    const denied = await raw(`/v1/hosts/${foreignHost.host_id}/call`, foreignHost.token, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: session.id, sequence: 1, call }),
+    });
+    assert.equal(denied.status, 404, "generic host services preserve session ownership");
+  }
   assert.equal(modelCalls, 0, "denied host model requests never reach the provider");
   const listed=await (await raw("/v1/sessions",b.token)).json();assert.deepEqual(listed.sessions.map(s=>s.session_id),[otherSession.id]);
   assert.equal((await raw(`/v1/sessions/${session.id}/executions/1/call`,a.token,{method:"POST"})).status,404);
   assert.equal((await raw("/v1/tools",a.token,{method:"POST"})).status,400);
   assert.equal((await raw("/v1/agentloops",a.token,{method:"POST",body:"unapproved",headers:{"idempotency-key":"bad"}})).status,400);
   await session.send("look it up");assert.equal(toolCalls,1);assert.equal(modelCalls,2);
+  assert.deepEqual(environmentReads[0].map(view => view.reference.name), ["brain"]);
+  assert.ok((await session.environments.list()).some(view => view.reference.name === "brain" && view.state === "ready"));
   const hostedTool=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),implementation:component(pathToFileURL(process.env.BRAIN_TEST_TOOL))});
   const hostedSession=await client.sessions.create({...options,agentloop:pi({env:brainEnv({name:"brain"})}),tools:[hostedTool({env:brainEnv({name:"brain"})})]});
   await hostedSession.send("look it up on the server");
