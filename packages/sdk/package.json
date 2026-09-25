@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.83.0",
+  "version": "0.84.0",
   "description": "Aex accounts and hosted sessions using the Brain SDK",
   "license": "MIT",
   "type": "module",
@@ -28,12 +28,13 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "0.33.0"
+    "@aexhq/brain": "0.34.0",
+    "zod": "4.4.3"
   },
   "scripts": {
     "gen": "node ../../tools/sdk-contracts.mjs",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && tsc -p test/types/tsconfig.json && node --test test/*.test.mjs",
     "prepack": "npm run build"
   }
 }

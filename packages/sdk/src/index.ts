@@ -1,6 +1,10 @@
 export * from "@aexhq/brain";
 export type * from "./generated.js";
+export { AexSessionHandle } from "./session.js";
+export { StructuredOutputError } from "./structured-output.js";
+export type { StructuredSendOptions } from "./structured-output.js";
 import { Brain, type BrainOptions } from "@aexhq/brain";
+import { AexSessionHandle } from "./session.js";
 import type { EnvironmentCatalog, TokenUsage } from "./generated.js";
 import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
 
@@ -11,11 +15,10 @@ function nonnegativeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a nonnegative safe integer`);
 }
 
-export class Aex extends Brain {
+class HostedBrain extends Brain {
   private readonly maxCostMicroUsd?: number;
-  constructor({ apiKey, accountToken, maxCostMicroUsd, ...options }: AexOptions) {
-    if (!(apiKey || accountToken) || (apiKey && accountToken)) throw new TypeError("one apiKey or accountToken is required");
-    super({ baseUrl: "https://api.aex.dev", ...options, token: apiKey ?? accountToken });
+  constructor({ maxCostMicroUsd, ...options }: BrainOptions & { maxCostMicroUsd?: number }) {
+    super(options);
     if (maxCostMicroUsd !== undefined) nonnegativeInteger(maxCostMicroUsd, "maxCostMicroUsd");
     this.maxCostMicroUsd = maxCostMicroUsd;
   }
@@ -26,6 +29,35 @@ export class Aex extends Brain {
     if (this.maxCostMicroUsd !== undefined && !headers.has("x-aex-max-cost-micro-usd")) headers.set("x-aex-max-cost-micro-usd", String(this.maxCostMicroUsd));
     return super.request(method, path, body, idempotencyKey, contentType, signal, headers);
   }
+}
+
+export class Aex {
+  private readonly client: Brain;
+
+  constructor({ apiKey, accountToken, maxCostMicroUsd, ...options }: AexOptions) {
+    if (!(apiKey || accountToken) || (apiKey && accountToken)) throw new TypeError("one apiKey or accountToken is required");
+    this.client = new HostedBrain({ baseUrl: "https://api.aex.dev", ...options, token: apiKey ?? accountToken, maxCostMicroUsd });
+  }
+
+  get baseUrl(): string { return this.client.baseUrl; }
+
+  readonly sessions = Object.freeze({
+    create: async (...args: Parameters<Brain["sessions"]["create"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.create(...args)),
+    get: async (...args: Parameters<Brain["sessions"]["get"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.get(...args)),
+    list: (): ReturnType<Brain["sessions"]["list"]> => this.client.sessions.list(),
+  });
+
+  request<T>(...args: Parameters<Brain["request"]>): Promise<T> { return this.client.request<T>(...args); }
+  withToken(...args: Parameters<Brain["withToken"]>): ReturnType<Brain["withToken"]> { return this.client.withToken(...args); }
+  close(): ReturnType<Brain["close"]> { return this.client.close(); }
+  models(...args: Parameters<Brain["models"]>): ReturnType<Brain["models"]> { return this.client.models(...args); }
+  stream(...args: Parameters<Brain["stream"]>): ReturnType<Brain["stream"]> { return this.client.stream(...args); }
+  streamPath(...args: Parameters<Brain["streamPath"]>): ReturnType<Brain["streamPath"]> { return this.client.streamPath(...args); }
+  admit(...args: Parameters<Brain["admit"]>): ReturnType<Brain["admit"]> { return this.client.admit(...args); }
+  admitAgentloop(...args: Parameters<Brain["admitAgentloop"]>): ReturnType<Brain["admitAgentloop"]> { return this.client.admitAgentloop(...args); }
+  admitTool(...args: Parameters<Brain["admitTool"]>): ReturnType<Brain["admitTool"]> { return this.client.admitTool(...args); }
+  register(): ReturnType<Brain["register"]> { return this.client.register(); }
+  credentials(): ReturnType<Brain["credentials"]> { return this.client.credentials(); }
 
   static exchangeLogin(input: LoginExchange, options: AexConnection = {}): Promise<AccountSession> {
     return new Brain({ baseUrl: "https://api.aex.dev", ...options }).request("POST", "/v1/auth/exchange", input);

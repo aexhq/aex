@@ -35,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.83.0 @aexhq/agentloop-pi@7.2.1 zod@4
+npm install @aexhq/sdk@0.84.0 @aexhq/agentloop-pi@7.2.1 zod@4
 ```
 
 Save this as `order.mjs`:
@@ -86,7 +86,7 @@ For shell setup and more detail, see the [quickstart](docs/quickstart.md).
 | Submit work from a short-lived request | [Managed tools and submission](docs/environments.md) |
 | Choose setup policy and optional environment diagnostics | [Lifecycle and diagnostics](docs/environments.md#lifecycle-and-diagnostics) |
 | Send an image or PDF | [Attachments](docs/attachments.md) |
-| Get a typed JSON answer | [Structured output](https://aex.dev/brain/docs/guides/structured-output) |
+| Get a typed JSON answer | [Structured output](https://aex.dev/docs#structured-output) |
 | Manage keys and inspect usage in a terminal | [CLI](packages/cli/README.md) |
 | Check prices, credits and spending | [Billing](docs/billing.md) |
 

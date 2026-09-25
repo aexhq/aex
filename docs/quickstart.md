@@ -24,7 +24,7 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.83.0 @aexhq/agentloop-pi@7.2.1 zod@4
+npm install @aexhq/sdk@0.84.0 @aexhq/agentloop-pi@7.2.1 zod@4
 ```
 
 ## 3. Create a session
@@ -95,7 +95,7 @@ See [managed environments](environments.md) for available profiles and lifecycle
   `@aexhq/sdk` when using Aex; their contracts are the same as Brain's.
 - [Choose a model](https://aex.dev/brain/docs/concepts/model) with your provider's key.
 - [Send images and PDFs](attachments.md).
-- [Get structured output](https://aex.dev/brain/docs/guides/structured-output).
+- [Get structured output](https://aex.dev/docs#structured-output).
 - [Inspect credits and usage](billing.md), or use the [CLI](../packages/cli/README.md).
 
 Aex is in early preview. Maintenance can interrupt work; saved history remains available,

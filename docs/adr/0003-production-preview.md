@@ -4,6 +4,9 @@ Accepted 7 September 2026. Supersedes the initial invite-only, SQLite and curate
 MVP scope where they conflict. Earlier ADRs remain the rationale for ownership,
 fail-closed admission and unchanged Brain semantics.
 
+The SDK inheritance choice below is amended by [ADR-008](008-typed-responses.md):
+Aex composes Brain to own typed-response policy while reusing its neutral operations.
+
 The website runs on Vercel and verifies Google identities. Dashboard navigation is
 exactly API keys, Docs, and Account / Billing / Usage. Accounts are self-service up to
 the configured preview capacity. Dashboard credentials cannot be confused with workload

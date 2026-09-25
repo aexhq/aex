@@ -7,6 +7,8 @@
 - Aex is the official hosted composition of Brain. Consume Brain's neutral contracts and
   runtime from immutable releases; never copy its session engine, journal, SDK transport,
   model adapters, or Environment protocol.
+- Aex owns prompt-based typed responses, answer validation and corrective turns. Compose
+  Brain clients and session handles; SDK convenience does not move product policy upstream.
 - This repository must be independently buildable and suitable for public release. Private
   deployment configuration, credentials, customer records, and commercial policy belong in
   Platform. There is no build or test dependency on that private repository.
