@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.82.0",
+  "version": "0.83.0",
   "description": "Aex accounts and hosted sessions using the Brain SDK",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "0.32.1"
+    "@aexhq/brain": "0.33.0"
   },
   "scripts": {
     "gen": "node ../../tools/sdk-contracts.mjs",

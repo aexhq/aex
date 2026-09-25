@@ -35,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.82.0 @aexhq/agentloop-pi@7.2.0 zod@4
+npm install @aexhq/sdk@0.83.0 @aexhq/agentloop-pi@7.2.1 zod@4
 ```
 
 Save this as `order.mjs`:
@@ -54,7 +54,7 @@ const lookupOrder = tool({
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
-  const session = await aex.sessions.create({ environmentLifecycle: { default: "automatic" },
+  const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
     agentloop: pi({ env: brainEnv({ name: "brain" }) }),
     tools: [lookupOrder()],

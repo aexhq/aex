@@ -108,7 +108,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(hosted.status, upstream.status);
     assert.equal(await hosted.text(), await upstream.text(), "Brain owns catalogue query validation");
   }
-  const options={environmentLifecycle:{default:"automatic"},model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
+  const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
   await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
   const environmentReads = [];
   const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:async({id},context)=>{toolCalls++;environmentReads.push(await context.environments.list());return context.finish(`item-${id}`);}});

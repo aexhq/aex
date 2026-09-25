@@ -12,9 +12,9 @@
     "test:cli": "npm run build && npm test --workspace @aexhq/cli"
   },
   "devDependencies": {
-    "@aexhq/agentloop-codex": "7.2.0",
-    "@aexhq/agentloop-pi": "7.2.0",
-    "@aexhq/brain": "0.32.1",
+    "@aexhq/agentloop-codex": "7.2.1",
+    "@aexhq/agentloop-pi": "7.2.1",
+    "@aexhq/brain": "0.33.0",
     "@types/node": "22.19.19",
     "json-schema-to-typescript": "15.0.4",
     "pg": "8.16.3",
@@ -26,7 +26,7 @@
     "packages/cli"
   ],
   "dependencies": {
-    "@aexhq/env-modal": "0.5.0",
-    "@aexhq/env-http": "0.2.0"
+    "@aexhq/env-modal": "0.5.1",
+    "@aexhq/env-http": "0.2.1"
   }
 }
