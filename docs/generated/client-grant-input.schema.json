@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClientGrantInput",
+  "type": "object",
+  "properties": {
+    "expires_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "origin": {
+      "type": "string"
+    },
+    "session": {
+      "description": "The prepared Brain request. Credentials remain on the server."
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "origin",
+    "expires_at",
+    "session"
+  ]
+}

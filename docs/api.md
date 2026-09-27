@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.84.1 (Brain SDK 0.34.1) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.85.0 (Brain SDK 0.35.1) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |

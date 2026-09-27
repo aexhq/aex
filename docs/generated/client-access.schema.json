@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClientAccess",
+  "type": "object",
+  "properties": {
+    "credentials": {
+      "$ref": "#/$defs/ClientHost"
+    },
+    "expires_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "id": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "token",
+    "expires_at",
+    "credentials"
+  ],
+  "$defs": {
+    "ClientHost": {
+      "type": "object",
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hostId",
+        "token"
+      ]
+    }
+  }
+}

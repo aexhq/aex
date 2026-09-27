@@ -1,3 +1,4 @@
+pub mod application;
 pub mod http;
 
 use crate::{
@@ -207,7 +208,11 @@ pub async fn reserve_in(
         .environments
         .iter()
         .enumerate()
-        .filter(|(_, e)| matches!(e.driver, Driver::Http { .. }) && !http::selected(app, e))
+        .filter(|(_, e)| {
+            matches!(e.driver, Driver::Http { .. })
+                && !http::selected(app, e)
+                && !application::selected(app, e)
+        })
         .map(|(index, e)| Ok((index, selection(app, principal, e)?)))
         .collect::<Result<_>>()?;
     if selected.is_empty() {

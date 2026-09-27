@@ -4,6 +4,7 @@ pub mod artifacts;
 pub mod attachments;
 pub mod billing;
 pub mod brain;
+pub mod clients;
 pub mod config;
 pub mod environments;
 pub mod error;
@@ -33,6 +34,9 @@ pub struct App {
     pub brain: brain::Brain,
     pub changed: watch::Sender<u64>,
     pub requests: Arc<Semaphore>,
+    pub completions: Arc<Semaphore>,
+    pub pending_clients: Arc<Mutex<HashMap<String, clients::Pending>>>,
+    pub application_client: reqwest::Client,
     pub account_requests: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub streams: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub host_registration: Arc<Mutex<()>>,
@@ -102,6 +106,14 @@ impl App {
             operator_lock: Arc::default(),
             accepting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             requests: Arc::new(Semaphore::new(config.limits.requests)),
+            pending_clients: Arc::default(),
+            completions: Arc::new(Semaphore::new(config.limits.requests)),
+            application_client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(
+                    config.limits.upstream_timeout_secs,
+                ))
+                .build()?,
             account_requests: Arc::default(),
             config: Arc::new(config),
             store,

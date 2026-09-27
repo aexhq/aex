@@ -1,5 +1,7 @@
 # ADR-004: Limit MVP execution to curated Components and customer application Tools
 
+Declared Application endpoints and browser delegation now follow [ADR-009](009-application-composition.md).
+
 Status: Accepted. Date: 2026-09-07. Product scope accepted; deployment evidence remains required.
 
 ## Context

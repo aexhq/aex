@@ -25,6 +25,9 @@ pub enum Route<'a> {
     Models,
     Environments,
     HttpEnvironments,
+    ApplicationCallback,
+    Clients,
+    ClientRevoke(&'a str),
     AttachmentLimits,
     AttachmentGrant(&'a str),
     AttachmentPut(&'a str),
@@ -56,8 +59,13 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
         return Ok(Route::Billing);
     }
     match (method.as_str(), parts.as_slice()) {
+        ("POST", ["", "v1", "clients"]) => Ok(Route::Clients),
+        ("DELETE", ["", "v1", "clients", id]) => Ok(Route::ClientRevoke(id)),
         ("POST", ["", "v1", "webhooks", "stripe"]) => Ok(Route::PaymentWebhook),
         ("GET", ["", "v1", "models"]) => Ok(Route::Models),
+        ("POST", ["", "v1", "environments", "application", "callback"]) => {
+            Ok(Route::ApplicationCallback)
+        }
         ("GET", ["", "v1", "environments", "http"]) => Ok(Route::HttpEnvironments),
         ("GET", ["", "v1", "environments"]) => Ok(Route::Environments),
         ("GET", ["", "v1", "attachments", "limits"]) => Ok(Route::AttachmentLimits),
@@ -122,12 +130,9 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         .strip_prefix("/v1/attachments/")
         .and_then(|p| p.strip_suffix("/upload"))
         .is_some_and(|id| !id.is_empty() && !id.contains('/'));
-    let origin = if upload_path {
-        request.headers().get("origin").cloned()
-    } else {
-        None
-    };
-    if let Some(origin) = &origin
+    let origin = request.headers().get("origin").cloned();
+    if upload_path
+        && let Some(origin) = &origin
         && !origin.to_str().ok().is_some_and(|origin| {
             app.config
                 .attachments
@@ -137,7 +142,23 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
     {
         return Error::denied().into_response();
     }
-    let preflight = upload_path && request.method() == Method::OPTIONS && origin.is_some();
+    let preflight = request.method() == Method::OPTIONS
+        && origin.is_some()
+        && (upload_path
+            || request
+                .headers()
+                .get("access-control-request-method")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|m| Method::from_bytes(m.as_bytes()).ok())
+                .is_some_and(|m| {
+                    matches!(
+                        route(&m, request.uri().path()),
+                        Ok(Route::Create
+                            | Route::Artifact(_, _)
+                            | Route::Host(_, _)
+                            | Route::Session(_, _))
+                    )
+                }));
     let request_id = identity::random("req");
     let span = tracing::info_span!("request", request_id, method = %request.method(), route = tracing::field::Empty, account = tracing::field::Empty, session = tracing::field::Empty);
     async move {
@@ -157,12 +178,21 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
             response
                 .headers_mut()
                 .insert("vary", "Origin".parse().unwrap());
-            response
-                .headers_mut()
-                .insert("access-control-allow-methods", "PUT".parse().unwrap());
+            response.headers_mut().insert(
+                "access-control-allow-methods",
+                if upload_path {
+                    "PUT"
+                } else {
+                    "GET,POST,DELETE"
+                }
+                .parse()
+                .unwrap(),
+            );
             response.headers_mut().insert(
                 "access-control-allow-headers",
-                "authorization,content-type".parse().unwrap(),
+                "authorization,content-type,idempotency-key,prefer"
+                    .parse()
+                    .unwrap(),
             );
         }
         tracing::info!(
@@ -184,6 +214,21 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let (parts, body) = request.into_parts();
     let path = parts.uri.path();
     let route = route(&parts.method, path)?;
+    if matches!(route, Route::ApplicationCallback) {
+        // Tool sends can hold every normal permit while waiting for this completion.
+        let _permit = crate::admission::request(app.completions.clone(), false)?;
+        if parts.uri.query().is_some() {
+            return Err(Error::invalid("unsupported query parameters"));
+        }
+        let body = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            to_bytes(body, app.config.limits.request_bytes),
+        )
+        .await
+        .map_err(|_| Error::invalid("request body timed out"))?
+        .map_err(|_| Error::invalid("request body exceeds limit"))?;
+        return crate::environments::application::callback(&app, &parts.headers, body).await;
+    }
     let reserve_download = app.config.attachments.is_some();
     let _permit = crate::admission::request(
         app.requests.clone(),
@@ -193,10 +238,13 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         "route",
         match route {
             Route::Account => "account",
+            Route::Clients | Route::ClientRevoke(_) => "clients",
             Route::Billing => "billing",
             Route::PaymentWebhook => "stripe_webhook",
             Route::Models => "models",
-            Route::Environments | Route::HttpEnvironments => "environments",
+            Route::Environments | Route::HttpEnvironments | Route::ApplicationCallback => {
+                "environments"
+            }
             Route::AttachmentLimits
             | Route::AttachmentGrant(_)
             | Route::AttachmentPut(_)
@@ -298,7 +346,26 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             .insert("cache-control", "no-store".parse().unwrap());
         return Ok(response);
     }
+    let client_access = if let Route::Host(id, _) = route {
+        crate::clients::access(&app, None, Some(id), &parts.headers).await?
+    } else if token.starts_with("client_") {
+        crate::clients::access(&app, Some(token), None, &parts.headers).await?
+    } else {
+        None
+    };
+    if let Some(access) = &client_access {
+        access.authorize(&route)?;
+    }
+    if parts.headers.contains_key("origin")
+        && client_access.is_none()
+        && !matches!(route, Route::AttachmentPut(_))
+    {
+        return Err(Error::denied());
+    }
     let principal = match route {
+        _ if client_access.is_some() && !matches!(route, Route::Host(_, _)) => {
+            client_access.as_ref().unwrap().principal.clone()
+        }
         Route::AttachmentPut(id) => crate::attachments::grants::principal(&app, id, token).await?,
         Route::Host(id, _) => app.store.host(id, token).await?,
         _ => app.store.principal(token).await?,
@@ -329,6 +396,16 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
     let mut host_token = None;
     let mut stream_session = None;
     match route {
+        Route::Clients => {
+            return crate::clients::grant(
+                &app,
+                &principal,
+                &parts.headers,
+                serde_json::from_slice(&body)?,
+            )
+            .await;
+        }
+        Route::ClientRevoke(id) => return crate::clients::revoke(&app, &principal, id).await,
         Route::HttpEnvironments => {
             return Ok(
                 axum::Json(crate::environments::http::catalog(&app, &principal)?).into_response(),
@@ -380,6 +457,9 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             return finite(&app, response).await;
         }
         Route::Create => {
+            if let Some(access) = &client_access {
+                return crate::clients::create(&app, access, &parts.headers, body).await;
+            }
             return sessions::create(
                 &app,
                 &principal,
@@ -392,10 +472,23 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         Route::List => return sessions::list(&app, &principal).await,
         Route::Register => return hosts::register(&app, &principal, &parts.headers).await,
         Route::Artifact(kind, id) => {
+            if let Some(access) = &client_access {
+                access.artifact(kind, id.unwrap_or(&identity::digest(&body)))?;
+            }
             return crate::artifacts::handle(&app, &principal, kind, id, &parts.headers, body)
                 .await;
         }
         Route::Host(_, op) => {
+            if op != "commands"
+                && let Some(access) = &client_access
+            {
+                let input: serde_json::Value = serde_json::from_slice(&body)?;
+                if input.get("session_id").and_then(|v| v.as_str()) != access.session.as_deref()
+                    || access.session.is_none()
+                {
+                    return Err(Error::denied());
+                }
+            }
             host_token = Some(token);
             if op == "results" {
                 let result: brain_protocol::HostResult = serde_json::from_slice(&body)?;
@@ -450,7 +543,11 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 upstream_key = Some(key);
             }
         }
-        Route::Health(_) | Route::Account | Route::Billing | Route::PaymentWebhook => {
+        Route::Health(_)
+        | Route::Account
+        | Route::Billing
+        | Route::PaymentWebhook
+        | Route::ApplicationCallback => {
             unreachable!()
         }
     }
@@ -510,7 +607,9 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                     if changed.is_err() || !app.accepting.load(std::sync::atomic::Ordering::SeqCst) || app.store.active(&principal).await.is_err() { break; }
                     if let Some(id) = &stream_session && app.store.owned(&principal, id, false).await.is_err() { break; }
                     if let Some(id) = &stream_host && app.store.own_host(&principal, id).await.is_err() { break; }
+                    if let Some(access) = &client_access && !crate::clients::active(&app, &access.verifier).await { break; }
                 }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(client_access.as_ref().map_or(86_400, |a| a.expires_at.saturating_sub(crate::store::now()).max(0) as u64))), if client_access.is_some() => break,
                 chunk = upstream.next() => match chunk {
                     Some(Ok(bytes)) => {
                         tail.extend_from_slice(&bytes[bytes.len().saturating_sub(4)..]);

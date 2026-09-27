@@ -65,7 +65,9 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
             }
             Driver::Host { host_id } => app.store.own_host(p, host_id.as_str()).await?,
             Driver::Http { .. } => {
-                if crate::environments::http::selected(app, environment) {
+                if crate::environments::application::selected(app, environment) {
+                    crate::environments::application::selection(environment)?;
+                } else if crate::environments::http::selected(app, environment) {
                     crate::environments::http::selection(app, p, environment)?;
                 } else {
                     crate::environments::selection(app, p, environment)?;
@@ -112,7 +114,14 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                 )
                 .await?;
             } else if matches!(selected.driver, Driver::Http { .. }) {
-                if crate::environments::http::selected(app, selected) {
+                if crate::environments::application::selected(app, selected) {
+                    crate::environments::application::validate_tool(tool, placement)?;
+                    if !tool.environments.is_empty() {
+                        return Err(Error::invalid(
+                            "application Tools currently support completion services only",
+                        ));
+                    }
+                } else if crate::environments::http::selected(app, selected) {
                     let (_, binding) = crate::environments::http::selection(app, p, selected)?;
                     crate::environments::http::validate_tool(binding, tool, placement)?;
                 } else {

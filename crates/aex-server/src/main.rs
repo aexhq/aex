@@ -54,6 +54,14 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "client-access",
+                    schemars::schema_for!(aex_server::clients::ClientAccess),
+                ),
+                (
+                    "client-grant-input",
+                    schemars::schema_for!(aex_server::clients::ClientGrantInput),
+                ),
+                (
                     "http-catalog",
                     schemars::schema_for!(aex_server::environments::http::HttpCatalog),
                 ),
