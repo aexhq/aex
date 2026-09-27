@@ -8,11 +8,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { Aex, StructuredOutputError, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
+import { Aex, StructuredOutputError, agentloop, brainEnv, component, hostEnv, clientBrowser, tool } from "@aexhq/sdk";
 import { database } from "./database.mjs";
 import { pi } from "@aexhq/agentloop-pi";
 import { codex } from "@aexhq/agentloop-codex";
+import { chromium } from "playwright";
 import { z } from "zod";
+import { createHttpEnvironment, serveEnvironment } from "@aexhq/env-http/server";
+import { createToolHandler } from "@aexhq/env-http/handler";
+import { authenticateApplication } from "../../environments/application.mjs";
 import { measure } from "../../tools/benchmark.mjs";
 
 const pause = (ms) => new Promise(r => setTimeout(r, ms));
@@ -25,7 +29,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const directory=await mkdtemp(join(tmpdir(),"aex-journey-"));
   const brainPort=await port(), aexPort=await port(), adminPort=await port();
   const brainUrl=`http://127.0.0.1:${brainPort}`, baseUrl=`http://127.0.0.1:${aexPort}`, adminUrl=`http://127.0.0.1:${adminPort}`;
-  const internal=randomUUID(), operator=randomUUID();
+  const internal=randomUUID(), operator=randomUUID(), environmentToken=randomUUID();
   let modelCalls=0, toolCalls=0, modelDelay=0, brainChild, aexChild;
   let structuredAnswers;
   const processLogs=[];
@@ -66,6 +70,33 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     model_tokens: { micro_usd: 1, units: 1 }, sandbox_ms: { micro_usd: 1, units: 1000 },
     attachment_byte_secs: { micro_usd: 1, units: 1000 }, egress_bytes: { micro_usd: 1, units: 1000 },
   } }, max_turn_secs: 120, payments: null };
+  let applicationHandler;
+  let loseApplicationReply = false, losePrivateAck = false;
+  const bridge = createHttpEnvironment({
+    fetch: async (url, init) => {
+      const reply = await fetch(url, init);
+      if (losePrivateAck) { await reply.arrayBuffer(); throw new Error("lost committed private acknowledgment"); }
+      return reply;
+    },
+    authorize: async (binding, signal, context) => {
+      const response = await fetch(adminUrl + "/environments/http/authorize", { method: "POST", signal,
+        headers: { authorization: `Bearer ${environmentToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ ...binding, authorization: context.authorization }) });
+      if (!response.ok) throw new Error(`application authorization failed: ${response.status}`);
+      return { ...await response.json(), token: context.credential };
+    },
+    request: async (url, { token, body, signal }) => {
+      assert.equal(url, "https://application.example/tools");
+      const response = await applicationHandler(new Request(url, { method: "POST", signal,
+        headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) }));
+      const value = await response.json();
+      if (loseApplicationReply) throw new Error("lost final application response");
+      return value;
+    },
+  });
+  const bridgeServer = await serveEnvironment(bridge.handle, { authenticate: headers => authenticateApplication(headers, environmentToken), callback: bridge.callback });
+  t.after(bridgeServer.close);
+  configuration.http_environments = { url: bridgeServer.url, public_url: "https://api.aex.dev/environments/http", bindings: {} };
   await writeFile(join(directory,"config.json"),JSON.stringify(configuration));
   async function launch(executable,args,env,url){
     const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"],detached:true}); children.add(child);
@@ -76,7 +107,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   async function stop(child,signal="SIGTERM"){ if(child.exitCode===null && child.signalCode===null){const done=once(child,"exit");process.kill(-child.pid,signal);await done;}children.delete(child); }
   async function start(){
     brainChild=await launch(process.env.BRAIN_TEST_SERVER,[],{XDG_CACHE_HOME:join(directory,"compilation-cache"),BRAIN_LISTEN:`127.0.0.1:${brainPort}`,BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_ENV_WORKER:process.env.BRAIN_TEST_WORKER,BRAIN_API_TOKEN:internal,BRAIN_MODEL_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`},brainUrl);
-    aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator,AEX_SITE_TOKEN:"s".repeat(32),AEX_DATABASE_URL:db.url,RUST_LOG:"info"},baseUrl);
+    aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator,AEX_SITE_TOKEN:"s".repeat(32),AEX_DATABASE_URL:db.url,AEX_ENVIRONMENT_TOKEN:environmentToken,RUST_LOG:"info"},baseUrl);
     await meter();
     await operate({action:"resume"});
   }
@@ -250,6 +281,131 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(calls, 4);
     await outcomes.end(); await outcomes.delete();
   }
+  await t.test("application tools finish durably after caller exit, including a lost HTTP receipt", async () => {
+    let ran = 0, acknowledged = 0;
+    const declared = tool({ name: "lookup", description: "Lookup", input: z.object({ id: z.string() }),
+      options: z.object({ prefix: z.string() }),
+      run: async ({ id }, ctx) => { ran++; await ctx.finish(`${ctx.options.prefix}-${id}`, { content: "Found the order" }); acknowledged++; },
+    });
+    applicationHandler = createToolHandler({ tools: [declared({ prefix: "item" })],
+      authorize: request => assert.equal(request.headers.get("authorization"), `Bearer ${"endpoint-secret".repeat(3)}`),
+      callbackRequest: async (url, { token, body, signal }) => {
+        assert.equal(url, "https://api.aex.dev/v1/environments/application/callback");
+        const response = await fetch(baseUrl + new URL(url).pathname, { method: "POST", signal,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+        assert.equal(response.status, 200); return response.json();
+      },
+    });
+    const caller = new Aex({ baseUrl: "https://api.aex.dev", apiKey: a.token,
+      fetch: (url, init) => fetch(baseUrl + new URL(url).pathname + new URL(url).search, init) });
+    const env = caller.environments.application({ name: "application", endpoint: "https://application.example/tools", credential: "endpoint-secret".repeat(3) });
+    const remote = await caller.sessions.create({ ...options, tools: [declared({ prefix: "item", env })] });
+    modelDelay = 100;
+    const sequence = await remote.submit("look it up");
+    await caller.close();
+    const reopened = await client.sessions.get(remote.id);
+    for (let i = 0; i < 200 && (await reopened.outcome(sequence)).status === "pending"; i++) await pause(25);
+    modelDelay = 0;
+    assert.equal(ran, 1); assert.equal(acknowledged, 1);
+    loseApplicationReply = true;
+    await reopened.send("look it up again");
+    loseApplicationReply = false;
+    assert.equal(ran, 2); assert.equal(acknowledged, 2);
+    losePrivateAck = true;
+    await reopened.send("look it up once more");
+    losePrivateAck = false;
+    assert.equal(ran, 3); assert.equal(acknowledged, 2);
+    const records = []; for await (const event of reopened.events()) records.push(event);
+    const finished = records.filter(e => e.type === "tool_call_ended");
+    assert.equal(finished.length, 3);
+    assert.ok(finished.every(e => e.data.outcome.status === "ok"));
+    const results = records.filter(e => e.type === "tool_result_emitted");
+    assert.equal(results.length, 3);
+    assert.ok(results.every(e => e.data.result.output === "item-42" && e.data.result.content === "Found the order"));
+    await reopened.end(); await reopened.delete();
+    assert.equal((await db.client.query("SELECT count(*) FROM http_grants WHERE session=$1", [remote.id])).rows[0].count, "0");
+  });
+
+  await t.test("browser uses one authorized composition and reattaches without provider keys", async () => {
+    let called = 0;
+    const read = tool({ name: "lookup", description: "Lookup selection", input: z.object({ id: z.string() }),
+      run: ({ id }, ctx) => { called++; return ctx.finish(`selection-${id}`); } });
+    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
+    const origin = "https://customer.example";
+    const access = await client.clients.grant({ origin, session: composition });
+    assert.equal(JSON.stringify(access).includes("test-model-secret"), false);
+    const { apiKey: _, ...publicModel } = composition.model;
+    const browserOptions = { ...composition, model: publicModel };
+    const browser = () => new Aex({ baseUrl, clientAccess: access, fetch: (url, init) => {
+      const headers = new Headers(init.headers); headers.set("origin", origin); return fetch(url, { ...init, headers });
+    } });
+    let tab = browser();
+    const created = await tab.sessions.create(browserOptions);
+    await created.send("look it up"); assert.equal(called, 1);
+    await assert.rejects(tab.sessions.list(), error => error.status === 401);
+    await tab.close();
+    tab = browser();
+    const reopened = await tab.sessions.create(browserOptions);
+    assert.equal(reopened.id, created.id);
+    await reopened.send("look it up again"); assert.equal(called, 2);
+    await reopened.end(); await reopened.delete(); await tab.close();
+    await client.clients.revoke(access.id);
+  });
+
+  await t.test("browser expiry closes an open stream and rejects further session and host access", async () => {
+    const origin = "https://customer.example";
+    const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: (_, ctx) => ctx.finish("selected") });
+    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
+    const access = await client.clients.grant({ origin, session: composition, expiresAt: Math.floor(Date.now() / 1000) + 4 });
+    const tab = new Aex({ baseUrl, clientAccess: access, fetch: (url, init) => {
+      const headers = new Headers(init.headers); headers.set("origin", origin); return fetch(url, { ...init, headers });
+    } });
+    try {
+      const { apiKey: _, ...publicModel } = options.model;
+      const session = await tab.sessions.create({ ...composition, model: publicModel });
+      const response = await fetch(`${baseUrl}/v1/sessions/${session.id}/events`, {
+        headers: { authorization: `Bearer ${access.token}`, origin, accept: "text/event-stream" }, signal: AbortSignal.timeout(7000),
+      });
+      assert.equal(response.status, 200);
+      const reader = response.body.getReader();
+      assert.equal((await reader.read()).done, false);
+      while (!(await reader.read()).done) {}
+      assert.ok(Date.now() >= access.expires_at * 1000);
+      await assert.rejects(tab.sessions.get(session.id), error => error.status === 401);
+      const host = await fetch(`${baseUrl}/v1/hosts/${access.credentials.hostId}/commands`, {
+        headers: { authorization: `Bearer ${access.credentials.token}`, origin },
+      });
+      assert.equal(host.status, 401);
+      const saved = await client.sessions.get(session.id); await saved.end(); await saved.delete();
+    } finally { await tab.close(); }
+  });
+
+  await t.test("Chromium creates a scoped session and executes a DOM Tool over direct CORS and SSE", async () => {
+    const bundle = await readFile(new URL("../../artifacts/browser-journey.js", import.meta.url));
+    const wasm = await readFile(new URL("./loop.component.wasm", import.meta.resolve("@aexhq/agentloop-pi")));
+    const frontend = createServer((req, res) => {
+      if (req.url === "/app.js") res.writeHead(200, { "content-type": "text/javascript" }).end(bundle);
+      else if (req.url === "/loop.component.wasm") res.writeHead(200, { "content-type": "application/wasm" }).end(wasm);
+      else res.writeHead(200, { "content-type": "text/html" }).end('<div id="selection">selected text</div><script type="module" src="/app.js"></script>');
+    });
+    frontend.listen(0, "127.0.0.1"); await once(frontend, "listening");
+    const origin = `http://127.0.0.1:${frontend.address().port}`;
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: () => { throw new Error("browser Tool executed on backend"); } });
+      const access = await client.clients.grant({ origin, session: { ...options,
+        agentloop: pi({ env: brainEnv({ name: "brain" }) }), tools: [read({ env: clientBrowser({ name: "tab" }) })] } });
+      const page = await browser.newPage();
+      const errors = []; page.on("pageerror", error => errors.push(error.message));
+      await page.goto(origin); await page.waitForFunction(() => typeof window.runBrowserJourney === "function");
+      const result = await page.evaluate(input => window.runBrowserJourney(input), { baseUrl, access });
+      assert.deepEqual(errors, []);
+      assert.match(JSON.stringify(result.transcript), /selected text-42/);
+      const session = await client.sessions.get(result.id); await session.end(); await session.delete();
+      await client.clients.revoke(access.id);
+    } finally { await browser.close(); frontend.closeAllConnections(); await new Promise(resolve => frontend.close(resolve)); }
+  });
+
   const unsupported = await client.sessions.create(options);
   const beforeUnsupported = modelCalls;
   structuredAnswers = ['"unused"'];
@@ -315,6 +471,6 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.equal((await operate({action:"maintain"})).deleted,1,"retention ends and removes expired sessions");
   assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,404);
   const logs=processLogs.join("");
-  for(const secret of ["test-model-secret",internal,operator,a.token,b.token,replacement.token]) assert.equal(logs.includes(secret),false,"service logs must not contain credentials");
+  for(const secret of ["test-model-secret",internal,operator,environmentToken,"endpoint-secret".repeat(3),a.token,b.token,replacement.token]) assert.equal(logs.includes(secret),false,"service logs must not contain credentials");
   assert.ok(logs.includes('"request_id"'),"redacted request correlation is emitted");
 });

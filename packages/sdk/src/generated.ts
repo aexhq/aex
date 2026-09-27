@@ -35,6 +35,38 @@ export type SyncPayment =
 export interface AexContracts {}
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "ClientHost".
+ */
+export interface ClientHost {
+  hostId: string;
+  token: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "ClientAccess".
+ */
+export interface ClientAccess {
+  credentials: ClientHost;
+  expires_at: number;
+  id: string;
+  token: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "ClientGrantInput".
+ */
+export interface ClientGrantInput {
+  expires_at: number;
+  origin: string;
+  /**
+   * The prepared Brain request. Credentials remain on the server.
+   */
+  session: {
+    [k: string]: unknown;
+  };
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "HttpCatalog".
  */
 export interface HttpCatalog {

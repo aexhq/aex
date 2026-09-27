@@ -1,6 +1,11 @@
 # Aex roadmap
 
 Status: scope accepted 2026-09-07; implementation and release evidence tracked below.
+
+[ADR-009](docs/adr/009-application-composition.md) adds declared Application endpoints and scoped
+`clientBrowser` composition through ordinary session creation. Implementation and hosted
+journey tests cover caller exit, durable completion, browser CORS/SSE, expiry and revocation.
+Production release evidence is recorded in Platform after deployment.
 The production preview implements PostgreSQL product state, self-service Google sign-in,
 API-key CRUD, account/usage APIs and the thin Brain-compatible Aex SDK. The dashboard has
 exactly three items: API keys, Docs, and Account / Billing / Usage. Hosting is free during

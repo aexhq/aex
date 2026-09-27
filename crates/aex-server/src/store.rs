@@ -202,6 +202,13 @@ impl Store {
         .bind(upstream)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE http_grants SET session=$1 WHERE operation=$2 AND session IS NULL")
+            .bind(summary.session_id.as_str())
+            .bind(upstream)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE client_grants SET session=$1 WHERE verifier=(SELECT client_key FROM claims WHERE upstream_key=$2) AND account=$3 AND session IS NULL")
+            .bind(summary.session_id.as_str()).bind(upstream).bind(&p.account).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -303,12 +310,18 @@ impl Store {
         Ok(true)
     }
     pub async fn finish_delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query("DELETE FROM http_grants WHERE session=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE sessions SET state='deleted',active_key=NULL,retained_bytes=0 WHERE id=$1",
         )
         .bind(id)
-        .execute(&self.0)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
     }
     pub async fn create_account(&self, limits: &Limits) -> Result<String> {

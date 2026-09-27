@@ -3,13 +3,19 @@ export type * from "./generated.js";
 export { AexSessionHandle } from "./session.js";
 export { StructuredOutputError } from "./structured-output.js";
 export type { StructuredSendOptions } from "./structured-output.js";
-import { Brain, type BrainOptions } from "@aexhq/brain";
+import { application } from "@aexhq/env-http";
+import { composeApplication } from "./application.js";
+import { Brain, type BrainOptions, type CreateSessionOptions, type OperationOptions, type ModelSelection } from "@aexhq/brain";
 import { AexSessionHandle } from "./session.js";
-import type { EnvironmentCatalog, TokenUsage } from "./generated.js";
+import type { ClientAccess, EnvironmentCatalog, TokenUsage } from "./generated.js";
 import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
 
 export type AexConnection = Omit<BrainOptions, "token" | "baseUrl"> & { baseUrl?: string };
-export type AexOptions = AexConnection & { maxCostMicroUsd?: number } & ({ apiKey: string; accountToken?: never } | { accountToken: string; apiKey?: never });
+export type AexOptions = AexConnection & { maxCostMicroUsd?: number } & (
+  { apiKey: string; accountToken?: never; clientAccess?: never } |
+  { accountToken: string; apiKey?: never; clientAccess?: never } |
+  { clientAccess: ClientAccess; apiKey?: never; accountToken?: never });
+export type AexSessionOptions = Omit<CreateSessionOptions, "model"> & { model: ModelSelection | Omit<ModelSelection, "apiKey"> };
 
 function nonnegativeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a nonnegative safe integer`);
@@ -33,16 +39,27 @@ class HostedBrain extends Brain {
 
 export class Aex {
   private readonly client: Brain;
+  private readonly clientAccess?: ClientAccess;
 
-  constructor({ apiKey, accountToken, maxCostMicroUsd, ...options }: AexOptions) {
-    if (!(apiKey || accountToken) || (apiKey && accountToken)) throw new TypeError("one apiKey or accountToken is required");
-    this.client = new HostedBrain({ baseUrl: "https://api.aex.dev", ...options, token: apiKey ?? accountToken, maxCostMicroUsd });
+  constructor({ apiKey, accountToken, clientAccess, maxCostMicroUsd, ...options }: AexOptions) {
+    if ([apiKey, accountToken, clientAccess].filter(Boolean).length !== 1) throw new TypeError("one apiKey, accountToken or clientAccess is required");
+    this.clientAccess = clientAccess;
+    this.client = new HostedBrain({ baseUrl: "https://api.aex.dev", ...options, token: apiKey ?? accountToken ?? clientAccess?.token,
+      ...(clientAccess && { credentials: clientAccess.credentials }), maxCostMicroUsd });
+  }
+
+  private composition(options: AexSessionOptions): CreateSessionOptions {
+    if (this.clientAccess && "apiKey" in options.model) throw new TypeError("client access uses server-side model credentials; omit apiKey");
+    const model = this.clientAccess ? { ...options.model, apiKey: this.clientAccess.token } : options.model;
+    if (!("apiKey" in model) || typeof model.apiKey !== "string") throw new TypeError("server-side sessions require a model apiKey");
+    return composeApplication({ ...options, model: { ...model, apiKey: model.apiKey } }, this.baseUrl);
   }
 
   get baseUrl(): string { return this.client.baseUrl; }
 
   readonly sessions = Object.freeze({
-    create: async (...args: Parameters<Brain["sessions"]["create"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.create(...args)),
+    create: async (options: AexSessionOptions, operation?: OperationOptions): Promise<AexSessionHandle> =>
+      new AexSessionHandle(await this.client.sessions.create(this.composition(options), operation)),
     get: async (...args: Parameters<Brain["sessions"]["get"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.get(...args)),
     list: (): ReturnType<Brain["sessions"]["list"]> => this.client.sessions.list(),
   });
@@ -106,7 +123,22 @@ export class Aex {
     sync: (input: SyncPayment): Promise<Wallet> => this.request("POST", "/v1/billing/sync", input),
   };
 
+  readonly clients = {
+    grant: async ({ session, origin, expiresAt = Math.floor(Date.now() / 1000) + 3600 }: {
+      session: CreateSessionOptions; origin: string; expiresAt?: number;
+    }): Promise<ClientAccess> => {
+      if (this.clientAccess) throw new TypeError("client grants require a backend API key");
+      const prepared = await this.client.sessions.prepare(this.composition(session), "authorized-client");
+      return this.request("POST", "/v1/clients", { origin, expires_at: expiresAt, session: prepared });
+    },
+    revoke: (id: string): Promise<void> => this.request("DELETE", `/v1/clients/${encodeURIComponent(id)}`),
+  };
+
   readonly environments = {
+    application: (options: Omit<Parameters<typeof application>[0], "url" | "credential"> & { credential?: string }) => application({
+      ...options, credential: options.credential ?? this.clientAccess?.token ?? "",
+      url: new URL("/environments/application", this.baseUrl).href,
+    }),
     http: (): Promise<import("./generated.js").HttpCatalog> => this.request("GET", "/v1/environments/http"),
     list: (): Promise<EnvironmentCatalog> => this.request("GET", "/v1/environments"),
   };

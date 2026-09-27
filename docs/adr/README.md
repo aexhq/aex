@@ -14,6 +14,7 @@ does not mean its implementation is complete.
 | [006 — Evidence gates and release contracts](006-verification.md) | Performance, tests, compatibility and release |
 | [007 — Environment control and hosted resource authority](007-environment-control.md) | Lifecycle policy, ordinary Tools and paid instance admission |
 | [008 — Typed responses](008-typed-responses.md) | Product-owned prompting, validation and correction; SDK composition |
+| [009 - Application composition](009-application-composition.md) | Browser access, declared backend endpoints and ordinary session creation |
 
 These records define the current MVP. Future possibilities belong in the
 [roadmap](../../ROADMAP.md), with new ADRs written when those decisions become necessary.

@@ -35,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.84.1 @aexhq/agentloop-pi@7.2.3 zod@4.4.3
+npm install @aexhq/sdk@0.85.0 @aexhq/agentloop-pi@7.2.4 zod@4.4.3
 ```
 
 Save this as `order.mjs`:
@@ -113,3 +113,5 @@ Connect short application functions through an authenticated HTTP route with
 request and read its committed outcome later. Desktop apps can use
 [upload-only grants](https://github.com/aexhq/aex/blob/main/docs/attachments.md#upload-from-a-desktop-without-an-account-key)
 without receiving an account credential.
+
+Choose [clientBrowser](https://github.com/aexhq/aex/blob/main/docs/client-browser.md) for the user's connected tab, or [Application](https://github.com/aexhq/aex/blob/main/docs/http-tools.md) for a deployed backend. Both use `aex.sessions.create()` and ordinary Tool declarations.

@@ -27,4 +27,5 @@ export BRAIN_TEST_WORKER="$checkout/image-bin/brain-env-worker"
 export BRAIN_TEST_REFERENCE_AGENTLOOP="$checkout/examples/reference-agentloop/target/wasm32-wasip2/release/reference_agentloop.wasm"
 export BRAIN_TEST_TOOL="$checkout/tests/fixtures/diagnostic-tool/target/wasm32-wasip2/release/diagnostic_tool.wasm"
 npm run build
+node tools/browser-journey-bundle.mjs
 npm test

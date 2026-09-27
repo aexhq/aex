@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.84.1 @aexhq/agentloop-pi@7.2.3 zod@4.4.3
+npm install @aexhq/sdk@0.85.0 @aexhq/agentloop-pi@7.2.4 zod@4.4.3
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -119,7 +119,7 @@ correction. It supports JSON Schema, not arbitrary local Zod refinements or tran
 Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
 owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
 Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
-Use Pi/Codex 7.2.3 and extension packages pinned to Brain 0.34 with this SDK.
+Use Pi/Codex 7.2.4 and extension packages pinned to Brain 0.35.1 with this SDK.
 Mixing exact Brain dependency versions creates different TypeScript extension brands.
 
 An existing standalone Brain handle can use Aex's policy without changing servers:
@@ -159,7 +159,9 @@ independent request within the invocation's lifetime and the session's model aut
 usage and spending controls include those requests. The Agentloop owns the shared conversation.
 
 Connect short application functions through an authenticated HTTP route with
-[HTTP tools](https://github.com/aexhq/aex/blob/main/docs/http-tools.md). Submit a turn, close the
+[HTTP tools](https://aex.dev/docs/application). Submit a turn, close the
 request and read its committed outcome later. Desktop apps can use
 [upload-only grants](https://github.com/aexhq/aex/blob/main/docs/attachments.md#upload-from-a-desktop-without-an-account-key)
 without receiving an account credential.
+
+Choose [clientBrowser](https://aex.dev/docs/client-browser) for the user's connected tab, or [Application](https://aex.dev/docs/application) for a deployed backend. Both use `aex.sessions.create()` and ordinary Tool declarations.

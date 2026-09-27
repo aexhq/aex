@@ -50,11 +50,12 @@ pub struct Authorization {
     pub session_id: String,
     pub environment: String,
     pub configuration: Option<AuthorizedSelection>,
+    pub authorization: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorizedSelection {
-    pub binding: String,
+    pub binding: Option<String>,
     pub authorization: String,
 }
 
@@ -221,6 +222,34 @@ pub async fn reserve_in(
     request: &mut CreateSessionRequest,
 ) -> Result<()> {
     for environment in &mut request.environments {
+        if super::application::selected(app, environment) {
+            use base64::Engine;
+            let mut spec = super::application::selection(environment)?;
+            spec.tools = request
+                .tools
+                .iter()
+                .filter(|tool| tool.placements.contains_key(&environment.name))
+                .map(|tool| tool.definition())
+                .collect();
+            let id = identity::random("http");
+            sqlx::query("INSERT INTO http_grants(id,account,operation,issuing_key,environment,declaration) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(&id).bind(&principal.account).bind(operation).bind(&principal.key).bind(environment.name.as_str())
+                .bind(serde_json::to_string(&spec)?).execute(&mut **tx).await?;
+            let Driver::Http { credential, .. } = &environment.driver else {
+                unreachable!()
+            };
+            let envelope = json!({"version":1,"token":app.environment_token.as_ref().ok_or_else(Error::internal)?,"authorization":id,"credential":credential});
+            environment.driver = Driver::Http {
+                url: app.config.http_environments.as_ref().unwrap().url.clone(),
+                credential: Some(format!(
+                    "application.{}",
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(serde_json::to_vec(&envelope)?)
+                )),
+            };
+            environment.configuration = json!({"authorization":id});
+            continue;
+        }
         if !selected(app, environment) {
             continue;
         }
@@ -251,7 +280,19 @@ pub async fn authorize(
         return Err(Error::capacity());
     }
     let mut tx = app.store.0.begin().await?;
-    let row = if let Some(selection) = &input.configuration {
+    let row = if let Some(id) = &input.authorization {
+        if input
+            .configuration
+            .as_ref()
+            .is_some_and(|c| c.authorization != *id || c.binding.is_some())
+        {
+            return Err(Error::denied());
+        }
+        sqlx::query("SELECT * FROM http_grants WHERE id=$1 AND declaration IS NOT NULL FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+    } else if let Some(selection) = &input.configuration {
         sqlx::query("SELECT * FROM http_grants WHERE id=$1 AND binding=$2 FOR UPDATE")
             .bind(&selection.authorization)
             .bind(&selection.binding)
@@ -284,26 +325,37 @@ pub async fn authorize(
             .owned(&principal, &input.session_id, false)
             .await?;
     }
-    let binding: String = row.get("binding");
-    let published = app
+    let config = app
         .config
         .http_environments
         .as_ref()
-        .and_then(|c| c.bindings.get(&binding))
-        .filter(|p| p.accounts.contains(&account))
         .ok_or_else(Error::denied)?;
-    let token = std::env::var(&published.credential_env).map_err(|_| Error::internal())?;
-    if token.len() < 32 {
-        return Err(Error::internal());
-    }
+    let output = if let Some(document) = row.get::<Option<String>, _>("declaration") {
+        if input.authorization.is_none() {
+            return Err(Error::denied());
+        }
+        let spec: Binding = serde_json::from_str(&document)?;
+        json!({"url":spec.url,"timeoutMs":spec.timeout_ms,"tools":spec.tools.iter().map(definition).collect::<Vec<_>>(),
+            "callbackUrl":super::application::public_url(config,"/v1/environments/application/callback")})
+    } else {
+        let binding: String = row.get("binding");
+        let published = config
+            .bindings
+            .get(&binding)
+            .filter(|p| p.accounts.contains(&account))
+            .ok_or_else(Error::denied)?;
+        let token = std::env::var(&published.credential_env).map_err(|_| Error::internal())?;
+        if token.len() < 32 {
+            return Err(Error::internal());
+        }
+        let spec = &published.specification;
+        json!({"url":spec.url,"token":token,"timeoutMs":spec.timeout_ms,"tools":spec.tools.iter().map(definition).collect::<Vec<_>>()})
+    };
     sqlx::query("UPDATE http_grants SET session=$1 WHERE id=$2")
         .bind(&input.session_id)
         .bind(row.get::<String, _>("id"))
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    let spec = &published.specification;
-    Ok(Json(
-        json!({"url":spec.url,"token":token,"timeoutMs":spec.timeout_ms,"tools":spec.tools.iter().map(definition).collect::<Vec<_>>()}),
-    ))
+    Ok(Json(output))
 }

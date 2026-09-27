@@ -58,6 +58,11 @@ pub async fn send(
         &serde_jcs::to_vec(&(request, asynchronous, maximum))
             .map_err(|_| Error::invalid("invalid message"))?,
     );
+    let tracked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions s JOIN session_turns t ON t.operation=s.active_key JOIN claims c ON c.upstream_key=t.operation WHERE s.id=$1 AND c.client_key<>$2)")
+        .bind(session).bind(identity::operation_key(headers)?).fetch_one(&app.store.0).await?;
+    if tracked {
+        reconcile(app, session).await?;
+    }
     let mut tx = app.store.0.begin().await?;
     let operation = match Store::claim_in(
         &mut tx,
