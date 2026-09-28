@@ -352,6 +352,42 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     await client.clients.revoke(access.id);
   });
 
+  await t.test("idle browser transport preserves host authority and fails revoked wake before sending", async () => {
+    const origin = "https://customer.example";
+    const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: (_, ctx) => ctx.finish("selected") });
+    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
+    const access = await client.clients.grant({ origin, session: composition });
+    const sleeping = Promise.withResolvers();
+    let messages = 0;
+    const tab = new Aex({ baseUrl, clientAccess: access, connectionIdleTimeoutMs: 25, fetch: async (url, init) => {
+      const headers = new Headers(init.headers); headers.set("origin", origin);
+      if (new URL(url).pathname.endsWith("/messages")) messages++;
+      const response = await fetch(url, { ...init, headers });
+      if (new URL(url).pathname.endsWith("/suspend") && (await response.clone().json()).suspended) sleeping.resolve();
+      return response;
+    } });
+    try {
+      const { apiKey: _, ...publicModel } = options.model;
+      const session = await tab.sessions.create({ ...composition, model: publicModel });
+      await session.send("look it up");
+      await sleeping.promise;
+      for (const [hostId, token, requestOrigin] of [
+        [foreignHost.host_id, access.credentials.token, origin],
+        [access.credentials.hostId, access.credentials.token, "https://other.example"],
+        [access.credentials.hostId, a.token, origin],
+      ]) {
+        const denied = await fetch(`${baseUrl}/v1/hosts/${hostId}/suspend`, { method: "POST",
+          headers: { authorization: `Bearer ${token}`, origin: requestOrigin, "content-type": "application/json" },
+          body: JSON.stringify({ connection: 1 }) });
+        assert.equal(denied.status, 401);
+      }
+      await client.clients.revoke(access.id);
+      await assert.rejects(session.send("revoked wake"), error => error.status === 401);
+      assert.equal(messages, 1);
+      const saved = await client.sessions.get(session.id); await saved.end(); await saved.delete();
+    } finally { await tab.close(); }
+  });
+
   await t.test("browser expiry closes an open stream and rejects further session and host access", async () => {
     const origin = "https://customer.example";
     const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: (_, ctx) => ctx.finish("selected") });
@@ -400,6 +436,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       await page.goto(origin); await page.waitForFunction(() => typeof window.runBrowserJourney === "function");
       const result = await page.evaluate(input => window.runBrowserJourney(input), { baseUrl, access });
       assert.deepEqual(errors, []);
+      assert.equal(result.connections, 2);
       assert.match(JSON.stringify(result.transcript), /selected text-42/);
       const session = await client.sessions.get(result.id); await session.end(); await session.delete();
       await client.clients.revoke(access.id);

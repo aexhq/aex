@@ -8,14 +8,14 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.85.0 @aexhq/agentloop-pi@7.2.4 zod@4.4.3
+npm install @aexhq/sdk@0.86.0 @aexhq/agentloop-pi@7.3.0 zod@4.4.3
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
 run `node order.mjs`:
 
 ```js
-import { Aex, brainEnv, tool } from "@aexhq/sdk";
+import { Aex, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -27,22 +27,22 @@ const lookupOrder = tool({
 });
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
-try {
-  const session = await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
-    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    tools: [lookupOrder()],
-  });
-  try {
-    await session.send("Look up order A-1001. Has it shipped?");
-    console.log(JSON.stringify(await session.transcript(), null, 2));
-    console.log("Session:", session.id);
-  } finally {
-    await session.end();
+aex.sessions.create({
+  model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
+  agentloop: pi(),
+  tools: [lookupOrder()],
+}).then(async session => {
+  const after = session.state.lastSequence;
+  await session.send("Look up order A-1001. Has it shipped?");
+  for await (const event of session.events(after)) {
+    if (event.type === "turn_failed") throw new Error(JSON.stringify(event.data));
   }
-} finally {
-  await aex.close();
-}
+  console.log(JSON.stringify(await session.transcript(), null, 2));
+  console.log("Session:", session.id);
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 The transcript includes an order lookup and the agent's answer. The lookup function runs in your
@@ -60,13 +60,16 @@ The SDK uses Brain's session API and extension helpers. You can import `tool`, `
 - [Managed environments](https://github.com/aexhq/aex/blob/main/docs/environments.md): hosted tools and workspaces.
 - [Attachments](https://github.com/aexhq/aex/blob/main/docs/attachments.md): upload images and PDFs.
 
-Use `ctx.finish(value)` to complete a tool. Use `aex.close()` in `finally` to close client
-connections. Closing the client keeps stored sessions; tools in your process still require it.
+Use `ctx.finish(value)` to complete a tool. The shared tool connection suspends after five
+idle seconds and reconnects before the same live client starts more work. Configure
+`connectionIdleTimeoutMs` on `new Aex(...)`; use `0` when other callers or future autonomous
+events must reach these tools. History reads do not reconnect, and event subscriptions remain
+caller-owned. Explicit `aex.close()` permanently disposes of the client while keeping stored sessions.
 
 ## Structured output
 
-Ask for a typed application answer on one send. Before ending the session, pass a Zod
-schema alongside the message:
+Ask for a typed application answer on one send. Inside the callback, pass a Zod schema
+alongside the message:
 
 ```ts
 const answer = await session.send("Return the order status", {
@@ -119,7 +122,7 @@ correction. It supports JSON Schema, not arbitrary local Zod refinements or tran
 Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
 owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
 Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
-Use Pi/Codex 7.2.4 and extension packages pinned to Brain 0.35.1 with this SDK.
+Use Pi 7.3.0, Codex 7.2.5 and extension packages pinned to Brain 0.36.0 with this SDK.
 Mixing exact Brain dependency versions creates different TypeScript extension brands.
 
 An existing standalone Brain handle can use Aex's policy without changing servers:

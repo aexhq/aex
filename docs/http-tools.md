@@ -42,7 +42,7 @@ must not choose the authenticated user or tenant. Save the owner before the firs
 Create the session on your backend:
 
 ```ts
-import { Aex, brainEnv } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { lookupOrder } from "./tools.js";
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
@@ -54,7 +54,7 @@ const app = aex.environments.application({
 });
 const session = await aex.sessions.create({
   model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY! },
-  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+  agentloop: pi(),
   tools: [lookupOrder({ env: app })],
 });
 await saveSessionOwner(session.id, authenticatedUser);

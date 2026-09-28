@@ -24,15 +24,15 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.85.0 @aexhq/agentloop-pi@7.2.4 zod@4.4.3
+npm install @aexhq/sdk@0.86.0 @aexhq/agentloop-pi@7.3.0 zod@4.4.3
 ```
 
 ## 3. Create a session
 
-Save this as `order.mjs`. The same API works in TypeScript.
+Save this as `order.mjs`, or use the [complete example](../examples/order.mjs). The same API works in TypeScript.
 
 ```js
-import { Aex, brainEnv, tool } from "@aexhq/sdk";
+import { Aex, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -44,22 +44,22 @@ const lookupOrder = tool({
 });
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
-try {
-  const session = await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
-    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    tools: [lookupOrder()],
-  });
-  try {
-    await session.send("Look up order A-1001. Has it shipped?");
-    console.log(JSON.stringify(await session.transcript(), null, 2));
-    console.log("Session:", session.id);
-  } finally {
-    await session.end();
+aex.sessions.create({
+  model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
+  agentloop: pi(),
+  tools: [lookupOrder()],
+}).then(async session => {
+  const after = session.state.lastSequence;
+  await session.send("Look up order A-1001. Has it shipped?");
+  for await (const event of session.events(after)) {
+    if (event.type === "turn_failed") throw new Error(JSON.stringify(event.data));
   }
-} finally {
-  await aex.close();
-}
+  console.log(JSON.stringify(await session.transcript(), null, 2));
+  console.log("Session:", session.id);
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 ## 4. Run it
@@ -70,11 +70,16 @@ node order.mjs
 
 The transcript includes the `lookup_order` result and an answer that order A-1001 has shipped.
 The exact wording depends on the model. Replace the sample tool's body with your own lookup.
-Add more `session.send(...)` calls before `session.end()` to continue the conversation.
+The client releases its tool connection after five idle seconds, letting this script exit.
+Add more `session.send(...)` calls in the callback to continue the conversation. A later send
+through the same live client reconnects automatically.
 
-The example keeps history after ending the session. Save its ID, then use
+The example keeps the session and its history. Save its ID, then use
 `await aex.sessions.get(sessionId)` and `session.transcript()` to read it later. Use
-`session.delete()` when you want to remove an ended session.
+`session.end()` to finish the conversation and `session.delete()` to remove its history.
+Explicit `aex.close()` permanently disposes of the client. Set `connectionIdleTimeoutMs: 0`
+on `new Aex(...)` when its tools must remain available to other callers or future autonomous events.
+Event subscriptions stay open until you stop them.
 
 ## Where code runs
 

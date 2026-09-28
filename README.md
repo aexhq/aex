@@ -35,13 +35,13 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.85.0 @aexhq/agentloop-pi@7.2.4 zod@4.4.3
+npm install @aexhq/sdk@0.86.0 @aexhq/agentloop-pi@7.3.0 zod@4.4.3
 ```
 
 Save this as `order.mjs`:
 
 ```js
-import { Aex, brainEnv, tool } from "@aexhq/sdk";
+import { Aex, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -53,27 +53,28 @@ const lookupOrder = tool({
 });
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
-try {
-  const session = await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
-    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
-    tools: [lookupOrder()],
-  });
-  try {
-    await session.send("Look up order A-1001. Has it shipped?");
-    console.log(JSON.stringify(await session.transcript(), null, 2));
-    console.log("Session:", session.id);
-  } finally {
-    await session.end();
+aex.sessions.create({
+  model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
+  agentloop: pi(),
+  tools: [lookupOrder()],
+}).then(async session => {
+  const after = session.state.lastSequence;
+  await session.send("Look up order A-1001. Has it shipped?");
+  for await (const event of session.events(after)) {
+    if (event.type === "turn_failed") throw new Error(JSON.stringify(event.data));
   }
-} finally {
-  await aex.close();
-}
+  console.log(JSON.stringify(await session.transcript(), null, 2));
+  console.log("Session:", session.id);
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 Run `node order.mjs`. The printed transcript includes the lookup result and an answer that
 order A-1001 has shipped. Replace the sample lookup with your own data. The loop runs on Aex;
-the lookup runs in your application, which must stay connected while its tools are needed.
+the lookup runs in your application. The client releases its tool connection after five idle
+seconds so the script can exit, while Aex keeps the session and history.
 
 For shell setup and more detail, see the [quickstart](docs/quickstart.md).
 
