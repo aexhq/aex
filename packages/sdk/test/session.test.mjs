@@ -8,7 +8,7 @@ test("wrapping preserves Environment services, live state and host cleanup", asy
   const client = new Brain({ baseUrl: "https://brain.example", fetch: async (_, init) => init.method === "DELETE"
     ? new Response(null, { status: 204 })
     : Response.json({ session_id: "s", status: "ended", last_sequence: 7 }) });
-  const raw = new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, () => cleanup++);
+  const raw = new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, operation => operation(), () => cleanup++);
   const session = new AexSessionHandle(raw);
   assert.equal(session.environments, raw.environments);
   raw.state = { id: "s", status: "running", lastSequence: 4 };

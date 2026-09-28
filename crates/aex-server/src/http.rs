@@ -102,7 +102,7 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
                 "v1",
                 "hosts",
                 id,
-                op @ ("results" | "events" | "model" | "call"),
+                op @ ("results" | "events" | "model" | "call" | "suspend"),
             ],
         ) => Ok(Route::Host(id, op)),
         ("GET" | "DELETE", ["", "v1", "sessions", id]) => Ok(Route::Session(id, "")),
@@ -479,7 +479,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 .await;
         }
         Route::Host(_, op) => {
-            if op != "commands"
+            if !matches!(op, "commands" | "suspend")
                 && let Some(access) = &client_access
             {
                 let input: serde_json::Value = serde_json::from_slice(&body)?;
@@ -490,7 +490,9 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
                 }
             }
             host_token = Some(token);
-            if op == "results" {
+            if op == "suspend" {
+                let _: brain_protocol::HostSuspendRequest = serde_json::from_slice(&body)?;
+            } else if op == "results" {
                 let result: brain_protocol::HostResult = serde_json::from_slice(&body)?;
                 app.store
                     .owned(&principal, result.session_id.as_str(), false)

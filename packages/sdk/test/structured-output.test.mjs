@@ -35,7 +35,7 @@ function fixture(answers, { pageSize = 1000, origin = { kind: "agentloop", seque
     const events = records.filter(event => event.sequence > after).slice(0, pageSize);
     return Response.json({ events, next_cursor: events.at(-1)?.sequence ?? after });
   } });
-  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }));
+  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, operation => operation()));
   return { session, client, posts, reads, records, add };
 }
 
@@ -198,7 +198,7 @@ test("cancellation interrupts an outstanding output-history read", async () => {
     reading.resolve();
     return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
   } });
-  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }));
+  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, operation => operation()));
   const pending = session.send("Extract", { output: { type: z.string() }, signal: controller.signal });
   await reading.promise;
   controller.abort();

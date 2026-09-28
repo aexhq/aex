@@ -8,7 +8,7 @@ Share the composition between your backend and frontend:
 
 ```ts
 // composition.ts
-import { brainEnv, clientBrowser, tool } from "@aexhq/sdk";
+import { clientBrowser, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 const readSelection = tool({
@@ -18,7 +18,7 @@ const readSelection = tool({
   run: (_, ctx) => ctx.finish(window.getSelection()?.toString() ?? ""),
 });
 export const composition = {
-  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+  agentloop: pi(),
   tools: [readSelection({ env: clientBrowser({ name: "editor" }) })],
 };
 export const model = { provider: "openai", name: "gpt-4.1-mini" };
@@ -62,6 +62,12 @@ revoke it earlier. Parent-key revocation and account suspension also apply.
 The browser sends its actual Origin. HTTPS origins are supported, with HTTP localhost
 allowed for development. The command stream connects directly to Aex; the bootstrap route
 does not keep a serverless request open.
+
+The command connection suspends after five idle seconds. The same live client reconnects
+before `send()`, `submit()` or an Environment operation; history reads leave it asleep.
+Use `connectionIdleTimeoutMs: 0` when other callers or future autonomous events must
+reach the tab. A suspended tab has no remote wake-up channel, and access is checked again
+on reconnect. Explicit `aex.close()` permanently disposes of the client.
 
 Closing the tab removes its tools and may interrupt their work; the durable session remains.
 Use an [Application environment](http-tools.md) for backend tools that must outlive the tab.
