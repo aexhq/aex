@@ -3,7 +3,7 @@ import test from "node:test";
 import { z } from "zod";
 import { Aex, agentloop, brainEnv, clientBrowser, tool } from "../dist/index.js";
 
-const loop = agentloop({ implementation: { type: "brain_component", entrypoint: "turn", id: "loop" } });
+const loop = agentloop({ implementation: { type: "brain_component", entrypoint: "turn", id: "a".repeat(64) } });
 const model = { provider: "openai", name: "model", apiKey: "private-model-key" };
 const read = tool({ name: "read", description: "Read", input: z.object({}), options: z.object({ count: z.number().default(3) }),
   run: async (_, ctx) => ctx.finish(ctx.options.count) });
@@ -16,7 +16,8 @@ test("application placement compiles ordinary configured Tools without a host, c
   } });
   const env = aex.environments.application({ name: "app", endpoint: "https://customer.example/tools", credential: "application-credential" });
   await aex.sessions.create({ model, agentloop: loop({ env: brainEnv({ name: "brain" }) }), tools: [read({ env })] });
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.shift().url.endsWith("/v1/brain-env/prepare"));
   assert.ok(calls[0].url.endsWith("/v1/sessions"));
   assert.deepEqual(calls[0].request.environments.find(e => e.name === "app"), {
     name: "app", lifecycle: "automatic", driver: "http", url: "https://api.aex.dev/environments/application", credential: "application-credential",
@@ -31,6 +32,7 @@ test("backend grants prepare the composition; the browser creates through the or
   const access = { id: "grant", token: "client-capability", expires_at: 2000000000, credentials: { hostId: "tab-host", token: "host-capability" } };
   let prepared;
   const backend = new Aex({ apiKey: "private-account-key", fetch: async (url, init) => {
+    if (url.endsWith("/v1/brain-env/prepare")) return new Response(null, { status: 204 });
     assert.ok(url.endsWith("/v1/clients")); prepared = JSON.parse(init.body);
     return Response.json(access);
   } });
@@ -54,11 +56,23 @@ test("backend grants prepare the composition; the browser creates through the or
   } });
   await assert.rejects(browser.sessions.create(options), /omit apiKey/);
   await browser.sessions.create({ ...options, model: { provider: "openai", name: "model" } });
-  assert.equal(calls.length, 2);
-  const created = JSON.parse(calls[1].body);
+  assert.equal(calls.length, 3);
+  assert.ok(calls[0].url.endsWith("/v1/brain-env/prepare"));
+  const created = JSON.parse(calls[2].body);
   assert.equal(created.model.api_key, access.token);
   assert.equal(created.environments.find(e => e.name === "editor").host_id, "tab-host");
   assert.equal(JSON.stringify(calls).includes("private-"), false);
   await browser.close();
   await backend.close();
+});
+
+test("failed Environment preparation prevents session creation", async () => {
+  const calls = [];
+  const aex = new Aex({ apiKey: "key", fetch: async (url) => {
+    calls.push(new URL(url).pathname);
+    return Response.json({ code: "preparation_failed", message: "runtime unavailable", retryable: false }, { status: 409 });
+  } });
+  await assert.rejects(aex.sessions.create({ model, agentloop: loop({ env: brainEnv({ name: "brain" }) }) }), error => error.code === "preparation_failed");
+  assert.deepEqual(calls, ["/v1/brain-env/prepare"]);
+  await aex.close();
 });

@@ -418,10 +418,12 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
 
   await t.test("Chromium creates a scoped session and executes a DOM Tool over direct CORS and SSE", async () => {
     const bundle = await readFile(new URL("../../artifacts/browser-journey.js", import.meta.url));
-    const wasm = await readFile(new URL("./loop.component.wasm", import.meta.resolve("@aexhq/agentloop-pi")));
+    const wasm = await readFile(new URL("./runtime.component.wasm", import.meta.resolve("@aexhq/agentloop-pi")));
+    const program = await readFile(new URL("./loop.program.js", import.meta.resolve("@aexhq/agentloop-pi")));
     const frontend = createServer((req, res) => {
       if (req.url === "/app.js") res.writeHead(200, { "content-type": "text/javascript" }).end(bundle);
-      else if (req.url === "/loop.component.wasm") res.writeHead(200, { "content-type": "application/wasm" }).end(wasm);
+      else if (req.url === "/runtime.component.wasm") res.writeHead(200, { "content-type": "application/wasm" }).end(wasm);
+      else if (req.url === "/loop.program.js") res.writeHead(200, { "content-type": "text/javascript" }).end(program);
       else res.writeHead(200, { "content-type": "text/html" }).end('<div id="selection">selected text</div><script type="module" src="/app.js"></script>');
     });
     frontend.listen(0, "127.0.0.1"); await once(frontend, "listening");

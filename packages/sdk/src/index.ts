@@ -5,7 +5,7 @@ export { StructuredOutputError } from "./structured-output.js";
 export type { StructuredSendOptions } from "./structured-output.js";
 import { application } from "@aexhq/env-http";
 import { composeApplication } from "./application.js";
-import { Brain, type BrainOptions, type CreateSessionOptions, type OperationOptions, type ModelSelection } from "@aexhq/brain";
+import { Brain, inspectAgentloop, inspectTool, inspectEnvironment, type PlacedAgentloop, type PlacedTool, type BrainOptions, type CreateSessionOptions, type OperationOptions, type ModelSelection } from "@aexhq/brain";
 import { AexSessionHandle } from "./session.js";
 import type { ClientAccess, EnvironmentCatalog, TokenUsage } from "./generated.js";
 import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
@@ -55,11 +55,23 @@ export class Aex {
     return composeApplication({ ...options, model: { ...model, apiKey: model.apiKey } }, this.baseUrl);
   }
 
+  private async preparedComposition(options: AexSessionOptions): Promise<CreateSessionOptions> {
+    const composition = this.composition(options);
+    const agentloop = inspectEnvironment(inspectAgentloop(composition.agentloop).environment).driver.driver === "brain"
+      ? await this.client.prepare(composition.agentloop) : composition.agentloop;
+    const tools = [];
+    for (const tool of composition.tools ?? []) {
+      tools.push(inspectEnvironment(inspectTool(tool).environment).driver.driver === "brain"
+        ? await this.client.prepare(tool) : tool);
+    }
+    return { ...composition, agentloop, tools };
+  }
+
   get baseUrl(): string { return this.client.baseUrl; }
 
   readonly sessions = Object.freeze({
     create: async (options: AexSessionOptions, operation?: OperationOptions): Promise<AexSessionHandle> =>
-      new AexSessionHandle(await this.client.sessions.create(this.composition(options), operation)),
+      new AexSessionHandle(await this.client.sessions.create(await this.preparedComposition(options), operation)),
     get: async (...args: Parameters<Brain["sessions"]["get"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.get(...args)),
     list: (): ReturnType<Brain["sessions"]["list"]> => this.client.sessions.list(),
   });
@@ -70,6 +82,9 @@ export class Aex {
   models(...args: Parameters<Brain["models"]>): ReturnType<Brain["models"]> { return this.client.models(...args); }
   stream(...args: Parameters<Brain["stream"]>): ReturnType<Brain["stream"]> { return this.client.stream(...args); }
   streamPath(...args: Parameters<Brain["streamPath"]>): ReturnType<Brain["streamPath"]> { return this.client.streamPath(...args); }
+  prepare<T extends PlacedAgentloop | PlacedTool>(extension: T): Promise<T> { return this.client.prepare(extension); }
+  prepareEnvironment(...args: Parameters<Brain["prepareEnvironment"]>): ReturnType<Brain["prepareEnvironment"]> { return this.client.prepareEnvironment(...args); }
+  admitProgram(...args: Parameters<Brain["admitProgram"]>): ReturnType<Brain["admitProgram"]> { return this.client.admitProgram(...args); }
   admit(...args: Parameters<Brain["admit"]>): ReturnType<Brain["admit"]> { return this.client.admit(...args); }
   admitAgentloop(...args: Parameters<Brain["admitAgentloop"]>): ReturnType<Brain["admitAgentloop"]> { return this.client.admitAgentloop(...args); }
   admitTool(...args: Parameters<Brain["admitTool"]>): ReturnType<Brain["admitTool"]> { return this.client.admitTool(...args); }
@@ -128,7 +143,7 @@ export class Aex {
       session: CreateSessionOptions; origin: string; expiresAt?: number;
     }): Promise<ClientAccess> => {
       if (this.clientAccess) throw new TypeError("client grants require a backend API key");
-      const prepared = await this.client.sessions.prepare(this.composition(session), "authorized-client");
+      const prepared = await this.client.sessions.prepare(await this.preparedComposition(session), "authorized-client");
       return this.request("POST", "/v1/clients", { origin, expires_at: expiresAt, session: prepared });
     },
     revoke: (id: string): Promise<void> => this.request("DELETE", `/v1/clients/${encodeURIComponent(id)}`),
