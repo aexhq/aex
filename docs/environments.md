@@ -10,7 +10,7 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.5.1` and `@aexhq/agentloop-codex@7.2.1` for the example below.
+Install `@aexhq/env-modal@0.5.6` and `@aexhq/agentloop-codex@8.0.0` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
@@ -131,3 +131,21 @@ name lookup cannot establish the original resource, locate its ID in Modal. With
 stopped, run `modal.mjs recover SESSION ENVIRONMENT SANDBOX_ID` against that same directory and
 configuration. It verifies original ownership tags, terminates that resource and settles usage.
 Never invent a replacement ID, drop an unresolved hold or edit financial history.
+
+## Prepare hosted code
+
+The Aex SDK prepares Agentloops and Tools placed in `brainEnv` before creating a session or
+issuing browser access. Preparation checks account ownership of every runtime and program,
+shares the existing artifact count and byte quotas, and cannot change operator defaults.
+A browser grant can prepare only the exact artifacts in its authorized composition.
+
+To move loading out of request handling, call `const loop = await aex.prepare(pi())` during
+application startup and pass `loop` to several sessions. This returns a normal placement with
+immutable implementation IDs. Imports remain passive; failures reject before session creation.
+`aex.prepareEnvironment({ agentloops, tools, programs })` prepares already admitted IDs directly.
+
+Pi/Codex 8 split their program from a shared runtime. Replace `admit(loop)` plus a handwritten
+Component descriptor with `prepare(loop)` and retain its complete descriptor. Other Wasm
+Components keep working. Preparation stays shared across session end/deletion. A replacement
+worker restores immutable code before running; it does not replay an interrupted turn or
+recreate a lost workspace. See [Brain's Environment reference](https://aex.dev/brain/docs/reference/environment-runtime).

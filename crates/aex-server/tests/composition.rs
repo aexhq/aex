@@ -25,6 +25,24 @@ async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsiz
     let hosts = Arc::new(AtomicUsize::new(0));
     let upstream = Router::new()
         .route(
+            "/v1/brain-env/prepare",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/v1/programs",
+            post(|body: axum::body::Bytes| async move {
+                Json(json!({"id": aex_server::identity::digest(&body), "status": "admitted"}))
+            }),
+        )
+        .route(
+            "/v1/programs/{id}",
+            get(
+                |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                    Json(json!({"id": id, "status": "admitted"}))
+                },
+            ),
+        )
+        .route(
             "/v1/hosts",
             post(move || {
                 let id = hosts.fetch_add(1, Ordering::SeqCst);
@@ -121,6 +139,169 @@ async fn call(
             serde_json::from_slice(&bytes).unwrap()
         },
     )
+}
+
+#[tokio::test]
+async fn program_preparation_requires_ownership_of_both_artifacts_and_preserves_browser_scope() {
+    let (_dir, app, p, token, _) = fixture().await;
+    let mut request = session();
+    request["environments"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|env| env["driver"] == "brain");
+    let source = "1".repeat(64);
+    let other_source = "2".repeat(64);
+    request["agentloop"]["implementation"] =
+        json!({"type":"brain_program", "entrypoint":"turn", "id":source, "runtime":"0".repeat(64)});
+    assert!(
+        aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
+            .await
+            .is_err()
+    );
+    for id in [&source, &other_source] {
+        sqlx::query("INSERT INTO artifacts VALUES($1,'programs',$2,10)")
+            .bind(&p.account)
+            .bind(id)
+            .execute(&app.store.0)
+            .await
+            .unwrap();
+    }
+    aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
+        .await
+        .unwrap();
+    let mut wrong_runtime = request.clone();
+    wrong_runtime["agentloop"]["implementation"]["runtime"] = json!("3".repeat(64));
+    assert!(
+        aex_server::admission::create(&app, &p, &serde_json::from_value(wrong_runtime).unwrap())
+            .await
+            .is_err()
+    );
+    let preparation = json!({"agentloops":["0".repeat(64)], "programs":[source]});
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/brain-env/prepare",
+            &token,
+            None,
+            preparation.clone()
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let origin = "https://customer.example";
+    let (status, grant) = call(
+        &app,
+        Method::POST,
+        "/v1/clients",
+        &token,
+        None,
+        json!({"origin":origin, "expires_at":store::now()+60, "session":request}),
+    )
+    .await;
+    assert!(status.is_success(), "{grant}");
+    let access = grant["token"].as_str().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/brain-env/prepare",
+            access,
+            Some(origin),
+            preparation
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/brain-env/prepare",
+            access,
+            Some(origin),
+            json!({"programs":[other_source]})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let another = app.store.create_account(&app.config.limits).await.unwrap();
+    let (_, other_token) = app
+        .store
+        .issue_key(&another, &app.config.limits)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::GET,
+            &format!("/v1/programs/{source}"),
+            &other_token,
+            None,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/brain-env/prepare",
+            &other_token,
+            None,
+            json!({"programs":[source]})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn programs_share_account_artifact_quotas() {
+    let (_dir, mut app, _p, token, _) = fixture().await;
+    Arc::make_mut(&mut app.config).limits.artifacts_per_account = 1;
+    let (status, first) = call(
+        &app,
+        Method::POST,
+        "/v1/programs",
+        &token,
+        None,
+        json!("source one"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/programs",
+            &token,
+            None,
+            json!("source one")
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/programs",
+            &token,
+            None,
+            json!("source two")
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 }
 
 #[tokio::test]

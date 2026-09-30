@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.86.0 @aexhq/agentloop-pi@7.3.0 zod@4.4.3
+npm install @aexhq/sdk@0.87.0 @aexhq/agentloop-pi@8.0.0 zod@4.4.3
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -52,7 +52,7 @@ explains setup and where other tools run.
 ## Sessions and tools
 
 The SDK uses Brain's session API and extension helpers. You can import `tool`, `agentloop`,
-`brainEnv`, `hostEnv`, `component` and `environment` from `@aexhq/sdk`.
+`brainEnv`, `hostEnv`, `component`, `program` and `environment` from `@aexhq/sdk`.
 
 - [Sessions](https://aex.dev/brain/docs/concepts/sessions): send, submit, stream, reconnect and stop.
 - [Tools](https://aex.dev/brain/docs/guides/write-a-tool): application functions and packaged tools.
@@ -122,7 +122,7 @@ correction. It supports JSON Schema, not arbitrary local Zod refinements or tran
 Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
 owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
 Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
-Use Pi 7.3.0, Codex 7.2.5 and extension packages pinned to Brain 0.36.0 with this SDK.
+Use Pi 8.0.0, Codex 8.0.0 and extension packages pinned to Brain 0.37.0 with this SDK.
 Mixing exact Brain dependency versions creates different TypeScript extension brands.
 
 An existing standalone Brain handle can use Aex's policy without changing servers:
@@ -168,3 +168,7 @@ request and read its committed outcome later. Desktop apps can use
 without receiving an account credential.
 
 Choose [clientBrowser](https://aex.dev/docs/client-browser) for the user's connected tab, or [Application](https://aex.dev/docs/application) for a deployed backend. Both use `aex.sessions.create()` and ordinary Tool declarations.
+
+The SDK prepares hosted code during session setup. To do that earlier and reuse it across
+sessions, call `const loop = await aex.prepare(pi())` during startup, then use `agentloop: loop`.
+See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code).

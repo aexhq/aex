@@ -122,25 +122,19 @@ pub async fn grant(
     let verifier = identity::digest(token.as_bytes());
     let public = public_request(&request, &token)?;
     let fingerprint = fingerprint(&public)?;
-    let mut components = Vec::new();
-    if let Some(id) = request
-        .agentloop
-        .implementation
-        .get("id")
-        .and_then(Value::as_str)
-    {
-        components.push(("agentloops", id.to_owned()));
-    }
-    for tool in &request.tools {
-        for placement in tool.placements.values() {
-            if placement.implementation.get("type").and_then(Value::as_str)
-                == Some("brain_component")
-                && let Some(id) = placement.implementation.get("id").and_then(Value::as_str)
-            {
-                components.push(("tools", id.to_owned()));
-            }
-        }
-    }
+    let preparation = crate::artifacts::session_preparation(&request)?;
+    let components: Vec<_> = preparation
+        .agentloops
+        .iter()
+        .map(|id| ("agentloops", id.as_str()))
+        .chain(preparation.tools.iter().map(|id| ("tools", id.as_str())))
+        .chain(
+            preparation
+                .programs
+                .iter()
+                .map(|id| ("programs", id.as_str())),
+        )
+        .collect();
     sqlx::query("INSERT INTO client_grants(id,verifier,account,issuing_key,host,origin,expires_at,fingerprint,components) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
         .bind(&id).bind(&verifier).bind(&p.account).bind(&p.key).bind(host.host_id.as_str()).bind(input.origin)
         .bind(input.expires_at).bind(fingerprint).bind(serde_json::to_string(&components)?).execute(&app.store.0).await?;
@@ -224,7 +218,7 @@ impl Access {
     pub fn authorize(&self, route: &crate::http::Route<'_>) -> Result<()> {
         use crate::http::Route;
         match route {
-            Route::Create | Route::Artifact(_, _) => Ok(()),
+            Route::Create | Route::Artifact(_, _) | Route::Prepare => Ok(()),
             Route::Host(id, _) if *id == self.host => Ok(()),
             Route::Session(id, op)
                 if self.session.as_deref() == Some(*id) && *op != "environments" =>

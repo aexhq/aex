@@ -40,6 +40,7 @@ pub enum Route<'a> {
     List,
     Register,
     Artifact(&'a str, Option<&'a str>),
+    Prepare,
     Host(&'a str, &'a str),
     Session(&'a str, &'a str),
 }
@@ -90,8 +91,11 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
         ("POST", ["", "v1", "sessions"]) => Ok(Route::Create),
         ("GET", ["", "v1", "sessions"]) => Ok(Route::List),
         ("POST", ["", "v1", "hosts"]) => Ok(Route::Register),
-        ("POST", ["", "v1", kind @ ("agentloops" | "tools")]) => Ok(Route::Artifact(kind, None)),
-        ("GET", ["", "v1", kind @ ("agentloops" | "tools"), id]) => {
+        ("POST", ["", "v1", "brain-env", "prepare"]) => Ok(Route::Prepare),
+        ("POST", ["", "v1", kind @ ("agentloops" | "tools" | "programs")]) => {
+            Ok(Route::Artifact(kind, None))
+        }
+        ("GET", ["", "v1", kind @ ("agentloops" | "tools" | "programs"), id]) => {
             Ok(Route::Artifact(kind, Some(id)))
         }
         ("GET", ["", "v1", "hosts", id, "commands"]) => Ok(Route::Host(id, "commands")),
@@ -154,6 +158,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
                     matches!(
                         route(&m, request.uri().path()),
                         Ok(Route::Create
+                            | Route::Prepare
                             | Route::Artifact(_, _)
                             | Route::Host(_, _)
                             | Route::Session(_, _))
@@ -256,6 +261,7 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
             Route::Create => "create",
             Route::List => "list",
             Route::Register => "register",
+            Route::Prepare => "prepare",
             Route::Artifact(kind, _) => kind,
             Route::Host(_, op) | Route::Session(_, op) => op,
         },
@@ -471,6 +477,16 @@ async fn dispatch(app: App, request: Request) -> Result<Response> {
         }
         Route::List => return sessions::list(&app, &principal).await,
         Route::Register => return hosts::register(&app, &principal, &parts.headers).await,
+        Route::Prepare => {
+            let preparation = serde_json::from_slice(&body)?;
+            return crate::artifacts::prepare(
+                &app,
+                &principal,
+                &preparation,
+                client_access.as_ref(),
+            )
+            .await;
+        }
         Route::Artifact(kind, id) => {
             if let Some(access) = &client_access {
                 access.artifact(kind, id.unwrap_or(&identity::digest(&body)))?;

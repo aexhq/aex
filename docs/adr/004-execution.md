@@ -1,5 +1,9 @@
 # ADR-004: Limit MVP execution to curated Components and customer application Tools
 
+The 2026-09-30 Environment preparation extension accepts account-owned runtime and program
+artifacts under the existing quotas and immutable implementation authority. Shared preparation
+adds no filesystem, network or secret grants; Aex authorizes both program and runtime identities.
+
 Declared Application endpoints and browser delegation now follow [ADR-009](009-application-composition.md).
 
 Status: Accepted. Date: 2026-09-07. Product scope accepted; deployment evidence remains required.

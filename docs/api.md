@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.86.0 (Brain SDK 0.36.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.87.0 (Brain SDK 0.37.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -126,3 +126,8 @@ Image and PDF uploads use the [attachment API](attachments.md). `models(provider
 See [HTTP tools](http-tools.md) and [desktop uploads](attachments.md#upload-from-a-desktop-without-an-account-key).
 Errors carrying `details.admission: "rejected"` did not dispatch a turn and leave the original
 operation key retryable. Unknown outcomes remain unresolved; do not start them again with a new key.
+
+`POST /v1/brain-env/prepare` accepts Brain's `BrainPreparation` contract and returns 204 after
+all eligible workers are prepared. `POST /v1/programs` admits nonempty UTF-8 bytes;
+`GET /v1/programs/{id}` reports admission. Artifact reads and preparation are account scoped;
+all uploaded Components and programs share the existing account artifact quotas.

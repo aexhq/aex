@@ -20,19 +20,10 @@ pub fn request(
 }
 
 pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) -> Result<()> {
-    let descriptor = request
-        .agentloop
-        .implementation
-        .as_object()
-        .ok_or_else(|| Error::invalid("invalid Agentloop implementation"))?;
-    if descriptor.len() != 3
-        || descriptor.get("type").and_then(|v| v.as_str()) != Some("brain_component")
-        || descriptor.get("entrypoint").and_then(|v| v.as_str()) != Some("turn")
-        || descriptor.get("id").and_then(|v| v.as_str()).is_none()
+    for (kind, id) in crate::artifacts::references(&request.agentloop.implementation, "agentloops")?
     {
-        return Err(Error::invalid("Agentloop is not hosted"));
+        crate::artifacts::owned(app, p, kind, id).await?;
     }
-    crate::artifacts::owned(app, p, "agentloops", descriptor["id"].as_str().unwrap()).await?;
     let mut names = std::collections::HashSet::new();
     for environment in &request.environments {
         if environment.lifecycle.is_none() {
@@ -92,27 +83,10 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                 .find(|e| e.name == *environment)
                 .ok_or_else(|| Error::invalid("unknown Tool Environment"))?;
             if matches!(selected.driver, Driver::Brain {}) {
-                let descriptor = placement
-                    .implementation
-                    .as_object()
-                    .ok_or_else(|| Error::invalid("invalid Tool implementation"))?;
-                if !descriptor.keys().all(|key| {
-                    matches!(key.as_str(), "type" | "entrypoint" | "id" | "configuration")
-                }) || descriptor.get("type").and_then(|v| v.as_str()) != Some("brain_component")
-                    || descriptor.get("entrypoint").and_then(|v| v.as_str()) != Some("run")
+                for (kind, id) in crate::artifacts::references(&placement.implementation, "tools")?
                 {
-                    return Err(Error::invalid("hosted Tools require a Brain Component"));
+                    crate::artifacts::owned(app, p, kind, id).await?;
                 }
-                crate::artifacts::owned(
-                    app,
-                    p,
-                    "tools",
-                    descriptor
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| Error::invalid("Tool content address required"))?,
-                )
-                .await?;
             } else if matches!(selected.driver, Driver::Http { .. }) {
                 if crate::environments::application::selected(app, selected) {
                     crate::environments::application::validate_tool(tool, placement)?;

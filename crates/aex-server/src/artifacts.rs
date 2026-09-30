@@ -10,6 +10,9 @@ use axum::{
 };
 
 pub async fn owned(app: &App, p: &Principal, kind: &str, id: &str) -> Result<()> {
+    if !brain_protocol::ids::is_sha256(id) {
+        return Err(Error::invalid("artifact content address required"));
+    }
     if kind == "agentloops" && app.config.agentloops.contains(id) {
         return Ok(());
     }
@@ -23,7 +26,7 @@ pub async fn owned(app: &App, p: &Principal, kind: &str, id: &str) -> Result<()>
     if count == 1 {
         Ok(())
     } else {
-        Err(Error::invalid("Component must be uploaded by this account"))
+        Err(Error::missing())
     }
 }
 
@@ -39,7 +42,11 @@ pub async fn handle(
         owned(app, p, kind, id).await?;
         (Method::GET, format!("/v1/{kind}/{id}"), None)
     } else {
-        if !body.starts_with(b"\0asm\x0d\0\x01\0") {
+        if kind == "programs" {
+            if body.is_empty() || std::str::from_utf8(&body).is_err() {
+                return Err(Error::invalid("program must be nonempty UTF-8"));
+            }
+        } else if !body.starts_with(b"\0asm\x0d\0\x01\0") {
             return Err(Error::invalid("expected a WebAssembly Component"));
         }
         let operation_key = identity::operation_key(headers)?;
@@ -91,6 +98,120 @@ pub async fn handle(
     let response = app
         .brain
         .request(method, &path, headers, body, key.as_deref(), None)
+        .await?;
+    crate::http::finite(app, response).await
+}
+
+pub fn references<'a>(
+    implementation: &'a serde_json::Value,
+    kind: &'static str,
+) -> Result<Vec<(&'static str, &'a str)>> {
+    let descriptor = implementation
+        .as_object()
+        .ok_or_else(|| Error::invalid("invalid hosted implementation"))?;
+    let program = match descriptor.get("type").and_then(|v| v.as_str()) {
+        Some("brain_component") => false,
+        Some("brain_program") => true,
+        _ => return Err(Error::invalid("unsupported hosted implementation")),
+    };
+    if descriptor.get("entrypoint").and_then(|v| v.as_str())
+        != Some(if kind == "agentloops" { "turn" } else { "run" })
+        || !descriptor.keys().all(|key| {
+            matches!(key.as_str(), "type" | "entrypoint" | "id")
+                || (program && key == "runtime")
+                || (kind == "tools" && key == "configuration")
+        })
+    {
+        return Err(Error::invalid("invalid hosted implementation"));
+    }
+    let id = descriptor
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|id| brain_protocol::ids::is_sha256(id))
+        .ok_or_else(|| Error::invalid("artifact content address required"))?;
+    if program {
+        let runtime = descriptor
+            .get("runtime")
+            .and_then(|v| v.as_str())
+            .filter(|id| brain_protocol::ids::is_sha256(id))
+            .ok_or_else(|| Error::invalid("runtime content address required"))?;
+        Ok(vec![(kind, runtime), ("programs", id)])
+    } else {
+        Ok(vec![(kind, id)])
+    }
+}
+
+pub fn session_preparation(
+    request: &brain_protocol::CreateSessionRequest,
+) -> Result<brain_protocol::BrainPreparation> {
+    let mut refs = references(&request.agentloop.implementation, "agentloops")?;
+    for tool in &request.tools {
+        for (name, placement) in &tool.placements {
+            if request.environments.iter().any(|env| {
+                env.name == *name && matches!(env.driver, brain_protocol::Driver::Brain {})
+            }) {
+                refs.extend(references(&placement.implementation, "tools")?);
+            }
+        }
+    }
+    let mut preparation = brain_protocol::BrainPreparation::default();
+    for (kind, id) in refs {
+        match kind {
+            "agentloops" => preparation
+                .agentloops
+                .push(brain_protocol::AgentloopId::new(id)),
+            "tools" => preparation.tools.push(brain_protocol::ToolId::new(id)),
+            "programs" => preparation
+                .programs
+                .push(brain_protocol::ProgramId::new(id)),
+            _ => unreachable!(),
+        }
+    }
+    Ok(preparation)
+}
+
+pub async fn prepare(
+    app: &App,
+    p: &Principal,
+    preparation: &brain_protocol::BrainPreparation,
+    access: Option<&crate::clients::Access>,
+) -> Result<Response> {
+    preparation.validate().map_err(Error::invalid)?;
+    for (kind, id) in preparation
+        .agentloops
+        .iter()
+        .map(|id| ("agentloops", id.as_str()))
+        .chain(preparation.tools.iter().map(|id| ("tools", id.as_str())))
+        .chain(
+            preparation
+                .programs
+                .iter()
+                .map(|id| ("programs", id.as_str())),
+        )
+    {
+        if let Some(access) = access {
+            access.artifact(kind, id)?;
+        }
+        owned(app, p, kind, id).await?;
+    }
+    let _guard = app
+        .artifact_admission
+        .try_lock()
+        .map_err(|_| Error::capacity())?;
+    let headers = HeaderMap::from_iter([(
+        "content-type".parse().unwrap(),
+        "application/json".parse().unwrap(),
+    )]);
+    let response = app
+        .brain
+        .request(
+            Method::POST,
+            "/v1/brain-env/prepare",
+            &headers,
+            Bytes::from(serde_json::to_vec(preparation)?),
+            None,
+            None,
+        )
         .await?;
     crate::http::finite(app, response).await
 }
