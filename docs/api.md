@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.87.0 (Brain SDK 0.37.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.88.0 (Brain SDK 0.38.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -53,8 +53,9 @@ synchronous caller; it does not finish the Tool. Use `return ctx.finish(value)` 
 Tools, or emit results after returning and finish later. Host updates use
 `{ session_id, sequence, update }` and receive a committed event sequence; `update.type` is
 `result`, `returned` or `finish`. Native Components use WIT 0.2.0. Results and completion
-always enter the journal; the loop chooses model messages and explicitly acknowledges the
-processed sequence. Later observations can activate the loop without a user message. See [the Tool return contract](https://aex.dev/brain/docs/guides/write-a-tool#return-values-and-outcomes).
+always enter the journal; the loop chooses model messages, and successful return completes
+its delivered events. Any finer checkpoint or skipping policy belongs to the loop's KV state.
+Later observations can activate the loop without a user message. See [the Tool return contract](https://aex.dev/brain/docs/guides/write-a-tool#return-values-and-outcomes).
 
 Create claims are account/operation/key scoped. Matching completed creates replay while
 ownership exists; differing payloads conflict. Unresolved creates are never dispatched again,
