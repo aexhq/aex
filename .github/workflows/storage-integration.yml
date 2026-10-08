@@ -1,9 +1,12 @@
 name: attachment storage integration
 on:
   workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Immutable release tag to verify (defaults to this workflow's tag)
+        required: false
 permissions:
   contents: read
-  id-token: write
 jobs:
   s3:
     environment: storage-integration
@@ -11,28 +14,32 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_tag || github.ref }}
+      - name: Require an immutable source release
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag || github.ref_name }}
+        run: test "$SOURCE_TAG" = "release/sha-$(git rev-parse HEAD)"
       - name: Require the integration configuration
         env:
-          ROLE: ${{ vars.AEX_TEST_S3_ROLE_ARN }}
+          ACCESS_KEY: ${{ secrets.AEX_S3_ACCESS_KEY_ID }}
+          SECRET_KEY: ${{ secrets.AEX_S3_SECRET_ACCESS_KEY }}
           BUCKET: ${{ vars.AEX_TEST_S3_BUCKET }}
           REGION: ${{ vars.AEX_TEST_S3_REGION }}
+          ENDPOINT: ${{ vars.AEX_TEST_S3_ENDPOINT }}
         run: |
-          test -n "$ROLE" || { echo 'AEX_TEST_S3_ROLE_ARN is required' >&2; exit 1; }
+          test -n "$ACCESS_KEY" || { echo 'AEX_S3_ACCESS_KEY_ID is required' >&2; exit 1; }
+          test -n "$SECRET_KEY" || { echo 'AEX_S3_SECRET_ACCESS_KEY is required' >&2; exit 1; }
           test -n "$BUCKET" || { echo 'AEX_TEST_S3_BUCKET is required' >&2; exit 1; }
           test -n "$REGION" || { echo 'AEX_TEST_S3_REGION is required' >&2; exit 1; }
-      - uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ vars.AEX_TEST_S3_ROLE_ARN }}
-          aws-region: ${{ vars.AEX_TEST_S3_REGION }}
-          role-duration-seconds: 900
-          role-session-name: storage-${{ github.run_id }}-${{ github.run_attempt }}
+          test -n "$ENDPOINT" || { echo 'AEX_TEST_S3_ENDPOINT is required' >&2; exit 1; }
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - name: Prove immutable S3 put, get and delete
         env:
-          AEX_S3_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-          AEX_S3_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          AEX_S3_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
+          AEX_S3_ACCESS_KEY_ID: ${{ secrets.AEX_S3_ACCESS_KEY_ID }}
+          AEX_S3_SECRET_ACCESS_KEY: ${{ secrets.AEX_S3_SECRET_ACCESS_KEY }}
           AEX_TEST_S3_BUCKET: ${{ vars.AEX_TEST_S3_BUCKET }}
           AEX_TEST_S3_REGION: ${{ vars.AEX_TEST_S3_REGION }}
+          AEX_TEST_S3_ENDPOINT: ${{ vars.AEX_TEST_S3_ENDPOINT }}
         run: cargo test --locked -p aex-server --features storage-integration-tests --test s3
