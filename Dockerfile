@@ -14,7 +14,7 @@ COPY packages/cli/package.json packages/cli/package.json
 RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:24.17.0-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates perl-base && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10002 aex && install -d -o 10002 -g 10002 /var/lib/aex \
     && install -d -o 10003 -g 10003 -m 700 /var/lib/aex-environment
 COPY --from=build /aex-server /usr/local/bin/aex-server

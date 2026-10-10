@@ -35,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.88.0 @aexhq/agentloop-pi@9.0.0 zod@4.4.3
+npm install @aexhq/sdk@0.88.1 @aexhq/agentloop-pi@9.0.1 zod@4.4.3
 ```
 
 Save this as `order.mjs`:

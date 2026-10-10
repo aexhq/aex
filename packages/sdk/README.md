@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.88.0 @aexhq/agentloop-pi@9.0.0 zod@4.4.3
+npm install @aexhq/sdk@0.88.1 @aexhq/agentloop-pi@9.0.1 zod@4.4.3
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -56,7 +56,7 @@ The SDK uses Brain's session API and extension helpers. You can import `tool`, `
 
 - [Sessions](https://aex.dev/brain/docs/concepts/sessions): send, submit, stream, reconnect and stop.
 - [Tools](https://aex.dev/brain/docs/guides/write-a-tool): application functions and packaged tools.
-- [Custom Agentloops](https://aex.dev/brain/docs/reference/agentloop-contract): one scoped `ctx`, KV state and automatic completion on successful return. Rebuild custom loops with Brain SDK 0.38.0 and use matching Pi/Codex 9.0.0 for new sessions.
+- [Custom Agentloops](https://aex.dev/brain/docs/reference/agentloop-contract): one scoped `ctx`, KV state and automatic completion on successful return. Rebuild custom loops with Brain SDK 0.39.0 and use matching Pi/Codex 9.0.1 for new sessions.
 - [Structured output](#structured-output): validated JSON answers.
 - [Managed environments](https://github.com/aexhq/aex/blob/main/docs/environments.md): hosted tools and workspaces.
 - [Attachments](https://github.com/aexhq/aex/blob/main/docs/attachments.md): upload images and PDFs.
@@ -123,7 +123,7 @@ correction. It supports JSON Schema, not arbitrary local Zod refinements or tran
 Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
 owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
 Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
-Use Pi 9.0.0, Codex 9.0.0 and extension packages pinned to Brain 0.38.0 with this SDK.
+Use Pi 9.0.1, Codex 9.0.1 and extension packages pinned to Brain 0.39.0 with this SDK.
 Mixing exact Brain dependency versions creates different TypeScript extension brands.
 
 An existing standalone Brain handle can use Aex's policy without changing servers:
