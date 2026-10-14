@@ -125,7 +125,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   async function meter(){
     const sessions={};
     const parents=[join(directory,"brain/sessions"),...await readdir(join(directory,"brain/agentloops")).then(names=>names.map(name=>join(directory,"brain/agentloops",name)))];
-    for(const parent of parents)for(const id of await readdir(parent))sessions[id]=(sessions[id]??0)+await size(join(parent,id));
+    for(const parent of parents)for(const id of await readdir(parent))if(id!=="identity.json")sessions[id]=(sessions[id]??0)+await size(join(parent,id));
     await operate({action:"report_usage",observed_at:Math.floor(Date.now()/1000),sessions});
   }
   async function account(){const {account}=await operate({action:"create_account"});return {account,...await operate({action:"issue_key",account})};}

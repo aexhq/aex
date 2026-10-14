@@ -11,6 +11,8 @@ import subprocess
 
 def measure_sessions(parent, result):
     for session in parent.iterdir():
+        if session.name == "identity.json" and session.is_file() and not session.is_symlink():
+            continue
         if not session.is_dir() or session.is_symlink():
             raise ValueError("unexpected session directory")
         total = 0

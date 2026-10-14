@@ -17,6 +17,7 @@ class MeterTests(unittest.TestCase):
             (root / "sessions/ses_test/journal").write_bytes(b"state")
             (root / "agentloops/pi/ses_test").mkdir(parents=True)
             (root / "agentloops/pi/ses_test/native.json").write_bytes(b"native")
+            (root / "agentloops/pi/identity.json").write_bytes(b"shared runtime identity")
             (root / "agentloops/codex/ses_other").mkdir(parents=True)
             (root / "agentloops/codex/ses_other/native.json").write_bytes(b"other")
             (root / "server-metadata").write_bytes(b"secret")
