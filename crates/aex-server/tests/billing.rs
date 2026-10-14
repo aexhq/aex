@@ -486,9 +486,12 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
     let handler_received = received.clone();
     let handler_accept = accept.clone();
     let upstream = Router::new()
-        .route("/v1/sessions/ses_billing",get(move || { let phase=status_phase.load(Ordering::SeqCst); async move { Json(json!({"session_id":"ses_billing","status":if phase == 1 {"running"} else {"idle"},"last_sequence":phase+1})) } }))
+        .route("/v1/sessions/ses_billing",get(move || { let phase=status_phase.load(Ordering::SeqCst); async move { Json(json!({"session_id":"ses_billing","status":if phase >= 1 {"running"} else {"idle"},"last_sequence":phase+1})) } }))
         .route("/v1/sessions/ses_billing/events",get(move || { let phase=event_phase.load(Ordering::SeqCst); async move {
-            Json(json!({"events":if phase==2 {vec![json!({"sequence":2,"recorded_at_ms":1000,"event_type":"turn_started","data":{}}),json!({"sequence":3,"recorded_at_ms":1008,"event_type":"turn_ended","data":{}})]} else {vec![]},"next_cursor":phase+1}))
+            let mut events = Vec::new();
+            if phase >= 1 { events.push(json!({"sequence":2,"recorded_at_ms":1000,"event_type":"turn_started","data":{}})); }
+            if phase >= 2 { events.push(json!({"sequence":3,"recorded_at_ms":1008,"event_type":"turn_ended","data":{}})); }
+            Json(json!({"events":events,"next_cursor":phase+1}))
         }}))
         .route("/v1/sessions/ses_billing/messages",post(move |headers:HeaderMap| {
             let phase=handler_phase.clone(); let calls=handler_calls.clone(); let received=handler_received.clone(); let accept=handler_accept.clone();
@@ -566,6 +569,7 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         .unwrap();
     assert_eq!(replay.status(), StatusCode::ACCEPTED);
     phase.store(2, Ordering::SeqCst);
+    // The submitted turn is terminal even though a background activation keeps the session running.
     assert!(
         aex_server::turns::reconcile(&app, "ses_billing")
             .await

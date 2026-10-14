@@ -189,12 +189,10 @@ pub async fn reconcile(app: &App, session: &str) -> Result<bool> {
     let Some(turn) = sqlx::query("SELECT s.account,s.active_key,t.since_sequence,r.max_units,c.result FROM sessions s LEFT JOIN session_turns t ON t.operation=s.active_key LEFT JOIN credit_reservations r ON r.id=s.active_key LEFT JOIN claims c ON c.upstream_key=s.active_key WHERE s.id=$1 AND s.active_key IS NOT NULL")
         .bind(session).fetch_optional(&app.store.0).await? else { return Ok(true); };
     let summary = app.brain.summary(session).await?;
-    if matches!(
+    let busy = matches!(
         summary.status,
         SessionStatus::Running | SessionStatus::Creating | SessionStatus::Ending
-    ) {
-        return Ok(false);
-    }
+    );
     let operation: String = turn.get("active_key");
     let account: String = turn.get("account");
     let max_units: Option<i64> = turn.get("max_units");
@@ -245,6 +243,10 @@ pub async fn reconcile(app: &App, session: &str) -> Result<bool> {
                 return Err(Error::ambiguous());
             }
         }
+        // A submitted turn can finish while an independent observation activation is running.
+        if ended.is_none() && busy {
+            return Ok(false);
+        }
         units = match (started, ended) {
             (None, None) => {
                 let reply = turn
@@ -262,6 +264,8 @@ pub async fn reconcile(app: &App, session: &str) -> Result<bool> {
             }
             _ => return Err(Error::ambiguous()),
         };
+    } else if busy {
+        return Ok(false);
     }
     let mut tx = app.store.0.begin().await?;
     Store::lock_account(&mut tx, &account).await?;

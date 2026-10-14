@@ -22,7 +22,8 @@ allocation. Never infer ownership from timing or request similarity. For an unce
 stop/restart Brain if a request may remain in flight, then use `reconcile_turn` while drained.
 It releases capacity after terminal journal evidence or a recorded request rejection and never reruns
 work. `maintain` performs the same reconciliation for completed asynchronous turns. A merely idle
-session does not prove that a pending request was never dispatched.
+session does not prove that a pending request was never dispatched. A journaled terminal result
+releases the submitted turn's reservation even while a background observation activation runs.
 
 Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery are described in
 [Billing](billing.md). `billing.max_turn_secs` caps the charge and should match the paired Brain's
