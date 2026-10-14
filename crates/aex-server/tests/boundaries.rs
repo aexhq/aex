@@ -432,7 +432,23 @@ fn configuration_and_routes_fail_closed() {
 #[tokio::test]
 async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_ambient_grants() {
     let (_dir, app, p, _) = app().await;
-    let base = serde_json::json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
+    let base = serde_json::json!({"agentloop":{"name":"pi","configuration":{}},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
+    for name in ["pi", "codex", "opencode"] {
+        let mut value = base.clone();
+        value["agentloop"] =
+            serde_json::json!({"name": name, "configuration": {"contextWindow": 200000}});
+        let request = serde_json::from_value(value).unwrap();
+        assert!(
+            aex_server::admission::create(&app, &p, &request)
+                .await
+                .is_ok()
+        );
+    }
+    for field in ["command", "args", "implementation", "environment"] {
+        let mut value = base.clone();
+        value["agentloop"][field] = serde_json::json!("customer-selected");
+        assert!(serde_json::from_value::<brain_protocol::CreateSessionRequest>(value).is_err());
+    }
     for provider in ["openai", "deepseek", "customer-provider"] {
         let mut request = base.clone();
         request["model"]["provider"] = serde_json::json!(provider);
@@ -461,10 +477,7 @@ async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_
             "/environments",
             serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"network":["http://169.254.169.254"]}}]),
         ),
-        (
-            "/agentloop/implementation/id",
-            serde_json::json!("f".repeat(64)),
-        ),
+        ("/agentloop/name", serde_json::json!("unregistered")),
         (
             "/environments",
             serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),

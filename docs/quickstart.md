@@ -24,7 +24,7 @@ Your model provider bills model calls separately from Aex hosting.
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.88.1 @aexhq/agentloop-pi@9.0.1 zod@4.4.3
+npm install @aexhq/sdk@0.89.0 @aexhq/agentloop-pi@11.0.0 zod@4.4.3
 ```
 
 ## 3. Create a session
@@ -106,6 +106,7 @@ See [managed environments](environments.md) for available profiles and lifecycle
 Aex is in early preview. Maintenance can interrupt work; saved history remains available,
 and uncertain actions are not automatically retried.
 
-The SDK prepares hosted code during session setup. To do that earlier and reuse it across
-sessions, call `const loop = await aex.prepare(pi())` during startup, then use `agentloop: loop`.
-See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code).
+Aex runs Pi, Codex and OpenCode on the server. Their factories select an installed runtime
+and pass session settings; they do not upload or start executables. Use `pi()`, `codex()` or
+`opencode()` from the corresponding `@aexhq/agentloop-*` package.
+See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code) for hosted Tools.

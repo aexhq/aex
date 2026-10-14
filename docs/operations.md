@@ -75,6 +75,6 @@ second-writer rejection, consecutive turns, retention and credential redaction.
 `tools/image-smoke.py` verifies the non-root container and writable data path.
 
 `tools/live-local.py --workspace-env /workspace/.env.prd` runs a real-provider check with explicit
-`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER`, `BRAIN_TEST_WORKER` and `BRAIN_TEST_REFERENCE_AGENTLOOP` paths.
+`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER` and `BRAIN_TEST_WORKER` paths.
 `tools/live-check.mjs` can target deployed Aex using environment-supplied test credentials.
 Missing credentials or provider failure fail this release check; mocks do not replace it.

@@ -1,8 +1,8 @@
-import { Aex, agentloop, brainEnv, component, hostEnv, tool } from "@aexhq/sdk";
-import { pathToFileURL } from "node:url";
+import { Aex, hostEnv, tool } from "@aexhq/sdk";
+import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
-for (const name of ["AEX_API_KEY", "MODEL_API_KEY", "AGENTLOOP_FILE"]) {
+for (const name of ["AEX_API_KEY", "MODEL_API_KEY"]) {
   if (!process.env[name]) throw new Error(`${name} required`);
 }
 const aex = new Aex({ ...(process.env.AEX_URL ? { baseUrl: process.env.AEX_URL } : {}), apiKey: process.env.AEX_API_KEY });
@@ -10,7 +10,7 @@ const lookup = tool({ name: "lookup", description: "Look up an application value
 try {
   const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
-    agentloop: agentloop({ implementation: component(pathToFileURL(process.env.AGENTLOOP_FILE)) })({ env: brainEnv({ name: "brain" }) }),
+    agentloop: pi(),
     tools: [lookup({ env: hostEnv({ name: "app" }) })],
   });
   try {

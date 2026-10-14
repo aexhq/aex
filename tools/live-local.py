@@ -1,6 +1,5 @@
 """Run the live-provider release check against local Linux Aex and Brain processes."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,10 +44,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='aex-live-') as directory:
         path=Path(directory)
         config=json.loads((root/'examples/config.json').read_text())
-        config.update(listen=f'127.0.0.1:{aex_port}',operator_listen=f'127.0.0.1:{admin_port}',data_dir=str(path/'aex'),brain_url=f'http://127.0.0.1:{brain_port}',
-            agentloops=[hashlib.sha256(Path(os.environ['BRAIN_TEST_REFERENCE_AGENTLOOP']).read_bytes()).hexdigest()])
+        config.update(listen=f'127.0.0.1:{aex_port}',operator_listen=f'127.0.0.1:{admin_port}',data_dir=str(path/'aex'),brain_url=f'http://127.0.0.1:{brain_port}')
         (path/'config.json').write_text(json.dumps(config))
         environment={**os.environ,'BRAIN_LISTEN':f'127.0.0.1:{brain_port}','BRAIN_DATA_DIR':str(path/'brain'),'BRAIN_ENV_WORKER':os.environ['BRAIN_TEST_WORKER'],'BRAIN_API_TOKEN':brain_token,
+            'BRAIN_AGENTLOOPS':json.dumps({'pi': {'command': 'node', 'args': [str(root/'node_modules/@aexhq/agentloop-pi/bin/brain-agentloop-pi.mjs')]}}),
             'AEX_DATABASE_URL':database_url,'AEX_SITE_TOKEN':uuid.uuid4().hex,'AEX_BRAIN_TOKEN':brain_token,'AEX_OPERATOR_TOKEN':operator_token,'AEX_URL':f'http://127.0.0.1:{aex_port}','AEX_MODEL_KEY':model_key}
         def operate(body):
             request=urllib.request.Request(f'http://127.0.0.1:{admin_port}/operate',data=json.dumps(body).encode(),headers={'content-type':'application/json','authorization':'Bearer '+operator_token})

@@ -124,10 +124,9 @@ pub async fn grant(
     let fingerprint = fingerprint(&public)?;
     let preparation = crate::artifacts::session_preparation(&request)?;
     let components: Vec<_> = preparation
-        .agentloops
+        .tools
         .iter()
-        .map(|id| ("agentloops", id.as_str()))
-        .chain(preparation.tools.iter().map(|id| ("tools", id.as_str())))
+        .map(|id| ("tools", id.as_str()))
         .chain(
             preparation
                 .programs

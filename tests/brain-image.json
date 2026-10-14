@@ -1,4 +1,4 @@
 {
-  "revision": "c9115c28818cc570685eb98c440e4dbaf792112c",
-  "image": "ghcr.io/aexhq/brain@sha256:91282fef3a604efe8b28235981cfa8e58c9817087c04f835169dee5277e0b194"
+  "revision": "66361a8dd1942572f8e4b01cf7ce6f403ec920c4",
+  "image": "ghcr.io/aexhq/brain-agentloops@sha256:b54765c64a7091e74471e4202db78aebd610da156c478981bdea9345830bc81c"
 }

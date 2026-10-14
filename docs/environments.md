@@ -10,11 +10,11 @@ Choose a profile and command that your account's catalog actually lists. Profile
 to accounts; this API does not upload your own code or accept arbitrary commands and images.
 
 Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.5.8` and `@aexhq/agentloop-codex@9.0.1` for the example below.
+Install `@aexhq/env-modal@0.5.10` and `@aexhq/agentloop-codex@11.0.0` for the example below.
 Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
 
 ```ts
-import { Aex, brainEnv, tool } from "@aexhq/sdk";
+import { Aex, tool } from "@aexhq/sdk";
 import { codex } from "@aexhq/agentloop-codex";
 import { modal } from "@aexhq/env-modal";
 import { z } from "zod";
@@ -28,7 +28,7 @@ try {
     implementation: { type: "modal_command", name: "calculate", configuration: { context: "application-owned" } },
   });
   const session = await aex.sessions.create({
-    agentloop: codex({ env: brainEnv({ name: "brain" }), output: { schema: { type: "object" }, maxCorrections: 2 } }),
+    agentloop: codex(),
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY! },
     tools: [calculate({ env: workspace })],
   }, { idempotencyKey: "create-analysis-once" });
@@ -134,18 +134,20 @@ Never invent a replacement ID, drop an unresolved hold or edit financial history
 
 ## Prepare hosted code
 
-The Aex SDK prepares Agentloops and Tools placed in `brainEnv` before creating a session or
+The Aex SDK prepares Tools placed in `brainEnv` before creating a session or
 issuing browser access. Preparation checks account ownership of every runtime and program,
 shares the existing artifact count and byte quotas, and cannot change operator defaults.
 A browser grant can prepare only the exact artifacts in its authorized composition.
 
-To move loading out of request handling, call `const loop = await aex.prepare(pi())` during
-application startup and pass `loop` to several sessions. This returns a normal placement with
+To move loading out of request handling, call `const prepared = await aex.prepare(myTool)` during
+application startup and reuse that Tool across sessions. This returns a normal placement with
 immutable implementation IDs. Imports remain passive; failures reject before session creation.
-`aex.prepareEnvironment({ agentloops, tools, programs })` prepares already admitted IDs directly.
+`aex.prepareEnvironment({ tools, programs })` prepares already admitted IDs directly.
 
-Pi/Codex 8 split their program from a shared runtime. Replace `admit(loop)` plus a handwritten
-Component descriptor with `prepare(loop)` and retain its complete descriptor. Other Wasm
-Components keep working. Preparation stays shared across session end/deletion. A replacement
+Agentloops are installed and registered at server startup. `pi()`, `codex()` and `opencode()`
+select an offered runtime and pass its session settings. They do not use Environment preparation
+or accept executable paths. See [Brain's Agentloop reference](https://aex.dev/brain/docs/reference/agentloop-contract).
+
+Tool preparation stays shared across session end/deletion. A replacement
 worker restores immutable code before running; it does not replay an interrupted turn or
 recreate a lost workspace. See [Brain's Environment reference](https://aex.dev/brain/docs/reference/environment-runtime).

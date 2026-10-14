@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { Aex, brainEnv, hostEnv, tool } from "@aexhq/sdk";
+import { Aex, hostEnv, tool } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -21,7 +21,7 @@ const viewImage = tool({
 });
 try {
   const session = await aex.sessions.create({
-    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+    agentloop: pi(),
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
     tools: [viewImage({ env: hostEnv({ name: "app" }) })],
   });

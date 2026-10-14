@@ -19,12 +19,10 @@ mkdir -p "$checkout/image-bin"
 docker cp "$container:/usr/local/bin/brain" "$checkout/image-bin/brain"
 docker cp "$container:/usr/local/bin/brain-env-worker" "$checkout/image-bin/brain-env-worker"
 rustup target add wasm32-wasip2
-cargo build --locked --manifest-path "$checkout/examples/reference-agentloop/Cargo.toml" --release --target wasm32-wasip2
 cargo build --locked --manifest-path "$checkout/tests/fixtures/diagnostic-tool/Cargo.toml" --release --target wasm32-wasip2
 export AEX_TEST_SERVER="$root/target/debug/aex-server"
 export BRAIN_TEST_SERVER="$checkout/image-bin/brain"
 export BRAIN_TEST_WORKER="$checkout/image-bin/brain-env-worker"
-export BRAIN_TEST_REFERENCE_AGENTLOOP="$checkout/examples/reference-agentloop/target/wasm32-wasip2/release/reference_agentloop.wasm"
 export BRAIN_TEST_TOOL="$checkout/tests/fixtures/diagnostic-tool/target/wasm32-wasip2/release/diagnostic_tool.wasm"
 npm run build
 node tools/browser-journey-bundle.mjs

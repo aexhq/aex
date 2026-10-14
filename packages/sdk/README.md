@@ -8,7 +8,7 @@ tools, send messages, and read saved conversations without operating a Brain ser
 Create a key in the [dashboard](https://aex.dev/dashboard). With Node.js 22 or newer, install:
 
 ```sh
-npm install @aexhq/sdk@0.88.1 @aexhq/agentloop-pi@9.0.1 zod@4.4.3
+npm install @aexhq/sdk@0.89.0 @aexhq/agentloop-pi@11.0.0 zod@4.4.3
 ```
 
 Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. Save as `order.mjs` and
@@ -51,12 +51,12 @@ explains setup and where other tools run.
 
 ## Sessions and tools
 
-The SDK uses Brain's session API and extension helpers. You can import `tool`, `agentloop`,
+The SDK uses Brain's session API and extension helpers. You can import `tool`,
 `brainEnv`, `hostEnv`, `component`, `program` and `environment` from `@aexhq/sdk`.
 
 - [Sessions](https://aex.dev/brain/docs/concepts/sessions): send, submit, stream, reconnect and stop.
 - [Tools](https://aex.dev/brain/docs/guides/write-a-tool): application functions and packaged tools.
-- [Custom Agentloops](https://aex.dev/brain/docs/reference/agentloop-contract): one scoped `ctx`, KV state and automatic completion on successful return. Rebuild custom loops with Brain SDK 0.39.0 and use matching Pi/Codex 9.0.1 for new sessions.
+- [Agentloops](https://aex.dev/brain/docs/reference/agentloop-contract): operators register installed runtimes at startup. Hosted sessions select a runtime offered by Aex; custom executables require your own Brain deployment.
 - [Structured output](#structured-output): validated JSON answers.
 - [Managed environments](https://github.com/aexhq/aex/blob/main/docs/environments.md): hosted tools and workspaces.
 - [Attachments](https://github.com/aexhq/aex/blob/main/docs/attachments.md): upload images and PDFs.
@@ -113,17 +113,19 @@ The initial turn uses the supplied `idempotencyKey`; corrections use distinct de
 Re-entry reuses completed turns when prompts and validation feedback are identical. This
 is not an atomic server operation; nondeterministic validation can conflict on replay.
 
-For work submitted by a short-lived caller, configure the official Agentloop with
-`output: { schema: z.toJSONSchema(answerType), maxCorrections: 2 }` and use `submit()`.
-That separate extension policy validates inside the hosted turn and prohibits Tools during
-correction. It supports JSON Schema, not arbitrary local Zod refinements or transforms.
+Typed answers require a caller that stays connected through `send()`. A short-lived caller
+can use `submit()`, read the completed transcript later and validate it in application code.
+The installed Agentloops do not run Aex's validation or correction policy.
 
 ### Migrating from Brain SDK typed sends
 
 Brain SDK 0.34 removes typed sends and the corresponding types and errors. Aex SDK 0.84
 owns them. Existing Aex `send(..., { output })` calls keep the same syntax and behavior.
 Import `StructuredSendOptions` and `StructuredOutputError` from `@aexhq/sdk`.
-Use Pi 9.0.1, Codex 9.0.1 and extension packages pinned to Brain 0.39.0 with this SDK.
+Use Pi 11.0.0, Codex 11.0.0 or OpenCode 1.0.0 with this SDK and Brain 0.41.0.
+Agentloops are registered at server startup. Replace `prepare(pi())` or a placed Agentloop
+with `pi()`. Session creation accepts a registered name and settings; Agentloop uploads and
+`admitAgentloop()` are no longer supported. Hosted Tools still support `prepare()`.
 Mixing exact Brain dependency versions creates different TypeScript extension brands.
 
 An existing standalone Brain handle can use Aex's policy without changing servers:
@@ -136,8 +138,8 @@ const session = new AexSessionHandle(await brain.sessions.get(sessionId));
 `Aex` and `AexSessionHandle` use composition, so they are not instances of the upstream
 `Brain` and `SessionHandle` classes. Use `AexSessionHandle` for explicit product-handle
 annotations. Neutral Brain classes and extension helpers are still re-exported with their
-original identities; `withToken()` still returns a raw Brain client. Stored sessions,
-server contracts, native model formats and Tool schemas are unchanged.
+original identities; `withToken()` still returns a raw Brain client. Upgrading an older server
+requires a planned migration: Brain 0.41 uses a new session contract and `brain-data/3` storage.
 
 ## Account and usage
 
@@ -170,6 +172,7 @@ without receiving an account credential.
 
 Choose [clientBrowser](https://aex.dev/docs/client-browser) for the user's connected tab, or [Application](https://aex.dev/docs/application) for a deployed backend. Both use `aex.sessions.create()` and ordinary Tool declarations.
 
-The SDK prepares hosted code during session setup. To do that earlier and reuse it across
-sessions, call `const loop = await aex.prepare(pi())` during startup, then use `agentloop: loop`.
-See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code).
+Aex runs Pi, Codex and OpenCode on the server. Their factories select an installed runtime
+and pass session settings; they do not upload or start executables. Use `pi()`, `codex()` or
+`opencode()` from the corresponding `@aexhq/agentloop-*` package.
+See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code) for hosted Tools.

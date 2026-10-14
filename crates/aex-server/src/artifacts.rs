@@ -13,9 +13,6 @@ pub async fn owned(app: &App, p: &Principal, kind: &str, id: &str) -> Result<()>
     if !brain_protocol::ids::is_sha256(id) {
         return Err(Error::invalid("artifact content address required"));
     }
-    if kind == "agentloops" && app.config.agentloops.contains(id) {
-        return Ok(());
-    }
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM artifacts WHERE account=$1 AND kind=$2 AND id=$3")
             .bind(&p.account)
@@ -114,8 +111,7 @@ pub fn references<'a>(
         Some("brain_program") => true,
         _ => return Err(Error::invalid("unsupported hosted implementation")),
     };
-    if descriptor.get("entrypoint").and_then(|v| v.as_str())
-        != Some(if kind == "agentloops" { "turn" } else { "run" })
+    if descriptor.get("entrypoint").and_then(|v| v.as_str()) != Some("run")
         || !descriptor.keys().all(|key| {
             matches!(key.as_str(), "type" | "entrypoint" | "id")
                 || (program && key == "runtime")
@@ -144,7 +140,7 @@ pub fn references<'a>(
 pub fn session_preparation(
     request: &brain_protocol::CreateSessionRequest,
 ) -> Result<brain_protocol::BrainPreparation> {
-    let mut refs = references(&request.agentloop.implementation, "agentloops")?;
+    let mut refs = Vec::new();
     for tool in &request.tools {
         for (name, placement) in &tool.placements {
             if request.environments.iter().any(|env| {
@@ -157,9 +153,6 @@ pub fn session_preparation(
     let mut preparation = brain_protocol::BrainPreparation::default();
     for (kind, id) in refs {
         match kind {
-            "agentloops" => preparation
-                .agentloops
-                .push(brain_protocol::AgentloopId::new(id)),
             "tools" => preparation.tools.push(brain_protocol::ToolId::new(id)),
             "programs" => preparation
                 .programs
@@ -178,10 +171,9 @@ pub async fn prepare(
 ) -> Result<Response> {
     preparation.validate().map_err(Error::invalid)?;
     for (kind, id) in preparation
-        .agentloops
+        .tools
         .iter()
-        .map(|id| ("agentloops", id.as_str()))
-        .chain(preparation.tools.iter().map(|id| ("tools", id.as_str())))
+        .map(|id| ("tools", id.as_str()))
         .chain(
             preparation
                 .programs

@@ -92,10 +92,8 @@ pub fn route<'a>(method: &Method, path: &'a str) -> Result<Route<'a>> {
         ("GET", ["", "v1", "sessions"]) => Ok(Route::List),
         ("POST", ["", "v1", "hosts"]) => Ok(Route::Register),
         ("POST", ["", "v1", "brain-env", "prepare"]) => Ok(Route::Prepare),
-        ("POST", ["", "v1", kind @ ("agentloops" | "tools" | "programs")]) => {
-            Ok(Route::Artifact(kind, None))
-        }
-        ("GET", ["", "v1", kind @ ("agentloops" | "tools" | "programs"), id]) => {
+        ("POST", ["", "v1", kind @ ("tools" | "programs")]) => Ok(Route::Artifact(kind, None)),
+        ("GET", ["", "v1", kind @ ("tools" | "programs"), id]) => {
             Ok(Route::Artifact(kind, Some(id)))
         }
         ("GET", ["", "v1", "hosts", id, "commands"]) => Ok(Route::Host(id, "commands")),

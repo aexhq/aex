@@ -1,6 +1,6 @@
 # Hosted API
 
-Use `@aexhq/sdk` 0.88.1 (Brain SDK 0.39.0) with an issued API key. Brain source is pinned by
+Use `@aexhq/sdk` 0.89.0 (Brain SDK 0.41.0) with an issued API key. Brain source is pinned by
 full revision in Cargo. Customer keys never authorize direct access to private Brain.
 
 | Methods | Path | Authorization |
@@ -17,8 +17,8 @@ full revision in Cargo. Customer keys never authorize direct access to private B
 | GET, HEAD | `/v1/attachments/{id}/content?token=...` | Scoped read capability; active account, owned session and unexpired file |
 | POST | `/v1/sessions/{id}/messages`, `/cancel`, `/end` | Ownership and operation key |
 | POST | `/v1/sessions/{id}/environments` | Ownership and operation key; Brain's Environment control contract |
-| POST | `/v1/agentloops`, `/v1/tools` | Active key; bounded account-owned Wasm Components |
-| GET | `/v1/agentloops/{id}`, `/v1/tools/{id}` | Account-owned or operator-approved content address |
+| POST | `/v1/tools` | Active key; bounded account-owned Wasm Components |
+| GET | `/v1/tools/{id}` | Account-owned content address |
 | POST | `/v1/hosts` | Active account key |
 | GET | `/v1/hosts/{id}/commands` | Scoped token and active issuing key/account |
 | POST | `/v1/hosts/{id}/results`, `/events` | Scoped token and owned target session |

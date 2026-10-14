@@ -20,9 +20,10 @@ pub fn request(
 }
 
 pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) -> Result<()> {
-    for (kind, id) in crate::artifacts::references(&request.agentloop.implementation, "agentloops")?
-    {
-        crate::artifacts::owned(app, p, kind, id).await?;
+    if !app.config.agentloops.contains(&request.agentloop.name) {
+        return Err(Error::invalid(
+            "agentloop is not offered by this deployment",
+        ));
     }
     let mut names = std::collections::HashSet::new();
     for environment in &request.environments {
@@ -65,15 +66,6 @@ pub async fn create(app: &App, p: &Principal, request: &CreateSessionRequest) ->
                 }
             }
         }
-    }
-    if !request
-        .environments
-        .iter()
-        .any(|e| e.name == request.agentloop.environment && matches!(e.driver, Driver::Brain {}))
-    {
-        return Err(Error::invalid(
-            "Agentloop requires the hosted Brain Environment",
-        ));
     }
     for tool in &request.tools {
         for (environment, placement) in &tool.placements {

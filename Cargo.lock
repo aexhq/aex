@@ -609,7 +609,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain?rev=c9115c28818cc570685eb98c440e4dbaf792112c#c9115c28818cc570685eb98c440e4dbaf792112c"
+source = "git+https://github.com/aexhq/brain?rev=66361a8dd1942572f8e4b01cf7ce6f403ec920c4#66361a8dd1942572f8e4b01cf7ce6f403ec920c4"
 dependencies = [
  "hex",
  "schemars",

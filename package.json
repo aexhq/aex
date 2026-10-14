@@ -12,23 +12,28 @@
     "test:cli": "npm run build && npm test --workspace @aexhq/cli"
   },
   "devDependencies": {
-    "@aexhq/agentloop-codex": "9.0.1",
-    "@aexhq/agentloop-pi": "9.0.1",
-    "@aexhq/brain": "0.39.0",
+    "@aexhq/agentloop-codex": "11.0.0",
+    "@aexhq/agentloop-pi": "11.0.0",
+    "@aexhq/brain": "0.41.0",
     "@types/node": "22.19.19",
     "esbuild": "0.25.9",
     "json-schema-to-typescript": "15.0.4",
     "pg": "8.16.3",
     "playwright": "1.63.0",
     "typescript": "5.9.3",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@aexhq/agentloop-opencode": "1.0.0"
   },
   "workspaces": [
     "packages/sdk",
     "packages/cli"
   ],
   "dependencies": {
-    "@aexhq/env-http": "0.3.4",
-    "@aexhq/env-modal": "0.5.8"
+    "@aexhq/env-http": "0.3.6",
+    "@aexhq/env-modal": "0.5.10"
+  },
+  "overrides": {
+    "@parcel/watcher": "2.6.0",
+    "@modelcontextprotocol/client": "2.3.1"
   }
 }

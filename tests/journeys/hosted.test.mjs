@@ -5,13 +5,14 @@ import { createServer } from "node:http";
 import { mkdtemp, readFile, writeFile, rm, readdir, stat, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { Aex, StructuredOutputError, agentloop, brainEnv, component, hostEnv, clientBrowser, tool } from "@aexhq/sdk";
+import { Aex, StructuredOutputError, brainEnv, component, hostEnv, clientBrowser, tool } from "@aexhq/sdk";
 import { database } from "./database.mjs";
 import { pi } from "@aexhq/agentloop-pi";
 import { codex } from "@aexhq/agentloop-codex";
+import { opencode } from "@aexhq/agentloop-opencode";
 import { chromium } from "playwright";
 import { z } from "zod";
 import { createHttpEnvironment, serveEnvironment } from "@aexhq/env-http/server";
@@ -24,7 +25,7 @@ async function port() { const s = createServer(); s.listen(0,"127.0.0.1"); await
 async function size(path) { let bytes=0; for (const name of await readdir(path)) { const p=join(path,name), s=await stat(p); bytes+=s.isDirectory()?await size(p):s.size; } return bytes; }
 
 test("published SDK: tenant isolation, host tool, replay, revocation, restart and backup restore", {timeout:180_000}, async t => {
-  for (const name of ["AEX_TEST_SERVER","BRAIN_TEST_SERVER","BRAIN_TEST_WORKER","BRAIN_TEST_REFERENCE_AGENTLOOP"]) assert.ok(process.env[name], `${name} required`);
+  for (const name of ["AEX_TEST_SERVER","BRAIN_TEST_SERVER","BRAIN_TEST_WORKER"]) assert.ok(process.env[name], `${name} required`);
   const db=await database();
   const directory=await mkdtemp(join(tmpdir(),"aex-journey-"));
   const brainPort=await port(), aexPort=await port(), adminPort=await port();
@@ -49,7 +50,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     } else if (JSON.stringify(body.input).includes("late hosted result")) {
       text = "observed background completion";
     } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
-      output = [{ type: "function_call", call_id: "lookup-1", name: "lookup", arguments: '{"id":"42"}' }];
+      output = [{ type: "function_call", call_id: "lookup-1", name: body.tools.find(tool => tool.name.endsWith("lookup")).name, arguments: '{"id":"42"}' }];
       text = undefined;
     }
     const frames = output.map((item, output_index) => ({ type: "response.output_item.done", output_index, item }));
@@ -64,7 +65,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   model.listen(0,"127.0.0.1"); await once(model,"listening");
   const configuration=JSON.parse(await readFile(new URL("../../examples/config.json",import.meta.url)));
   Object.assign(configuration,{listen:`127.0.0.1:${aexPort}`,operator_listen:`127.0.0.1:${adminPort}`,data_dir:join(directory,"aex"),brain_url:brainUrl,
-    agentloops:[createHash("sha256").update(await readFile(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP)).digest("hex")]});
+    agentloops:["pi", "codex", "opencode", "no-output-fixture"]});
   configuration.limits.minimum_free_disk_bytes=1;
   configuration.billing = { pricebook: { id: "journey-tokens-v1", rates: {
     model_tokens: { micro_usd: 1, units: 1 }, sandbox_ms: { micro_usd: 1, units: 1000 },
@@ -105,14 +106,28 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     throw new Error(`readiness timeout: ${logs}`);
   }
   async function stop(child,signal="SIGTERM"){ if(child.exitCode===null && child.signalCode===null){const done=once(child,"exit");process.kill(-child.pid,signal);await done;}children.delete(child); }
+  const agentloops = Object.fromEntries(["pi", "codex", "opencode"].map(name => [name, {
+    command: name === "opencode" ? "bun" : process.execPath,
+    args: [fileURLToPath(new URL(`../../node_modules/@aexhq/agentloop-${name}/bin/brain-agentloop-${name}.mjs`, import.meta.url))],
+    configuration: { contextWindow: 200000, ...(name === "codex" ? {} : { maxTokens: 8192 }),
+      ...(name === "pi" ? { compaction: { enabled: false } } : {}) },
+    workers: 2, max_concurrency: 16,
+  }]));
+  agentloops["no-output-fixture"] = { command: process.execPath,
+    args: [fileURLToPath(new URL("../fixtures/no-output-agentloop.mjs", import.meta.url))] };
   async function start(){
-    brainChild=await launch(process.env.BRAIN_TEST_SERVER,[],{XDG_CACHE_HOME:join(directory,"compilation-cache"),BRAIN_LISTEN:`127.0.0.1:${brainPort}`,BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_ENV_WORKER:process.env.BRAIN_TEST_WORKER,BRAIN_API_TOKEN:internal,BRAIN_MODEL_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`},brainUrl);
+    brainChild=await launch(process.env.BRAIN_TEST_SERVER,[],{XDG_CACHE_HOME:join(directory,"compilation-cache"),BRAIN_AGENTLOOPS:JSON.stringify(agentloops),BRAIN_LISTEN:`127.0.0.1:${brainPort}`,BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_ENV_WORKER:process.env.BRAIN_TEST_WORKER,BRAIN_API_TOKEN:internal,BRAIN_MODEL_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`},brainUrl);
     aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator,AEX_SITE_TOKEN:"s".repeat(32),AEX_DATABASE_URL:db.url,AEX_ENVIRONMENT_TOKEN:environmentToken,RUST_LOG:"info"},baseUrl);
     await meter();
     await operate({action:"resume"});
   }
   async function operate(body){const r=await fetch(adminUrl+"/operate",{method:"POST",headers:{authorization:`Bearer ${operator}`,"content-type":"application/json"},body:JSON.stringify(body)});assert.ok(r.ok,`operator ${body.action}: ${r.status} ${await (!r.ok?r.text():Promise.resolve(""))}`);return r.json();}
-  async function meter(){const sessions={};for(const id of await readdir(join(directory,"brain/sessions")))sessions[id]=await size(join(directory,"brain/sessions",id));await operate({action:"report_usage",observed_at:Math.floor(Date.now()/1000),sessions});}
+  async function meter(){
+    const sessions={};
+    const parents=[join(directory,"brain/sessions"),...await readdir(join(directory,"brain/agentloops")).then(names=>names.map(name=>join(directory,"brain/agentloops",name)))];
+    for(const parent of parents)for(const id of await readdir(parent))sessions[id]=(sessions[id]??0)+await size(join(parent,id));
+    await operate({action:"report_usage",observed_at:Math.floor(Date.now()/1000),sessions});
+  }
   async function account(){const {account}=await operate({action:"create_account"});return {account,...await operate({action:"issue_key",account})};}
   const raw=(path,token,options={})=>fetch(baseUrl+path,{...options,headers:{authorization:`Bearer ${token}`,...options.headers}});
   t.after(async()=>{for(const child of children)await stop(child,"SIGKILL");model.closeAllConnections();await new Promise(r=>model.close(r));await db.close();await rm(directory,{recursive:true,force:true});});
@@ -140,11 +155,11 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     assert.equal(hosted.status, upstream.status);
     assert.equal(await hosted.text(), await upstream.text(), "Brain owns catalogue query validation");
   }
-  const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:agentloop({implementation:component(pathToFileURL(process.env.BRAIN_TEST_REFERENCE_AGENTLOOP))})({env:brainEnv({name:"brain"})})};
+  const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:pi()};
   await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
   const environmentReads = [];
   const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:async({id},context)=>{toolCalls++;environmentReads.push(await context.environments.list());return context.finish(`item-${id}`);}});
-  const session=await client.sessions.create({...options,tools:[lookup({ environments: [{ environment: "brain", permissions: ["read"], methods: [] }] })]},{idempotencyKey:"shared-key"});
+  const session=await client.sessions.create({...options,tools:[lookup({ env: hostEnv({ name: "app" }), environments: [{ environment: "app", permissions: ["read"], methods: [] }] })]},{idempotencyKey:"shared-key"});
 
   const otherSession=await other.sessions.create(options,{idempotencyKey:"shared-key"});
   const direct=await measure(`${brainUrl}/v1/sessions/${otherSession.id}`,internal);
@@ -171,12 +186,12 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   const listed=await (await raw("/v1/sessions",b.token)).json();assert.deepEqual(listed.sessions.map(s=>s.session_id),[otherSession.id]);
   assert.equal((await raw(`/v1/sessions/${session.id}/executions/1/call`,a.token,{method:"POST"})).status,404);
   assert.equal((await raw("/v1/tools",a.token,{method:"POST"})).status,400);
-  assert.equal((await raw("/v1/agentloops",a.token,{method:"POST",body:"unapproved",headers:{"idempotency-key":"bad"}})).status,400);
+  assert.equal((await raw("/v1/agentloops",a.token,{method:"POST",body:"unapproved",headers:{"idempotency-key":"bad"}})).status,404);
   await session.send("look it up");assert.equal(toolCalls,1);assert.equal(modelCalls,2);
-  assert.deepEqual(environmentReads[0].map(view => view.reference.name), ["brain"]);
-  assert.ok((await session.environments.list()).some(view => view.reference.name === "brain" && view.state === "ready"));
+  assert.deepEqual(environmentReads[0].map(view => view.reference.name), ["app"]);
+  assert.ok((await session.environments.list()).some(view => view.reference.name === "app" && view.state === "ready"));
   const hostedTool=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),implementation:component(pathToFileURL(process.env.BRAIN_TEST_TOOL))});
-  const hostedSession=await client.sessions.create({...options,agentloop:pi({env:brainEnv({name:"brain"})}),tools:[hostedTool({env:brainEnv({name:"brain"})})]});
+  const hostedSession=await client.sessions.create({...options,agentloop:pi(),tools:[hostedTool({env:brainEnv({name:"brain"})})]});
   await hostedSession.send("look it up on the server");
   const hostedEvents=[];for await(const event of hostedSession.events())hostedEvents.push(event);
   assert.ok(hostedEvents.some(e=>e.type==="tool_call_ended"),"published Pi and uploaded Tool run in hosted Brain");
@@ -195,7 +210,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   let backgroundExecution;
   const backgroundTool = tool({ name: "lookup", description: "Start work", input: z.object({ id: z.string() }),
     run: (_, context) => { backgroundExecution = context; return "started"; } });
-  const backgroundSession = await paidClient.sessions.create({ ...options, agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+  const backgroundSession = await paidClient.sessions.create({ ...options, agentloop: pi(),
     tools: [backgroundTool({ env: hostEnv({ name: "background-app" }) })] });
   await backgroundSession.send("start work");
   const beforeBackground = []; for await (const event of backgroundSession.events()) beforeBackground.push(event);
@@ -220,9 +235,9 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   assert.equal(metered.pending_estimate_micro_usd, 0);
   await assert.rejects(other.account.modelUsage(backgroundSession.id), error => error.status === 404);
 
-  for (const loop of [pi, codex]) {
+  for (const loop of [pi, codex, opencode]) {
     await meter();
-    const structured = await client.sessions.create({ ...options, agentloop: loop({ env: brainEnv({ name: "brain" }) }) });
+    const structured = await client.sessions.create({ ...options, agentloop: loop() });
     await meter();
     const before = modelCalls;
     structuredAnswers = ["not JSON", '{"age":"wrong"}', '{"age":37}'];
@@ -265,7 +280,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     let calls = 0;
     const terminal = tool({ name: "lookup", description: "Read a remote result", input: z.object({ id: z.string() }),
       output: z.string(), run: () => { calls++; return returned; } });
-    const outcomes = await client.sessions.create({ ...options, agentloop: loop({ env: brainEnv({ name: "brain" }) }),
+    const outcomes = await client.sessions.create({ ...options, agentloop: loop(),
       tools: [terminal({ env: hostEnv({ name: "app" }) })] });
     for (const outcome of [
       { status: "error", error: { code: "rate_limited", message: "Wait", retryable: true, details: { retry_after_ms: 1000 } } },
@@ -418,12 +433,8 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
 
   await t.test("Chromium creates a scoped session and executes a DOM Tool over direct CORS and SSE", async () => {
     const bundle = await readFile(new URL("../../artifacts/browser-journey.js", import.meta.url));
-    const wasm = await readFile(new URL("./runtime.component.wasm", import.meta.resolve("@aexhq/agentloop-pi")));
-    const program = await readFile(new URL("./loop.program.js", import.meta.resolve("@aexhq/agentloop-pi")));
     const frontend = createServer((req, res) => {
       if (req.url === "/app.js") res.writeHead(200, { "content-type": "text/javascript" }).end(bundle);
-      else if (req.url === "/runtime.component.wasm") res.writeHead(200, { "content-type": "application/wasm" }).end(wasm);
-      else if (req.url === "/loop.program.js") res.writeHead(200, { "content-type": "text/javascript" }).end(program);
       else res.writeHead(200, { "content-type": "text/html" }).end('<div id="selection">selected text</div><script type="module" src="/app.js"></script>');
     });
     frontend.listen(0, "127.0.0.1"); await once(frontend, "listening");
@@ -432,7 +443,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     try {
       const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: () => { throw new Error("browser Tool executed on backend"); } });
       const access = await client.clients.grant({ origin, session: { ...options,
-        agentloop: pi({ env: brainEnv({ name: "brain" }) }), tools: [read({ env: clientBrowser({ name: "tab" }) })] } });
+        agentloop: pi(), tools: [read({ env: clientBrowser({ name: "tab" }) })] } });
       const page = await browser.newPage();
       const errors = []; page.on("pageerror", error => errors.push(error.message));
       await page.goto(origin); await page.waitForFunction(() => typeof window.runBrowserJourney === "function");
@@ -445,7 +456,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     } finally { await browser.close(); frontend.closeAllConnections(); await new Promise(resolve => frontend.close(resolve)); }
   });
 
-  const unsupported = await client.sessions.create(options);
+  const unsupported = await client.sessions.create({ ...options, agentloop: { name: "no-output-fixture" } });
   const beforeUnsupported = modelCalls;
   structuredAnswers = ['"unused"'];
   await assert.rejects(unsupported.send("Extract", { output: { type: z.string() } }), /requires a completed turn/);
@@ -458,7 +469,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   let last=events.at(-1).sequence;const page=await (await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token)).json();assert.equal(page.events.length,0);
   await session.send("look it up again");assert.equal(toolCalls,2,"terminal turns release admission for the next message");
   const sweep=[];
-  for(let i=0;i<8;i++) sweep.push(await other.sessions.create(options,{idempotencyKey:`sweep-${i}`}));
+  for(let i=0;i<8;i++) sweep.push(await other.sessions.create({...options,agentloop:[pi,codex,opencode][i%3]()},{idempotencyKey:`sweep-${i}`}));
   modelDelay=250;
   for(const concurrency of [1,2,4,8]) {
     await meter();
