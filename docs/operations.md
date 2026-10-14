@@ -24,6 +24,8 @@ It releases capacity after terminal journal evidence or a recorded request rejec
 work. `maintain` performs the same reconciliation for completed asynchronous turns. A merely idle
 session does not prove that a pending request was never dispatched. A journaled terminal result
 releases the submitted turn's reservation even while a background observation activation runs.
+Synchronous sends wait behind those activations in Brain; asynchronous submissions reject a busy
+session. A second active submitted turn still consumes admission capacity and is rejected.
 
 Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery are described in
 [Billing](billing.md). `billing.max_turn_secs` caps the charge and should match the paired Brain's

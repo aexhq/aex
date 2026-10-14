@@ -79,7 +79,11 @@ pub async fn send(
     };
     // Capacity, usage ceiling and dispatch intent commit together before the upstream effect.
     let summary = app.brain.summary(session).await?;
-    if !matches!(summary.status, SessionStatus::Idle) {
+    // Brain serializes synchronous sends behind observation activations. The reservation
+    // below still rejects a second submitted turn before dispatching it.
+    if !matches!(summary.status, SessionStatus::Idle)
+        && (asynchronous || !matches!(summary.status, SessionStatus::Running))
+    {
         return Err(Error::conflict("session is not idle"));
     }
     Store::reserve_turn_in(&mut tx, principal, session, &operation, &app.config.limits).await?;

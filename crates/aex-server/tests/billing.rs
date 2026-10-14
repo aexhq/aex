@@ -486,16 +486,28 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
     let handler_received = received.clone();
     let handler_accept = accept.clone();
     let upstream = Router::new()
-        .route("/v1/sessions/ses_billing",get(move || { let phase=status_phase.load(Ordering::SeqCst); async move { Json(json!({"session_id":"ses_billing","status":if phase >= 1 {"running"} else {"idle"},"last_sequence":phase+1})) } }))
+        .route("/v1/sessions/ses_billing",get(move || { let phase=status_phase.load(Ordering::SeqCst); async move { Json(json!({"session_id":"ses_billing","status":if (1..=2).contains(&phase) {"running"} else {"idle"},"last_sequence":if phase==3 {5} else {phase+1}})) } }))
         .route("/v1/sessions/ses_billing/events",get(move || { let phase=event_phase.load(Ordering::SeqCst); async move {
             let mut events = Vec::new();
-            if phase >= 1 { events.push(json!({"sequence":2,"recorded_at_ms":1000,"event_type":"turn_started","data":{}})); }
-            if phase >= 2 { events.push(json!({"sequence":3,"recorded_at_ms":1008,"event_type":"turn_ended","data":{}})); }
+            if phase == 3 {
+                events.push(json!({"sequence":4,"recorded_at_ms":1010,"event_type":"turn_started","data":{}}));
+                events.push(json!({"sequence":5,"recorded_at_ms":1014,"event_type":"turn_ended","data":{}}));
+            } else {
+                if phase >= 1 { events.push(json!({"sequence":2,"recorded_at_ms":1000,"event_type":"turn_started","data":{}})); }
+                if phase >= 2 { events.push(json!({"sequence":3,"recorded_at_ms":1008,"event_type":"turn_ended","data":{}})); }
+            }
             Json(json!({"events":events,"next_cursor":phase+1}))
         }}))
         .route("/v1/sessions/ses_billing/messages",post(move |headers:HeaderMap| {
             let phase=handler_phase.clone(); let calls=handler_calls.clone(); let received=handler_received.clone(); let accept=handler_accept.clone();
-            async move { assert_eq!(headers["prefer"],"respond-async"); calls.fetch_add(1,Ordering::SeqCst); received.notify_one(); accept.notified().await; phase.store(1,Ordering::SeqCst); (StatusCode::ACCEPTED,Json(json!(2))) }
+            async move {
+                calls.fetch_add(1,Ordering::SeqCst);
+                if headers.get("prefer").is_none() {
+                    assert_eq!(phase.swap(3,Ordering::SeqCst),2);
+                    return (StatusCode::OK,Json(json!({"session_id":"ses_billing","status":"idle","last_sequence":5})));
+                }
+                assert_eq!(headers["prefer"],"respond-async"); received.notify_one(); accept.notified().await; phase.store(1,Ordering::SeqCst); (StatusCode::ACCEPTED,Json(json!(2)))
+            }
         }));
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = Arc::make_mut(&mut app.config);
@@ -595,12 +607,38 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         0
     );
     assert_eq!(
-        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input)
+        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input.clone())
             .await
             .unwrap()
             .status(),
         StatusCode::ACCEPTED
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    headers.insert("idempotency-key", "next-turn".parse().unwrap());
+    assert_eq!(
+        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input.clone())
+            .await
+            .unwrap_err()
+            .0,
+        StatusCode::CONFLICT,
+        "asynchronous submission still rejects a busy session"
+    );
+    headers.remove("prefer");
+    assert_eq!(
+        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK,
+        "a synchronous send delegates serialization behind observations to Brain"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        billing::wallet(&app, &account)
+            .await
+            .unwrap()
+            .reserved_micro_usd,
+        0
+    );
     server.abort();
 }

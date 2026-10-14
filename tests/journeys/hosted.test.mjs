@@ -298,11 +298,6 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       const terminal = history.filter(event => event.type === "tool_call_ended").at(-1).data.outcome;
       assert.deepEqual(terminal, outcome);
       assert.equal(history.some(event => event.type === "environment_unreachable"), false);
-      // Tool completion can schedule an observation activation after the submitted turn.
-      for (let attempt = 0; (await client.sessions.get(outcomes.id)).state.status !== "idle"; attempt++) {
-        assert.ok(attempt < 400, "Tool observations must settle before the next submitted turn");
-        await pause(25);
-      }
     }
     assert.equal(calls, 4);
     await outcomes.end(); await outcomes.delete();
