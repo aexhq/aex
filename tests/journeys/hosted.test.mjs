@@ -134,7 +134,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   await start();
   for (const [executable,args,env,expected] of [
     [process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator},/already has a writer/],
-    [process.env.BRAIN_TEST_SERVER,[],{BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_API_TOKEN:internal},/already in use or cannot be locked/],
+    [process.env.BRAIN_TEST_SERVER,[],{BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_API_TOKEN:internal,BRAIN_AGENTLOOPS:JSON.stringify(agentloops)},/already in use or cannot be locked/],
   ]) {
     const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"]});
     let output="";child.stdout.on("data",c=>output+=c);child.stderr.on("data",c=>output+=c);
