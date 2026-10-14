@@ -288,7 +288,12 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       { status: "unknown", message: "Connection closed after dispatch" }, { status: "timeout" }, { status: "cancelled" },
     ]) {
       returned = outcome;
-      await outcomes.send("look it up once");
+      try { await outcomes.send("look it up once"); }
+      catch (error) {
+        const events = []; for await (const event of outcomes.events()) events.push({ sequence: event.sequence, type: event.type, origin: event.origin });
+        t.diagnostic(JSON.stringify({ runtime: loop().name, outcome: outcome.status, state: (await client.sessions.get(outcomes.id)).state, events }));
+        throw error;
+      }
       const history = []; for await (const event of outcomes.events()) history.push(event);
       const terminal = history.filter(event => event.type === "tool_call_ended").at(-1).data.outcome;
       assert.deepEqual(terminal, outcome);
