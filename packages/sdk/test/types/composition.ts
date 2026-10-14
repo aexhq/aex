@@ -1,5 +1,4 @@
 import type { Aex, AexSessionHandle, Brain, SessionHandle, SessionState } from "../../dist/index.js";
-import { brainEnv } from "../../dist/index.js";
 import { pi } from "@aexhq/agentloop-pi";
 
 declare const aex: Aex;
@@ -11,7 +10,7 @@ const reopened: Promise<AexSessionHandle> = aex.sessions.get("session");
 const listed: Promise<SessionState[]> = aex.sessions.list();
 const created: Promise<AexSessionHandle> = aex.sessions.create({
   model: { provider: "openai", name: "gpt-4.1-mini", apiKey: "fixture" },
-  agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+  agentloop: pi({ maxTokens: 2048 }),
 });
 // @ts-expect-error Product handles do not inherit Brain's concrete private state.
 const raw: SessionHandle = session;

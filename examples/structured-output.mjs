@@ -1,4 +1,4 @@
-import { Aex, brainEnv } from "@aexhq/sdk";
+import { Aex } from "@aexhq/sdk";
 import { pi } from "@aexhq/agentloop-pi";
 import { z } from "zod";
 
@@ -9,7 +9,7 @@ const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
 try {
   const session = await aex.sessions.create({
     model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
-    agentloop: pi({ env: brainEnv({ name: "brain" }) }),
+    agentloop: pi(),
   });
   try {
     const person = await session.send("Ada is 37 years old. Extract her details.", {

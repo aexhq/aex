@@ -74,7 +74,7 @@ async fn app() -> (tempfile::TempDir, App, Principal) {
     (dir, app, Principal { account, key })
 }
 fn request() -> CreateSessionRequest {
-    serde_json::from_value(json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},
+    serde_json::from_value(json!({"agentloop":{"name":"pi","configuration":{}},
         "model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],
         "environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"},{"name":"python","lifecycle":"automatic", "driver":"http","url":"https://api.aex.dev/environments/modal","configuration":{"profile":"python-v1","lifetimeMs":10000}}]})).unwrap()
 }

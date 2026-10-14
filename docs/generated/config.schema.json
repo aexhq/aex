@@ -534,8 +534,7 @@
       "required": [
         "name",
         "description",
-        "input_schema",
-        "output_schema"
+        "input_schema"
       ]
     }
   }

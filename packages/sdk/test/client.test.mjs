@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Aex, AexSessionHandle, Brain, agentloop, environment, tool, hostEnv, brainEnv } from "../dist/index.js";
+import { Aex, AexSessionHandle, Brain, tool, hostEnv, brainEnv } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
@@ -116,10 +116,9 @@ for (const method of ["create", "get"]) test(`Aex ${method} handles own typed co
     }
     return Response.json({ session_id: "s", status: "idle", last_sequence: 0 });
   } });
-  const remote = environment({ url: () => "https://environment.example" });
   const session = method === "get" ? await client.sessions.get("s") : await client.sessions.create({
     model: { provider: "openai", name: "gpt-5", apiKey: "model-key" },
-    agentloop: agentloop({ implementation: { type: "test" } })({ env: remote({ name: "remote" }) }),
+    agentloop: { name: "pi" },
   });
   assert.ok(session instanceof AexSessionHandle);
   assert.equal(session instanceof upstream.SessionHandle, false);

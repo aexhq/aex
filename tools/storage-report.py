@@ -9,22 +9,40 @@ import urllib.request
 import subprocess
 
 
-def measure(root):
-    if (root / "format").read_text().strip() != "brain-data/1":
-        raise ValueError("unsupported Brain data format")
-    result = {}
-    for session in (root / "sessions").iterdir():
-        if not session.is_dir() or session.is_symlink():
+def measure_sessions(parent, result):
+    for session in parent.iterdir():
+        try:
+            info = session.lstat()
+        except FileNotFoundError:
+            continue
+        if session.name == "identity.json" and stat.S_ISREG(info.st_mode):
+            continue
+        if not stat.S_ISDIR(info.st_mode):
             raise ValueError("unexpected session directory")
         total = 0
         for directory, dirs, files in os.walk(session, followlinks=False):
             for name in dirs + files:
-                info = (Path(directory) / name).lstat()
+                try:
+                    info = (Path(directory) / name).lstat()
+                except FileNotFoundError:
+                    # Native SQLite sidecars can disappear between listing and measurement.
+                    continue
                 if stat.S_ISLNK(info.st_mode):
                     raise ValueError("symlink in session data")
                 if stat.S_ISREG(info.st_mode):
                     total += info.st_size
-        result[session.name] = total
+        result[session.name] = result.get(session.name, 0) + total
+
+
+def measure(root):
+    if (root / "format").read_text().strip() != "brain-data/3":
+        raise ValueError("unsupported Brain data format")
+    result = {}
+    measure_sessions(root / "sessions", result)
+    for agentloop in (root / "agentloops").iterdir():
+        if not agentloop.is_dir() or agentloop.is_symlink():
+            raise ValueError("unexpected agentloop directory")
+        measure_sessions(agentloop, result)
     return result
 
 

@@ -35,7 +35,7 @@ You need Node.js 22 or newer and an OpenAI API key. Sign in to the
 `OPENAI_API_KEY` in your server environment, then install:
 
 ```sh
-npm install @aexhq/sdk@0.88.1 @aexhq/agentloop-pi@9.0.1 zod@4.4.3
+npm install @aexhq/sdk@0.89.0 @aexhq/agentloop-pi@11.0.0 zod@4.4.3
 ```
 
 Save this as `order.mjs`:
@@ -117,6 +117,7 @@ without receiving an account credential.
 
 Choose [clientBrowser](https://github.com/aexhq/aex/blob/main/docs/client-browser.md) for the user's connected tab, or [Application](https://github.com/aexhq/aex/blob/main/docs/http-tools.md) for a deployed backend. Both use `aex.sessions.create()` and ordinary Tool declarations.
 
-The SDK prepares hosted code during session setup. To do that earlier and reuse it across
-sessions, call `const loop = await aex.prepare(pi())` during startup, then use `agentloop: loop`.
-See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code).
+Aex runs Pi, Codex and OpenCode on the server. Their factories select an installed runtime
+and pass session settings; they do not upload or start executables. Use `pi()`, `codex()` or
+`opencode()` from the corresponding `@aexhq/agentloop-*` package.
+See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code) for hosted Tools.

@@ -63,11 +63,12 @@ impl Config {
             "brain_url must be an HTTP origin"
         );
         anyhow::ensure!(
-            self.agentloops.iter().all(|id| id.len() == 64
-                && id
+            self.agentloops.iter().all(|name| !name.is_empty()
+                && name.len() <= 64
+                && name
                     .bytes()
-                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))),
-            "agentloops must contain approved SHA-256 addresses"
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')),
+            "agentloops must contain registered names of 1-64 ASCII letters, digits, underscores or hyphens"
         );
         for (name, value) in serde_json::to_value(&self.limits)?.as_object().unwrap() {
             anyhow::ensure!(

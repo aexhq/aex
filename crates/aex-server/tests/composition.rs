@@ -19,7 +19,6 @@ async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsiz
         serde_json::from_str(include_str!("../../../examples/config.json")).unwrap();
     config.data_dir = dir.path().into();
     config.limits.minimum_free_disk_bytes = 1;
-    config.agentloops.insert("0".repeat(64));
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
     let hosts = Arc::new(AtomicUsize::new(0));
@@ -103,7 +102,7 @@ async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsiz
     (dir, app, Principal { account, key }, token, calls)
 }
 fn session() -> Value {
-    json!({"agentloop":{"implementation":{"type":"brain_component","entrypoint":"turn","id":"0".repeat(64)},"configuration":{},"environment":"brain"},
+    json!({"agentloop":{"name":"pi","configuration":{}},
         "model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"private-model-key"},"tools":[],
         "environments":[{"name":"brain","lifecycle":"automatic","driver":"brain"},
             {"name":"tab","lifecycle":"automatic","driver":"host","host_id":"placeholder","configuration":{}}]})
@@ -151,8 +150,8 @@ async fn program_preparation_requires_ownership_of_both_artifacts_and_preserves_
         .retain(|env| env["driver"] == "brain");
     let source = "1".repeat(64);
     let other_source = "2".repeat(64);
-    request["agentloop"]["implementation"] =
-        json!({"type":"brain_program", "entrypoint":"turn", "id":source, "runtime":"0".repeat(64)});
+    request["tools"] = json!([{"name":"run_program", "description":"Run the admitted program", "input_schema":{},
+        "placements":{"brain":{"implementation":{"type":"brain_program", "entrypoint":"run", "id":source, "runtime":"0".repeat(64)}}}}]);
     assert!(
         aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
             .await
@@ -166,17 +165,24 @@ async fn program_preparation_requires_ownership_of_both_artifacts_and_preserves_
             .await
             .unwrap();
     }
+    sqlx::query("INSERT INTO artifacts VALUES($1,'tools',$2,10)")
+        .bind(&p.account)
+        .bind("0".repeat(64))
+        .execute(&app.store.0)
+        .await
+        .unwrap();
     aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
         .await
         .unwrap();
     let mut wrong_runtime = request.clone();
-    wrong_runtime["agentloop"]["implementation"]["runtime"] = json!("3".repeat(64));
+    wrong_runtime["tools"][0]["placements"]["brain"]["implementation"]["runtime"] =
+        json!("3".repeat(64));
     assert!(
         aex_server::admission::create(&app, &p, &serde_json::from_value(wrong_runtime).unwrap())
             .await
             .is_err()
     );
-    let preparation = json!({"agentloops":["0".repeat(64)], "programs":[source]});
+    let preparation = json!({"tools":["0".repeat(64)], "programs":[source]});
     assert_eq!(
         call(
             &app,

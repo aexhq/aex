@@ -22,7 +22,10 @@ allocation. Never infer ownership from timing or request similarity. For an unce
 stop/restart Brain if a request may remain in flight, then use `reconcile_turn` while drained.
 It releases capacity after terminal journal evidence or a recorded request rejection and never reruns
 work. `maintain` performs the same reconciliation for completed asynchronous turns. A merely idle
-session does not prove that a pending request was never dispatched.
+session does not prove that a pending request was never dispatched. A journaled terminal result
+releases the submitted turn's reservation even while a background observation activation runs.
+Synchronous sends wait behind those activations in Brain; asynchronous submissions reject a busy
+session. A second active submitted turn still consumes admission capacity and is rejected.
 
 Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery are described in
 [Billing](billing.md). `billing.max_turn_secs` caps the charge and should match the paired Brain's
@@ -40,6 +43,8 @@ Aex and Brain access only their own directories. A trusted operator measures fil
 Brain's versioned session directories and reports through the local operator API. It reads no
 session contents or credential metadata. Shared metadata/artifacts use whole-volume headroom
 and bounded record counts rather than per-tenant attribution.
+Native runtimes can remove temporary SQLite sidecars during a scan; files already removed
+contribute no retained bytes.
 
 Turns reserve retained-byte capacity transactionally. A fresh scan started after the last
 completed write can replace reservations with measured bytes. Active/uncertain work cannot
@@ -75,6 +80,6 @@ second-writer rejection, consecutive turns, retention and credential redaction.
 `tools/image-smoke.py` verifies the non-root container and writable data path.
 
 `tools/live-local.py --workspace-env /workspace/.env.prd` runs a real-provider check with explicit
-`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER`, `BRAIN_TEST_WORKER` and `BRAIN_TEST_REFERENCE_AGENTLOOP` paths.
+`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER` and `BRAIN_TEST_WORKER` paths.
 `tools/live-check.mjs` can target deployed Aex using environment-supplied test credentials.
 Missing credentials or provider failure fail this release check; mocks do not replace it.

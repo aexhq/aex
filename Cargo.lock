@@ -609,7 +609,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain?rev=c9115c28818cc570685eb98c440e4dbaf792112c#c9115c28818cc570685eb98c440e4dbaf792112c"
+source = "git+https://github.com/aexhq/brain?rev=66361a8dd1942572f8e4b01cf7ce6f403ec920c4#66361a8dd1942572f8e4b01cf7ce6f403ec920c4"
 dependencies = [
  "hex",
  "schemars",
@@ -1861,9 +1861,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.17"
+version = "0.11.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
+checksum = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
 dependencies = [
  "aws-lc-rs",
  "bytes",

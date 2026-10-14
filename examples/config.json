@@ -4,7 +4,9 @@
   "data_dir": "data",
   "brain_url": "http://127.0.0.1:8080",
   "agentloops": [
-    "0000000000000000000000000000000000000000000000000000000000000000"
+    "pi",
+    "codex",
+    "opencode"
   ],
   "limits": {
     "accounts": 10,
