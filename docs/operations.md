@@ -43,6 +43,8 @@ Aex and Brain access only their own directories. A trusted operator measures fil
 Brain's versioned session directories and reports through the local operator API. It reads no
 session contents or credential metadata. Shared metadata/artifacts use whole-volume headroom
 and bounded record counts rather than per-tenant attribution.
+Native runtimes can remove temporary SQLite sidecars during a scan; files already removed
+contribute no retained bytes.
 
 Turns reserve retained-byte capacity transactionally. A fresh scan started after the last
 completed write can replace reservations with measured bytes. Active/uncertain work cannot

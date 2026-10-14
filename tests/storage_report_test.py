@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("meter", Path(__file__).parent.parent / "tools/storage-report.py")
 meter = importlib.util.module_from_spec(spec)
@@ -29,3 +30,23 @@ class MeterTests(unittest.TestCase):
             (root / "format").write_text("unknown")
             with self.assertRaises(ValueError):
                 meter.measure(root)
+
+    def test_native_sidecar_removed_during_scan_is_not_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = root / "ses_test"
+            session.mkdir()
+            (session / "opencode.db").write_bytes(b"database")
+            sidecar = session / "opencode.db-shm"
+            sidecar.write_bytes(b"transient")
+            walk = meter.os.walk
+
+            def removing_walk(*args, **kwargs):
+                for entry in walk(*args, **kwargs):
+                    sidecar.unlink()
+                    yield entry
+
+            result = {}
+            with patch.object(meter.os, "walk", removing_walk):
+                meter.measure_sessions(root, result)
+            self.assertEqual(result, {"ses_test": 8})

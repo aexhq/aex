@@ -22,7 +22,17 @@ import { measure } from "../../tools/benchmark.mjs";
 
 const pause = (ms) => new Promise(r => setTimeout(r, ms));
 async function port() { const s = createServer(); s.listen(0,"127.0.0.1"); await once(s,"listening"); const p=s.address().port; await new Promise(r=>s.close(r)); return p; }
-async function size(path) { let bytes=0; for (const name of await readdir(path)) { const p=join(path,name), s=await stat(p); bytes+=s.isDirectory()?await size(p):s.size; } return bytes; }
+async function size(path) {
+  let bytes = 0;
+  for (const name of await readdir(path)) {
+    const p = join(path, name);
+    let entry;
+    try { entry = await stat(p); }
+    catch (error) { if (error.code === "ENOENT") continue; throw error; }
+    bytes += entry.isDirectory() ? await size(p) : entry.size;
+  }
+  return bytes;
+}
 
 test("published SDK: tenant isolation, host tool, replay, revocation, restart and backup restore", {timeout:180_000}, async t => {
   for (const name of ["AEX_TEST_SERVER","BRAIN_TEST_SERVER","BRAIN_TEST_WORKER"]) assert.ok(process.env[name], `${name} required`);

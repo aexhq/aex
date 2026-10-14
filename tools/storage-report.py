@@ -11,14 +11,22 @@ import subprocess
 
 def measure_sessions(parent, result):
     for session in parent.iterdir():
-        if session.name == "identity.json" and session.is_file() and not session.is_symlink():
+        try:
+            info = session.lstat()
+        except FileNotFoundError:
             continue
-        if not session.is_dir() or session.is_symlink():
+        if session.name == "identity.json" and stat.S_ISREG(info.st_mode):
+            continue
+        if not stat.S_ISDIR(info.st_mode):
             raise ValueError("unexpected session directory")
         total = 0
         for directory, dirs, files in os.walk(session, followlinks=False):
             for name in dirs + files:
-                info = (Path(directory) / name).lstat()
+                try:
+                    info = (Path(directory) / name).lstat()
+                except FileNotFoundError:
+                    # Native SQLite sidecars can disappear between listing and measurement.
+                    continue
                 if stat.S_ISLNK(info.st_mode):
                     raise ValueError("symlink in session data")
                 if stat.S_ISREG(info.st_mode):
