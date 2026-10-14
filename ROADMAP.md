@@ -27,10 +27,11 @@ Aex also owns prompt-based typed answers, local validation and corrective turns 
 composed SDK handles, as specified in [ADR 008](docs/adr/008-typed-responses.md).
 
 The first customer journey is: register on the website, create an API key, install the thin
-Aex TypeScript SDK, define an Agentloop, model, Tools and Environments using Brain contracts,
+Aex TypeScript SDK, select a registered Agentloop and model, define Tools and Environments,
 create a hosted session, send work, observe and reconnect, inspect history, interrupt or end,
-and delete. The customer's calling script runs in their application; each extension runs
-where its selected Environment places it. Customers can consume Events and persist their
+and delete. The customer's calling script runs in their application; Tools run in their
+selected Environments, and Brain runs the selected Agentloop in its configured worker pool.
+Customers can consume Events and persist their
 own projections while Brain retains canonical history.
 Another account cannot access any of those resources.
 

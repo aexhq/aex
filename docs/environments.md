@@ -63,7 +63,7 @@ and scoped configuration. Brain's privileged invocation callback is not passed t
 Brain prepares and closes Environments automatically by default. Set
 `environment: { lifecycle: { bindings: { workspace: "manual" } } }` when your application or a Tool should
 explicitly call `setup`. A call to an unprepared Environment returns its recorded state.
-The Agentloop's own Environment must be automatic so it can start.
+Aex provides Agentloop runtimes at server startup.
 
 Lifecycle policy does not expose a Tool to the model. Include `env()` from `@aexhq/env` only
 when needed, with explicit Environment grants such as `read` and `call` for `inspect`. It uses
