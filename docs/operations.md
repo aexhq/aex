@@ -2,8 +2,7 @@
 
 Use `aex-server operate --request JSON` with `AEX_OPERATOR_TOKEN` in the process environment.
 The [generated operator schema](generated/operator.schema.json) defines commands. Never proxy
-this loopback listener through public ingress. On the AWS host use `docker exec aex-control
- aex-server operate --request JSON`; the operator port is not published from the container.
+this loopback listener through public ingress.
 
 ## Identity and reconciliation
 
@@ -61,8 +60,8 @@ quota or arbitrary hostile-code hosting.
 ## Durability
 
 Stop admission and all writers for consistent whole-volume backup. Stop Brain before the environment
-controller, then Aex, so cleanup callbacks can finish. Dump PostgreSQL, store the dump in a root-only backup
-directory on EBS, then snapshot that volume. Preserve Brain metadata/key, artifacts,
+controller, then Aex, so cleanup callbacks can finish. Dump PostgreSQL and archive runtime files
+as one backup set in a root-only directory. Preserve Brain metadata/key, artifacts,
 format marker and journals, plus the controller's SQLite directory, alongside the matching product dump. Runtime sockets
 under `run/` are transient. Record compatible source revisions and image digests with backups.
 
