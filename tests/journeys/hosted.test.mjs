@@ -50,7 +50,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     } else if (JSON.stringify(body.input).includes("late hosted result")) {
       text = "observed background completion";
     } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
-      output = [{ type: "function_call", call_id: "lookup-1", name: body.tools.find(tool => tool.name.endsWith("lookup")).name, arguments: '{"id":"42"}' }];
+      output = [{ type: "function_call", call_id: `lookup-${modelCalls}`, name: body.tools.find(tool => tool.name.endsWith("lookup")).name, arguments: '{"id":"42"}' }];
       text = undefined;
     }
     const frames = output.map((item, output_index) => ({ type: "response.output_item.done", output_index, item }));
@@ -236,6 +236,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   await assert.rejects(other.account.modelUsage(backgroundSession.id), error => error.status === 404);
 
   for (const loop of [pi, codex, opencode]) {
+    t.diagnostic(`Hosted runtime: ${loop().name}`);
     await meter();
     const structured = await client.sessions.create({ ...options, agentloop: loop() });
     await meter();
@@ -292,6 +293,11 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
       const terminal = history.filter(event => event.type === "tool_call_ended").at(-1).data.outcome;
       assert.deepEqual(terminal, outcome);
       assert.equal(history.some(event => event.type === "environment_unreachable"), false);
+      // Tool completion can schedule an observation activation after the submitted turn.
+      for (let attempt = 0; (await client.sessions.get(outcomes.id)).state.status !== "idle"; attempt++) {
+        assert.ok(attempt < 400, "Tool observations must settle before the next submitted turn");
+        await pause(25);
+      }
     }
     assert.equal(calls, 4);
     await outcomes.end(); await outcomes.delete();
