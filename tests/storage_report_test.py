@@ -31,6 +31,29 @@ class MeterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 meter.measure(root)
 
+    def test_native_links_count_the_link_without_following_its_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "format").write_text("brain-data/3\n")
+            (root / "sessions").mkdir()
+            native = root / "agentloops/codex/ses_test"
+            native.mkdir(parents=True)
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "private").write_bytes(b"not session data")
+            (native / "file").symlink_to(outside / "private")
+            (native / "directory").symlink_to(outside, target_is_directory=True)
+            (native / "dangling").symlink_to(outside / "missing")
+            self.assertEqual(meter.measure(root), {"ses_test": sum(path.lstat().st_size for path in native.iterdir())})
+
+    def test_journal_symlinks_remain_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ses_test").mkdir()
+            (root / "ses_test/link").symlink_to(root / "missing")
+            with self.assertRaisesRegex(ValueError, "symlink in session data"):
+                meter.measure_sessions(root, {})
+
     def test_native_sidecar_removed_during_scan_is_not_retained(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

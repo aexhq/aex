@@ -44,7 +44,8 @@ Brain's versioned session directories and reports through the local operator API
 session contents or credential metadata. Shared metadata/artifacts use whole-volume headroom
 and bounded record counts rather than per-tenant attribution.
 Native runtimes can remove temporary SQLite sidecars during a scan; files already removed
-contribute no retained bytes.
+contribute no retained bytes. Native runtime symlinks contribute their own stored length;
+the meter never follows their targets. Journal directories still reject symlinks.
 
 Turns reserve retained-byte capacity transactionally. A fresh scan started after the last
 completed write can replace reservations with measured bytes. Active/uncertain work cannot

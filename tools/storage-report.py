@@ -9,7 +9,7 @@ import urllib.request
 import subprocess
 
 
-def measure_sessions(parent, result):
+def measure_sessions(parent, result, allow_symlinks=False):
     for session in parent.iterdir():
         try:
             info = session.lstat()
@@ -27,9 +27,9 @@ def measure_sessions(parent, result):
                 except FileNotFoundError:
                     # Native SQLite sidecars can disappear between listing and measurement.
                     continue
-                if stat.S_ISLNK(info.st_mode):
+                if stat.S_ISLNK(info.st_mode) and not allow_symlinks:
                     raise ValueError("symlink in session data")
-                if stat.S_ISREG(info.st_mode):
+                if stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
                     total += info.st_size
         result[session.name] = result.get(session.name, 0) + total
 
@@ -42,7 +42,7 @@ def measure(root):
     for agentloop in (root / "agentloops").iterdir():
         if not agentloop.is_dir() or agentloop.is_symlink():
             raise ValueError("unexpected agentloop directory")
-        measure_sessions(agentloop, result)
+        measure_sessions(agentloop, result, allow_symlinks=True)
     return result
 
 

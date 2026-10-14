@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, writeFile, rm, readdir, stat, cp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, readdir, lstat, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,7 +27,7 @@ async function size(path) {
   for (const name of await readdir(path)) {
     const p = join(path, name);
     let entry;
-    try { entry = await stat(p); }
+    try { entry = await lstat(p); }
     catch (error) { if (error.code === "ENOENT") continue; throw error; }
     bytes += entry.isDirectory() ? await size(p) : entry.size;
   }
@@ -49,6 +49,7 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
     const chunks=[]; for await(const c of req) chunks.push(c);
     const body=JSON.parse(Buffer.concat(chunks)); modelCalls++;
     assert.equal(req.headers.authorization,"Bearer test-model-secret");
+    await meter();
     if(modelDelay) await pause(modelDelay);
     assert.equal(req.url, "/v1/responses");
     let output = [], text = "answered";
@@ -133,9 +134,9 @@ test("published SDK: tenant isolation, host tool, replay, revocation, restart an
   }
   async function operate(body){const r=await fetch(adminUrl+"/operate",{method:"POST",headers:{authorization:`Bearer ${operator}`,"content-type":"application/json"},body:JSON.stringify(body)});assert.ok(r.ok,`operator ${body.action}: ${r.status} ${await (!r.ok?r.text():Promise.resolve(""))}`);return r.json();}
   async function meter(){
-    const sessions={};
-    const parents=[join(directory,"brain/sessions"),...await readdir(join(directory,"brain/agentloops")).then(names=>names.map(name=>join(directory,"brain/agentloops",name)))];
-    for(const parent of parents)for(const id of await readdir(parent))if(id!=="identity.json")sessions[id]=(sessions[id]??0)+await size(join(parent,id));
+    const sessions=JSON.parse(execFileSync("python3", ["-c",
+      "import json,runpy,sys;from pathlib import Path;print(json.dumps(runpy.run_path(sys.argv[1])['measure'](Path(sys.argv[2]))))",
+      fileURLToPath(new URL("../../tools/storage-report.py", import.meta.url)), join(directory,"brain")], {encoding:"utf8"}));
     await operate({action:"report_usage",observed_at:Math.floor(Date.now()/1000),sessions});
   }
   async function account(){const {account}=await operate({action:"create_account"});return {account,...await operate({action:"issue_key",account})};}
