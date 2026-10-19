@@ -2,6 +2,13 @@
 
 Status: scope accepted 2026-09-07; implementation and release evidence tracked below.
 
+[ADR 011](docs/adr/011-brain-2-integration.md) defines integration with Brain 2.0's Go runtime.
+It covers contract changes, required hosted capabilities, legacy-session handling and release
+evidence. The migration is accepted for implementation; the implementation below still uses Brain 0.41.
+The 2026-10-19 requirements select three harnesses, server/client credentials and tool authoring,
+shared native servers with an optional common utilization policy, both browser integrations,
+usage evidence, platform-owned inspection and a clean cutover.
+
 [ADR-009](docs/adr/009-application-composition.md) adds declared Application endpoints and scoped
 `clientBrowser` composition through ordinary session creation. Implementation and hosted
 journey tests cover caller exit, durable completion, browser CORS/SSE, expiry and revocation.
