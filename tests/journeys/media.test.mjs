@@ -15,6 +15,12 @@ function pdf(){const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pag
 test('real R2 attachments and isolated Poppler reach all native model adapters and are erased on deletion',{timeout:180000},async t=>{
   assert.equal(process.platform,'linux');assert.equal(process.getuid(),0,'PDF controller isolation requires root');
   for(const key of ['AEX_S3_ACCESS_KEY_ID','AEX_S3_SECRET_ACCESS_KEY','AEX_TEST_S3_BUCKET','AEX_TEST_S3_REGION','AEX_TEST_S3_ENDPOINT','NODE_EXTRA_CA_CERTS','AEX_TEST_TLS_KEY'])assert.ok(process.env[key],`${key} required`);
+  const pending=new Set();
+  // Run before the fixture stops its servers and drops the product schema.
+  t.after(async()=>{
+    const results=await Promise.allSettled([...pending].map(session=>session.delete()));
+    const failed=results.find(result=>result.status==='rejected');if(failed)throw failed.reason;
+  });
   const [png]=await renderPDF(pdf(),11013,AbortSignal.timeout(60000));
   const f=await fixture(t,async({config,runtime,url})=>{
     const proxy=createServer({cert:await readFile(process.env.NODE_EXTRA_CA_CERTS),key:await readFile(process.env.AEX_TEST_TLS_KEY)},(req,res)=>{const upstream=request(url+req.url,{method:req.method,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});upstream.on('error',()=>res.destroy());req.pipe(upstream);});
@@ -32,6 +38,7 @@ test('real R2 attachments and isolated Poppler reach all native model adapters a
   const a=await f.account(),b=await f.account();
   for(const harness of ['pi','codex','opencode']) {
     const session=await a.api.sessions.create({harness,model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(a.modelKey))});
+    pending.add(session);
     const image=await a.api.attachments.upload(session.id,png,{contentType:'image/png',idempotencyKey:randomUUID(),downloadBudgetBytes:1048576});
     const document=await a.api.attachments.upload(session.id,pdf(),{contentType:'application/pdf',idempotencyKey:randomUUID(),downloadBudgetBytes:1048576});
     const before=f.model.requests.length;
@@ -40,7 +47,7 @@ test('real R2 attachments and isolated Poppler reach all native model adapters a
     const images=f.model.requests.slice(before).flatMap(value=>value.input).flatMap(value=>value.content??[]).filter(value=>value.type==='input_image');assert.equal(images.length,2,harness);
     assert.equal((await fetch(image.media.url)).status,200);
     const other=await b.api.sessions.create({harness,model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(b.modelKey))});await assert.rejects(other.send({text:'stolen',media:[document.media]}),error=>error.status===404);await other.delete();
-    await session.delete();assert.equal((await fetch(image.media.url)).status,404);assert.equal((await fetch(document.media.url)).status,404);
+    await session.delete();pending.delete(session);assert.equal((await fetch(image.media.url)).status,404);assert.equal((await fetch(document.media.url)).status,404);
     const files=await f.db.client.query('SELECT state FROM attachments WHERE session=$1',[session.id]);assert.ok(files.rows.every(row=>row.state==='deleted'));
   }
 });
