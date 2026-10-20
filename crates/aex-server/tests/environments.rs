@@ -486,3 +486,61 @@ async fn private_tool_journal_commits_before_ack_and_cannot_resurrect_results_af
         .is_null()
     );
 }
+
+#[tokio::test]
+async fn maintenance_waits_for_confirmed_managed_cleanup() {
+    use aex_server::operator::{Operation, execute};
+    use axum::{Router, http::StatusCode, routing::post};
+    let (_dir, mut app, principal) = app().await;
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    Arc::make_mut(&mut app.config).brain_url = format!("http://{}", socket.local_addr().unwrap());
+    app.brain = aex_server::brain::Brain::new(&app.config, "b".repeat(32)).unwrap();
+    let deletes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = deletes.clone();
+    let upstream = Router::new()
+        .route(
+            "/sessions/session/close",
+            post(|| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/sessions/session",
+            axum::routing::delete(move || {
+                let observed = observed.clone();
+                async move {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(socket, upstream).await.unwrap() });
+    let input = reserve(&app, &principal, "cleanup", Some(20000))
+        .await
+        .unwrap();
+    bind(&app, &principal, &input, "session").await;
+    sqlx::query("UPDATE sessions SET state='deleting',model_complete=TRUE WHERE id='session'")
+        .execute(&app.store.0)
+        .await
+        .unwrap();
+    let result = execute(&app, Operation::Maintain).await.unwrap();
+    assert_eq!(result["deleted"], 0);
+    assert_eq!(deletes.load(Ordering::SeqCst), 0);
+    let revoked: bool =
+        sqlx::query_scalar("SELECT revoked FROM tool_grants WHERE session='session'")
+            .fetch_one(&app.store.0)
+            .await
+            .unwrap();
+    assert!(revoked);
+    sqlx::query("UPDATE tool_grants SET settled=TRUE WHERE session='session'")
+        .execute(&app.store.0)
+        .await
+        .unwrap();
+    let result = execute(&app, Operation::Maintain).await.unwrap();
+    assert_eq!(result["deleted"], 1);
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+    let state: String = sqlx::query_scalar("SELECT state FROM sessions WHERE id='session'")
+        .fetch_one(&app.store.0)
+        .await
+        .unwrap();
+    assert_eq!(state, "deleted");
+    server.abort();
+}

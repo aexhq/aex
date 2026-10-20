@@ -168,7 +168,10 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
                 .expired_sessions(app.config.limits.retention_secs)
                 .await?
             {
-                let response = crate::sessions::retire(app, &id).await?;
+                let response = match crate::sessions::retire(app, &id).await {
+                    Err(error) if error.0 == axum::http::StatusCode::CONFLICT => continue,
+                    result => result?,
+                };
                 if response.status().is_success() {
                     deleted += 1;
                 }
