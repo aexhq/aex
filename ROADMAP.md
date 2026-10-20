@@ -16,12 +16,9 @@
 
 The website dashboard retains exactly three items: API keys, Docs, and Account / Billing / Usage. Identity-provider login belongs to Site. Aex supplies authorization and product behavior.
 
-## Release evidence still required
+## Release evidence
 
-- Successful exact-main CI and protected managed-services qualification for the final Aex revision.
-- Immutable SDK/CLI and image publication, admitted Platform release tuple and Site contract/docs regeneration.
-- Pre-cutover paired backup, reconciliation of old active claims/resources and fail-fast migration against the production inventory.
-- Coordinated deployment of the owning runtime and stateless application/browser service, fresh Brain 2 state, live tenant/usage/media/deletion probes and an isolated paired restore.
+[Platform's Brain 2 cutover record](https://github.com/aexhq/platform/blob/main/docs/releases/2026-10-20-brain-2-cutover.md) owns the admitted runtime and Site revisions, CI and publication runs, deployment IDs, production probes, paired backups and isolated restore results. Use that record for deployment status and any remaining release work. SDK/CLI 1.0.0 and Brain SDK 2.1.0 are published; npm tag promotion follows hosted qualification.
 
 There is no compatibility API, legacy-state importer or dual-runtime routing. Historical records are retained with their original recovery pair.
 
