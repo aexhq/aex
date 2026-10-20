@@ -1,12 +1,12 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.89.0",
+  "version": "1.0.0",
   "description": "Aex accounts and hosted sessions using the Brain SDK",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   },
   "repository": {
     "type": "git",
@@ -28,9 +28,8 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "0.41.0",
-    "zod": "4.4.3",
-    "@aexhq/env-http": "0.3.6"
+    "@aexhq/brain": "2.1.0",
+    "zod": "4.4.3"
   },
   "scripts": {
     "gen": "node ../../tools/sdk-contracts.mjs",

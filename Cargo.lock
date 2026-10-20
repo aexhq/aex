@@ -11,7 +11,6 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "base64",
- "brain-protocol",
  "bytes",
  "clap",
  "fs2",
@@ -29,6 +28,7 @@ dependencies = [
  "sqlx",
  "subtle",
  "tempfile",
+ "time",
  "tokio",
  "tokio-util",
  "tower",
@@ -604,20 +604,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
-]
-
-[[package]]
-name = "brain-protocol"
-version = "0.1.0"
-source = "git+https://github.com/aexhq/brain?rev=66361a8dd1942572f8e4b01cf7ce6f403ec920c4#66361a8dd1942572f8e4b01cf7ce6f403ec920c4"
-dependencies = [
- "hex",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "url",
 ]
 
 [[package]]

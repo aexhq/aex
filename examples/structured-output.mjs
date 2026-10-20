@@ -1,25 +1,11 @@
-import { Aex } from "@aexhq/sdk";
-import { pi } from "@aexhq/agentloop-pi";
+import { Aex, ApiKey, Model } from "@aexhq/sdk";
 import { z } from "zod";
-
-for (const name of ["AEX_API_KEY", "MODEL_API_KEY"]) {
-  if (!process.env[name]) throw new Error(`${name} required`);
-}
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
 try {
-  const session = await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
-    agentloop: pi(),
-  });
+  const session = await aex.sessions.create({ harness: "pi", model: Model("openai/gpt-4.1-mini", ApiKey(process.env.MODEL_API_KEY)) });
   try {
-    const person = await session.send("Ada is 37 years old. Extract her details.", {
+    console.log(await session.send("Ada is 37 years old. Extract her details.", {
       output: { type: z.object({ name: z.string(), age: z.number() }), maxRetries: 2 },
-    });
-    console.log(person);
-  } finally {
-    await session.end();
-    await session.delete();
-  }
-} finally {
-  await aex.close();
-}
+    }));
+  } finally { await session.delete(); }
+} finally { await aex.close(); }

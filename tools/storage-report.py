@@ -9,13 +9,13 @@ import urllib.request
 import subprocess
 
 
-def measure_sessions(parent, result, allow_symlinks=False):
+def measure_sessions(parent, result):
+    if not parent.exists():
+        return
     for session in parent.iterdir():
         try:
             info = session.lstat()
         except FileNotFoundError:
-            continue
-        if session.name == "identity.json" and stat.S_ISREG(info.st_mode):
             continue
         if not stat.S_ISDIR(info.st_mode):
             raise ValueError("unexpected session directory")
@@ -27,7 +27,9 @@ def measure_sessions(parent, result, allow_symlinks=False):
                 except FileNotFoundError:
                     # Native SQLite sidecars can disappear between listing and measurement.
                     continue
-                if stat.S_ISLNK(info.st_mode) and not allow_symlinks:
+                relative = (Path(directory) / name).relative_to(session)
+                native = relative.parts[0] == "native" or relative.parts[0].startswith("native-interrupted-")
+                if stat.S_ISLNK(info.st_mode) and not native:
                     raise ValueError("symlink in session data")
                 if stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
                     total += info.st_size
@@ -35,14 +37,10 @@ def measure_sessions(parent, result, allow_symlinks=False):
 
 
 def measure(root):
-    if (root / "format").read_text().strip() != "brain-data/3":
-        raise ValueError("unsupported Brain data format")
+    if not (root / "metadata.sqlite").is_file():
+        raise ValueError("Brain SQLite metadata is required before reporting usage")
     result = {}
     measure_sessions(root / "sessions", result)
-    for agentloop in (root / "agentloops").iterdir():
-        if not agentloop.is_dir() or agentloop.is_symlink():
-            raise ValueError("unexpected agentloop directory")
-        measure_sessions(agentloop, result, allow_symlinks=True)
     return result
 
 

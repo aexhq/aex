@@ -1,6 +1,7 @@
 pub mod grants;
 pub mod storage;
 
+use crate::brain_contract::Media;
 use crate::{
     App,
     error::{Error, Result},
@@ -13,7 +14,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use brain_protocol::{FileMediaType, Media};
 use futures_util::StreamExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -96,8 +96,32 @@ impl Config {
 #[serde(deny_unknown_fields)]
 pub struct Attachment {
     pub id: String,
-    pub media: Media,
+    pub media: AttachmentMedia,
     pub expires_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AttachmentMedia {
+    Image(Media),
+    File(PdfMedia),
+}
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PdfMedia {
+    pub r#type: PdfType,
+    pub media_type: FileMediaType,
+    pub url: String,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub enum PdfType {
+    #[serde(rename = "file")]
+    File,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub enum FileMediaType {
+    #[serde(rename = "application/pdf")]
+    Pdf,
 }
 
 fn configured(app: &App) -> Result<(&Config, &Arc<dyn storage::Storage>)> {
@@ -607,12 +631,128 @@ fn media(
         id: id.to_string(),
         expires_at,
         media: if content_type == "application/pdf" {
-            Media::File {
+            AttachmentMedia::File(PdfMedia {
+                r#type: PdfType::File,
                 media_type: FileMediaType::Pdf,
                 url,
-            }
+            })
         } else {
-            Media::Image { url }
+            AttachmentMedia::Image(Media {
+                r#type: "image".into(),
+                url,
+            })
         },
     }
+}
+
+pub async fn resolve_media(
+    app: &App,
+    p: &Principal,
+    session: &str,
+    value: Option<serde_json::Value>,
+) -> Result<Option<Vec<Media>>> {
+    let Some(value) = value else { return Ok(None) };
+    let selected: Vec<AttachmentMedia> = serde_json::from_value(value)?;
+    if selected.len() > 64 {
+        return Err(Error::invalid(
+            "at most 64 attachment references are allowed",
+        ));
+    }
+    let config = &configured(app)?.0;
+    let origin = url::Url::parse(&config.public_origin).map_err(|_| Error::internal())?;
+    let mut images = Vec::new();
+    for media in selected {
+        let (reference, pdf) = match media {
+            AttachmentMedia::Image(media) if media.r#type == "image" => (media.url, false),
+            AttachmentMedia::File(media) => (media.url, true),
+            _ => return Err(Error::invalid("unsupported attachment media")),
+        };
+        let url =
+            url::Url::parse(&reference).map_err(|_| Error::invalid("invalid attachment URL"))?;
+        let id = url
+            .path()
+            .strip_prefix("/v1/attachments/")
+            .and_then(|path| path.strip_suffix("/content"))
+            .filter(|id| {
+                !id.is_empty() && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+            })
+            .ok_or_else(|| Error::invalid("an owned attachment URL is required"))?;
+        if url.origin() != origin.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(Error::denied());
+        }
+        let token = url
+            .query()
+            .and_then(|q| q.strip_prefix("token="))
+            .filter(|s| s.len() <= 128 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'))
+            .ok_or_else(Error::denied)?;
+        let kind:String=sqlx::query_scalar("SELECT content_type FROM attachments WHERE id=$1 AND account=$2 AND session=$3 AND read_verifier=$4 AND state='ready' AND expires_at>$5")
+            .bind(id).bind(&p.account).bind(session).bind(identity::digest(token.as_bytes())).bind(now()).fetch_optional(&app.store.0).await?.ok_or_else(Error::missing)?;
+        if pdf != (kind == "application/pdf") {
+            return Err(Error::invalid(
+                "attachment media does not match its stored type",
+            ));
+        }
+        if pdf {
+            let endpoint = app
+                .config
+                .media_url
+                .as_ref()
+                .ok_or_else(|| Error::invalid("PDF conversion is not configured"))?;
+            let response = app
+                .application_client
+                .post(format!("{}/render", endpoint.trim_end_matches('/')))
+                .bearer_auth(app.media_token.as_ref().ok_or_else(Error::internal)?)
+                .json(&serde_json::json!({"tenant":p.account,"session":session,"url":reference}))
+                .send()
+                .await
+                .map_err(|_| Error::internal())?;
+            if !response.status().is_success() {
+                return Err(Error::invalid("PDF conversion failed"));
+            }
+            let converted: Vec<Media> = serde_json::from_slice(&app.brain.bytes(response).await?)?;
+            images.extend(converted);
+        } else {
+            images.push(Media {
+                r#type: "image".into(),
+                url: reference,
+            });
+        }
+        if images.len() > 64 {
+            return Err(Error::invalid("attachment conversion exceeds 64 images"));
+        }
+    }
+    Ok(Some(images))
+}
+
+pub async fn delete_session(app: &App, session: &str) -> Result<bool> {
+    if let Some(origin) = &app.config.media_url {
+        let account = app.store.session_account(session).await?;
+        let response = app
+            .application_client
+            .post(format!("{}/delete", origin.trim_end_matches('/')))
+            .bearer_auth(app.media_token.as_ref().ok_or_else(Error::internal)?)
+            .json(&serde_json::json!({"tenant":account,"session":session}))
+            .send()
+            .await
+            .map_err(|_| Error::internal())?;
+        if !response.status().is_success() {
+            return Err(Error::conflict("rendered media cleanup is pending"));
+        }
+        app.brain.bytes(response).await?;
+    }
+    sqlx::query("UPDATE attachments SET state='deleting' WHERE session=$1")
+        .bind(session)
+        .execute(&app.store.0)
+        .await?;
+    maintain(app).await?;
+    let remains: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM attachments WHERE session=$1)")
+            .bind(session)
+            .fetch_one(&app.store.0)
+            .await?;
+    Ok(!remains)
 }

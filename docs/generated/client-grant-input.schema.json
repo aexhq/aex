@@ -11,7 +11,14 @@
       "type": "string"
     },
     "session": {
-      "description": "The prepared Brain request. Credentials remain on the server."
+      "$ref": "#/$defs/GrantSession"
+    },
+    "tools": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Tool"
+      }
     }
   },
   "additionalProperties": false,
@@ -19,5 +26,186 @@
     "origin",
     "expires_at",
     "session"
-  ]
+  ],
+  "$defs": {
+    "CreateSession": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "credentials": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/CredentialInput"
+          }
+        },
+        "harness": {
+          "type": "string"
+        },
+        "model_credential": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelCredential"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "harness"
+      ]
+    },
+    "CredentialInput": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "value"
+      ]
+    },
+    "GrantSession": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/CreateSession"
+        }
+      ]
+    },
+    "ModelCredential": {
+      "type": "object",
+      "properties": {
+        "api_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SessionConfig": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ToolBinding"
+          }
+        },
+        "instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "tools"
+      ]
+    },
+    "Tool": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "input_schema": true,
+        "name": {
+          "type": "string"
+        },
+        "output_schema": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "input_schema",
+        "name"
+      ]
+    },
+    "ToolBinding": {
+      "type": "object",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "executor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operations": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "parameters": true,
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Tool"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "alias"
+      ]
+    }
+  }
 }

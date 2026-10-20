@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createHmac,randomUUID } from 'node:crypto';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { Journal } from '../services/tools/common.mjs';
+import { Browsers } from '../services/tools/browser.mjs';
+import { toolServer } from '../services/tools/server.mjs';
+
+test('managed browser proxy authorizes real Chromium actions and confirms context cleanup',{timeout:60000},async t=>{
+  const {browserService}=await import('/opt/aex/brain-services/browser/src/browser.mjs');
+  const page=createServer((_req,res)=>res.end('<title>Aex integration</title><body>Owned browser page</body>'));page.listen(0,'127.0.0.1');await once(page,'listening');t.after(()=>new Promise(resolve=>{page.closeAllConnections();page.close(resolve);}));
+  const origin=`http://127.0.0.1:${page.address().port}`;
+  const token=randomUUID(),service=await browserService({token,origins:[origin]});
+  service.server.listen(0,'127.0.0.1');await once(service.server,'listening');t.after(()=>service.close());
+  const directory=await mkdtemp(join(tmpdir(),'aex-browser-integration-')),journal=new Journal(directory);t.after(async()=>{journal.close();await rm(directory,{recursive:true,force:true});});
+  let revoked=false,cleaned=false;
+  const control=async(path)=>{if(path==='authorize'){assert.equal(revoked,false);return {};}if(path==='pending')return {grants:[{authorization:'grant',tenant:'a',session:'s',provider:'browser'}]};assert.equal(path,'cleaned');cleaned=true;return {};};
+  const provider=new Browsers({journal,url:`http://127.0.0.1:${service.server.address().port}`,token,control}),sign=randomUUID();
+  const server=toolServer({token:sign,control,providers:{browser:provider}});server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
+  const capsule=Buffer.from(JSON.stringify({tenant:'a',session:'s',provider:'browser',alias:'browser',parameters:{authorization:'grant'}})).toString('base64url');
+  const authorization=`Bearer ${capsule}.${createHmac('sha256',sign).update(capsule).digest('base64url')}`;
+  const call=async args=>{const response=await fetch(`http://127.0.0.1:${server.address().port}/browser/browse`,{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({tenant_id:'a',session_id:'s',call_id:randomUUID(),arguments:args})});assert.equal(response.status,200);return response.json();};
+  const navigation=await call({action:'navigate',url:origin});assert.equal(navigation.is_error,undefined,JSON.stringify(navigation));assert.equal(JSON.parse(navigation.content[0].text).text,'Owned browser page');
+  assert.equal(JSON.parse((await call({action:'read'})).content[0].text).text,'Owned browser page');
+  assert.equal((await call({action:'screenshot'})).content[0].type,'image');
+  assert.equal((await call({action:'navigate',url:'http://169.254.169.254/'})).is_error,true);
+  revoked=true;await provider.maintain();assert.equal(cleaned,true);assert.equal(journal.get('grant'),undefined);
+});

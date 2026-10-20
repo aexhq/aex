@@ -468,7 +468,7 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         Json, Router,
         body::Bytes,
         http::{HeaderMap, StatusCode},
-        routing::{get, post},
+        routing::get,
     };
     use std::sync::{
         Arc,
@@ -485,30 +485,24 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
     let handler_calls = calls.clone();
     let handler_received = received.clone();
     let handler_accept = accept.clone();
-    let upstream = Router::new()
-        .route("/v1/sessions/ses_billing",get(move || { let phase=status_phase.load(Ordering::SeqCst); async move { Json(json!({"session_id":"ses_billing","status":if (1..=2).contains(&phase) {"running"} else {"idle"},"last_sequence":if phase==3 {5} else {phase+1}})) } }))
-        .route("/v1/sessions/ses_billing/events",get(move || { let phase=event_phase.load(Ordering::SeqCst); async move {
-            let mut events = Vec::new();
-            if phase == 3 {
-                events.push(json!({"sequence":4,"recorded_at_ms":1010,"event_type":"turn_started","data":{}}));
-                events.push(json!({"sequence":5,"recorded_at_ms":1014,"event_type":"turn_ended","data":{}}));
-            } else {
-                if phase >= 1 { events.push(json!({"sequence":2,"recorded_at_ms":1000,"event_type":"turn_started","data":{}})); }
-                if phase >= 2 { events.push(json!({"sequence":3,"recorded_at_ms":1008,"event_type":"turn_ended","data":{}})); }
-            }
-            Json(json!({"events":events,"next_cursor":phase+1}))
-        }}))
-        .route("/v1/sessions/ses_billing/messages",post(move |headers:HeaderMap| {
-            let phase=handler_phase.clone(); let calls=handler_calls.clone(); let received=handler_received.clone(); let accept=handler_accept.clone();
-            async move {
-                calls.fetch_add(1,Ordering::SeqCst);
-                if headers.get("prefer").is_none() {
-                    assert_eq!(phase.swap(3,Ordering::SeqCst),2);
-                    return (StatusCode::OK,Json(json!({"session_id":"ses_billing","status":"idle","last_sequence":5})));
-                }
-                assert_eq!(headers["prefer"],"respond-async"); received.notify_one(); accept.notified().await; phase.store(1,Ordering::SeqCst); (StatusCode::ACCEPTED,Json(json!(2)))
-            }
-        }));
+    let accepted = Arc::new(tokio::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+    let history = accepted.clone();
+    let upstream=Router::new().route("/sessions/ses_billing",get(move || {let phase=status_phase.load(Ordering::SeqCst);async move {Json(json!({"id":"ses_billing","harness":"pi","config":{"model":"openai/gpt-4.1-mini","tools":[]},"descriptors":[],"created_at":"2026-10-20T00:00:00Z","updated_at":"2026-10-20T00:00:00Z","status":if (1..=2).contains(&phase){"running"}else{"idle"}}))}}))
+    .route("/sessions/ses_billing/events",get(move |axum::extract::Query(query):axum::extract::Query<std::collections::BTreeMap<String,String>>|{let phase=event_phase.load(Ordering::SeqCst);let history=history.clone();async move {
+        let accepted=history.lock().await;let mut events=Vec::new();
+        let event=|id:&str,input:&str,status:&str,ms:&str|json!({"id":id,"cursor":format!("opaque/{id}"),"type":"session.status","input_id":input,"time":format!("2026-10-20T00:00:01.{ms}Z"),"data":{"status":status}});
+        if phase>=1 {events.extend([accepted[0].clone(),event("running1","input1","running","000")]);}
+        if phase>=2 {events.push(event("done1","input1","idle","008"));}
+        if phase>=4 {events.extend([accepted[1].clone(),event("running2","input2","running","010"),event("done2","input2","idle","014")]);}
+        let after=query.get("after").cloned().unwrap_or_default();let position=if after.is_empty(){0}else{events.iter().position(|event|event["cursor"]==after).unwrap()+1};let next=events.last().map(|event|event["cursor"].as_str().unwrap().to_owned()).unwrap_or(after);
+        Json(json!({"events":events.into_iter().skip(position).collect::<Vec<_>>(),"next_cursor":next}))
+    }}).post(move |Json(input):Json<serde_json::Value>|{
+        let phase=handler_phase.clone();let calls=handler_calls.clone();let received=handler_received.clone();let accept=handler_accept.clone();let accepted=accepted.clone();async move {
+            let index=calls.fetch_add(1,Ordering::SeqCst);let event=json!({"id":format!("input{}",index+1),"cursor":format!("opaque/input{}",index+1),"time":"2026-10-20T00:00:01Z","type":"user.message","data":input});
+            if index==0 {received.notify_one();accept.notified().await;accepted.lock().await.push(event.clone());phase.store(1,Ordering::SeqCst);}else{assert_eq!(phase.load(Ordering::SeqCst),3);accepted.lock().await.push(event.clone());phase.store(4,Ordering::SeqCst);}
+            (StatusCode::ACCEPTED,Json(event))
+        }
+    }));
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = Arc::make_mut(&mut app.config);
     config.brain_url = format!("http://{}", socket.local_addr().unwrap());
@@ -538,7 +532,7 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
     headers.insert("prefer", "respond-async".parse().unwrap());
     headers.insert("idempotency-key", "send-once".parse().unwrap());
     headers.insert("x-aex-max-cost-micro-usd", "40000".parse().unwrap());
-    let input = Bytes::from_static(br#"{"input":{"message":"run"}}"#);
+    let input = Bytes::from_static(br#"{"type":"user.message","text":"run","key":"send-once"}"#);
     let owned_app = app.clone();
     let owned_principal = principal.clone();
     let owned_headers = headers.clone();
@@ -553,7 +547,9 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         )
         .await
     });
-    received.notified().await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), received.notified())
+        .await
+        .unwrap();
     assert!(
         aex_server::turns::reconcile(&app, "ses_billing")
             .await
@@ -614,23 +610,27 @@ async fn async_turns_retain_holds_through_dispatch_and_replay_without_dispatchin
         StatusCode::ACCEPTED
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    headers.insert("idempotency-key", "next-turn".parse().unwrap());
+    let next = Bytes::from_static(br#"{"type":"user.message","text":"run","key":"next-turn"}"#);
     assert_eq!(
-        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input.clone())
+        aex_server::turns::send(&app, &principal, "ses_billing", &headers, next.clone())
             .await
             .unwrap_err()
             .0,
         StatusCode::CONFLICT,
-        "asynchronous submission still rejects a busy session"
+        "new work requires an idle session"
     );
-    headers.remove("prefer");
+    phase.store(3, Ordering::SeqCst);
     assert_eq!(
-        aex_server::turns::send(&app, &principal, "ses_billing", &headers, input)
+        aex_server::turns::send(&app, &principal, "ses_billing", &headers, next)
             .await
             .unwrap()
             .status(),
-        StatusCode::OK,
-        "a synchronous send delegates serialization behind observations to Brain"
+        StatusCode::ACCEPTED
+    );
+    assert!(
+        aex_server::turns::reconcile(&app, "ses_billing")
+            .await
+            .unwrap()
     );
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(

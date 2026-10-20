@@ -54,22 +54,12 @@
           "format": "uint32",
           "minimum": 0
         },
-        "artifact_bytes_per_account": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "artifacts_per_account": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
         "claims_per_account": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
         },
-        "hosts_per_account": {
+        "executors_per_account": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
@@ -145,7 +135,7 @@
         "accounts",
         "keys_per_account",
         "sessions_per_account",
-        "hosts_per_account",
+        "executors_per_account",
         "claims_per_account",
         "active_turns_per_account",
         "streams_per_account",
@@ -158,9 +148,7 @@
         "turn_reserve_bytes",
         "minimum_free_disk_bytes",
         "retention_secs",
-        "usage_max_age_secs",
-        "artifacts_per_account",
-        "artifact_bytes_per_account"
+        "usage_max_age_secs"
       ]
     },
     "TokenUsage": {

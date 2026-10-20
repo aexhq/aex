@@ -1,112 +1,61 @@
 # Run your first agent on Aex
 
-Aex hosts the agent session while your application supplies a model key and tools. This example
-asks an agent to look up an order and prints its answer.
+Aex hosts the session while your application supplies a model key and tools. This example looks up an order and prints the agent's answer.
 
-## 1. Get your keys
+## Get your keys
 
-You need Node.js 22 or newer and an OpenAI API key. Sign in at
-[aex.dev/dashboard](https://aex.dev/dashboard) and create an API key. Save it when it appears;
-the secret is shown only once. Set both keys in your terminal:
+Use Node.js 24. Sign in at [aex.dev/dashboard](https://aex.dev/dashboard), create an API key, and save it when shown. Set `AEX_API_KEY` and `OPENAI_API_KEY` in your server environment. In PowerShell use `$env:AEX_API_KEY = "your-key"`. Keep both keys out of browsers and source control. Your model provider bills inference separately.
 
-```sh
-export AEX_API_KEY="your-aex-key"
-export OPENAI_API_KEY="your-openai-key"
-```
-
-In PowerShell use `$env:AEX_API_KEY = "your-aex-key"` and
-`$env:OPENAI_API_KEY = "your-openai-key"`. Keep keys on your server and out of source control.
-Your model provider bills model calls separately from Aex hosting.
-
-## 2. Install
+Accept the prices offered to your account and fund any required prepaid resources in **Account / Billing / Usage**. The example sets a hosting cost ceiling of 1 USD; this is a ceiling, not a price or a cap on your model-provider bill.
 
 ```sh
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@0.89.0 @aexhq/agentloop-pi@11.0.0 zod@4.4.3
+npm install @aexhq/sdk@1.0.0
 ```
 
-## 3. Create a session
+## Create and send
 
-Save this as `order.mjs`, or use the [complete example](../examples/order.mjs). The same API works in TypeScript.
+Save this as `order.mjs`:
 
 ```js
-import { Aex, tool } from "@aexhq/sdk";
-import { pi } from "@aexhq/agentloop-pi";
-import { z } from "zod";
+import { Aex, ApiKey, Model, Tool } from "@aexhq/sdk";
 
-const lookupOrder = tool({
-  name: "lookup_order",
-  description: "Look up an order by id.",
-  input: z.object({ id: z.string() }),
-  run: ({ id }, ctx) => ctx.finish({ id, status: "shipped" }),
-});
-
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY });
-aex.sessions.create({
-  model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY },
-  agentloop: pi(),
-  tools: [lookupOrder()],
-}).then(async session => {
-  const after = session.state.lastSequence;
-  await session.send("Look up order A-1001. Has it shipped?");
-  for await (const event of session.events(after)) {
-    if (event.type === "turn_failed") throw new Error(JSON.stringify(event.data));
-  }
-  console.log(JSON.stringify(await session.transcript(), null, 2));
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
+try {
+  const session = await aex.sessions.create({
+    harness: "pi",
+    model: Model("openai/gpt-4.1-mini", ApiKey(process.env.OPENAI_API_KEY)),
+    tools: [Tool({
+      name: "lookup_order",
+      description: "Look up an order by id",
+      input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
+      run: ({ id }) => ({ id, status: "shipped" }),
+    })],
+  });
+  console.log((await session.send("Look up order A-1001. Has it shipped?")).output);
   console.log("Session:", session.id);
-}).catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+} finally {
+  await aex.close();
+}
+
 ```
 
-## 4. Run it
+Run `node order.mjs`. The lookup runs in your application and the selected harness runs on Aex. The answer's wording depends on the model. Replace the sample lookup with your own data.
 
-```sh
-node order.mjs
-```
+`aex.close()` disconnects application callbacks and lets the process exit. It retains the hosted session. Save its ID and use `aex.sessions.get(id)` to read history or send more work. To restore callbacks after reconnecting, explicitly call `session.rebind(tools)` from the process that owns those functions. A disconnected process cannot execute tools.
 
-The transcript includes the `lookup_order` result and an answer that order A-1001 has shipped.
-The exact wording depends on the model. Replace the sample tool's body with your own lookup.
-The client releases its tool connection after five idle seconds, letting this script exit.
-Add more `session.send(...)` calls in the callback to continue the conversation. A later send
-through the same live client reconnects automatically.
+`session.close()` stops the session and keeps its history. `session.delete()` removes session content and attachments after hosted resources have been cleaned up; a 409 means cleanup is still pending, so retry deletion. Neither operation silently replays an uncertain action.
 
-The example keeps the session and its history. Save its ID, then use
-`await aex.sessions.get(sessionId)` and `session.transcript()` to read it later. Use
-`session.end()` to finish the conversation and `session.delete()` to remove its history.
-Explicit `aex.close()` permanently disposes of the client. Set `connectionIdleTimeoutMs: 0`
-on `new Aex(...)` when its tools must remain available to other callers or future autonomous events.
-Event subscriptions stay open until you stop them.
+## Choose what runs where
 
-## Where code runs
-
-| Code | Where it runs | What you need |
+| Capability | Location | Guide |
 | --- | --- | --- |
-| Pi or another packaged loop | Aex | Install the extension package |
-| A tool with a `run` function | Your application (`hostEnv`) | Keep its process connected |
-| A packaged tool | Aex (`brainEnv`) | Build a compatible extension; no file, network or server-secret access |
-| A managed tool | A profile granted to your account | Accepted prices, credits and an operation cost ceiling |
+| Pi, Codex or OpenCode | Installed Aex native harness | [Brain harnesses](https://aex.dev/brain/docs) |
+| `Tool({ run })` | Connected application process | [SDK](../packages/sdk/README.md) |
+| Application endpoint | Your HTTPS service | [Application tools](http-tools.md) |
+| DOM callbacks | Explicitly attached browser tab | [Browser tools](client-browser.md) |
+| Sandbox, remote browser, inspection or MCP | Account-authorized service | [Managed tools](environments.md) |
 
-For a request that ends before the work does, use `session.submit()` with tools hosted outside
-that request. Calling `aex.close()` leaves hosted work running but disconnects application tools.
-See [managed environments](environments.md) for available profiles and lifecycle.
-
-## Next steps
-
-- [Write a tool](https://aex.dev/brain/docs/guides/write-a-tool). Import shared helpers from
-  `@aexhq/sdk` when using Aex; their contracts are the same as Brain's.
-- [Choose a model](https://aex.dev/brain/docs/concepts/model) with your provider's key.
-- [Send images and PDFs](attachments.md).
-- [Get structured output](https://aex.dev/docs#structured-output).
-- [Inspect credits and usage](billing.md), or use the [CLI](../packages/cli/README.md).
-
-Aex is in early preview. Maintenance can interrupt work; saved history remains available,
-and uncertain actions are not automatically retried.
-
-Aex runs Pi, Codex and OpenCode on the server. Their factories select an installed runtime
-and pass session settings; they do not upload or start executables. Use `pi()`, `codex()` or
-`opencode()` from the corresponding `@aexhq/agentloop-*` package.
-See [Environment preparation](https://github.com/aexhq/aex/blob/main/docs/environments.md#prepare-hosted-code) for hosted Tools.
+Use [attachments](attachments.md) for images and PDFs, [typed responses](../examples/structured-output.mjs) for locally validated answers, and [billing](billing.md) to inspect charges and unknown usage.

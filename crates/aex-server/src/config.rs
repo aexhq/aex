@@ -9,16 +9,18 @@ pub struct Config {
     pub operator_listen: SocketAddr,
     pub data_dir: PathBuf,
     pub brain_url: String,
-    pub agentloops: BTreeSet<String>,
+    pub harnesses: BTreeSet<String>,
+    pub models: BTreeSet<String>,
+    pub managed_providers: std::collections::BTreeMap<String, crate::managed::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_tool_url: Option<String>,
     pub limits: Limits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<crate::attachments::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub billing: Option<crate::billing::Config>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environments: Option<crate::environments::Config>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub http_environments: Option<crate::environments::http::Config>,
 }
 
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
@@ -27,7 +29,7 @@ pub struct Limits {
     pub accounts: u32,
     pub keys_per_account: u32,
     pub sessions_per_account: u32,
-    pub hosts_per_account: u32,
+    pub executors_per_account: u32,
     pub claims_per_account: u32,
     pub active_turns_per_account: u32,
     pub streams_per_account: usize,
@@ -41,8 +43,6 @@ pub struct Limits {
     pub minimum_free_disk_bytes: u64,
     pub retention_secs: u64,
     pub usage_max_age_secs: u64,
-    pub artifacts_per_account: u32,
-    pub artifact_bytes_per_account: u64,
 }
 
 impl Config {
@@ -63,12 +63,12 @@ impl Config {
             "brain_url must be an HTTP origin"
         );
         anyhow::ensure!(
-            self.agentloops.iter().all(|name| !name.is_empty()
+            self.harnesses.iter().all(|name| !name.is_empty()
                 && name.len() <= 64
                 && name
                     .bytes()
                     .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')),
-            "agentloops must contain registered names of 1-64 ASCII letters, digits, underscores or hyphens"
+            "harnesses must contain installed names of 1-64 ASCII letters, digits, underscores or hyphens"
         );
         for (name, value) in serde_json::to_value(&self.limits)?.as_object().unwrap() {
             anyhow::ensure!(
@@ -92,20 +92,30 @@ impl Config {
         if let Some(config) = &self.billing {
             config.validate()?;
         }
-        if let Some(config) = &self.http_environments {
-            config.validate()?;
+        for (name, policy) in &self.managed_providers {
+            policy.validate(name)?;
         }
-        if let Some(config) = &self.environments {
-            config.validate()?;
+        for origin in self
+            .media_url
+            .iter()
+            .chain(self.application_tool_url.iter())
+        {
+            let url = url::Url::parse(origin)?;
             anyhow::ensure!(
-                self.billing.as_ref().is_some_and(|b| b
-                    .pricebook
-                    .rates
-                    .get(&crate::billing::Meter::SandboxMs)
-                    .is_some_and(|r| r.micro_usd > 0)),
-                "managed compute requires a positive sandbox price and prepaid billing"
+                url.scheme() == "http"
+                    && url
+                        .host_str()
+                        .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+                        .is_some_and(|ip| ip.is_loopback())
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && url.path() == "/",
+                "private service URLs must be literal loopback HTTP origins"
             );
         }
+        anyhow::ensure!(!self.models.is_empty(), "offered models are required");
         Ok(())
     }
 }

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { modalProvider } from '../services/tools/modal.mjs';
+import { Journal } from '../services/tools/common.mjs';
+import { Sandboxes } from '../services/tools/sandbox.mjs';
+
+test('real Modal allocation executes once, survives controller restart and settles after termination',{timeout:240000},async t=>{
+  const provider=modalProvider(),directory=await mkdtemp(join(tmpdir(),'aex-modal-integration-'));
+  const journal=new Journal(directory),grant=`integration-${randomUUID()}`,receipts=[];
+  t.after(async()=>{try{for(const id of await provider.find(grant))await provider.terminate(id);}finally{provider.close();journal.close();await rm(directory,{recursive:true,force:true});}});
+  const control=async(path,body)=>{assert.equal(path,'usage');receipts.push(body);return {};};
+  let allocationError;
+  const qualified={...provider,async create(...args){try{return await provider.create(...args);}catch(error){allocationError=error;throw error;}}};
+  let controller=new Sandboxes({journal,provider:qualified,control});
+  const context={tenant:'integration',session:randomUUID(),parameters:{authorization:grant}};
+  const request={call_id:randomUUID(),arguments:{sandbox:grant}};
+  const created=await controller.invoke('create',context,request,{profile:{image:'python:3.13-slim',cpu:1,memoryMiB:1024,blockNetwork:true},expires_ms:Date.now()+180000});
+  assert.equal(created.is_error,undefined,allocationError?.message??JSON.stringify(created));
+  assert.equal((await provider.find(grant)).length,1);
+  const output=await controller.invoke('exec',context,{call_id:'once',arguments:{sandbox:grant,command:"python -c 'print(6 * 7)'"}},{});
+  assert.equal(output.structured_content.stdout.trim(),'42');assert.equal(output.structured_content.exit_code,0);
+  controller=new Sandboxes({journal,provider,control});
+  assert.equal((await controller.invoke('exec',context,{call_id:'once',arguments:{sandbox:grant,command:'exit 99'}},{})).unknown_outcome,true);
+  const inspected=await controller.invoke('inspect',context,request,{});assert.equal(inspected.structured_content.state,'running');
+  const terminated=await controller.invoke('terminate',context,request,{});assert.equal(terminated.is_error,undefined);
+  assert.equal(journal.get(grant).phase,'settled');assert.equal(receipts.at(-1).terminal,true);assert.ok(receipts.at(-1).units_ms>0);
+  assert.ok(receipts.every((receipt,index)=>index===0 || receipt.units_ms>=receipts[index-1].units_ms));
+});

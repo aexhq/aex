@@ -16,7 +16,8 @@ does not mean its implementation is complete.
 | [008 — Typed responses](008-typed-responses.md) | Product-owned prompting, validation and correction; SDK composition |
 | [009 - Application composition](009-application-composition.md) | Browser access, declared backend endpoints and ordinary session creation |
 | [010 — Registered Agentloops](010-registered-agentloops.md) | Startup runtime registration, hosted selection and storage migration |
+| [011 — Brain 2.0 integration](011-brain-2-integration.md) | **Accepted for implementation:** Go runtime composition and selected three-harness, credential, browser, usage and clean-cutover prerequisites |
 
-These records define the current MVP. Future possibilities belong in the
+Accepted records define the current MVP; proposed records do not change implemented behavior. Future possibilities belong in the
 [roadmap](../../ROADMAP.md), with new ADRs written when those decisions become necessary.
 Cloud-account configuration, launch budgets and commercial policy are private Platform concerns.

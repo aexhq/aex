@@ -1,6 +1,57 @@
 /* Generated from aex-server schemas. */
-import type {Media} from "@aexhq/brain";
+import type {
+  Call,
+  Checkpoint,
+  Command,
+  Content,
+  CreateSession,
+  CredentialInput,
+  ErrorDetail,
+  ErrorResponse,
+  Event,
+  EventList,
+  ExecutorCredential,
+  ExecutorRegistration,
+  Input,
+  Media,
+  ModelCredential,
+  ModelRequest,
+  ModelUsage,
+  Reply,
+  Restore,
+  Result,
+  Session,
+  SessionConfig,
+  SessionList,
+  Status,
+  SyncStatus,
+  Tool,
+  ToolBinding,
+  ToolCatalog,
+  ToolResult,
+  ToolScope
+} from "@aexhq/brain";
 
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "GrantSession".
+ */
+export type GrantSession = string | CreateSession;
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "AttachmentMedia".
+ */
+export type AttachmentMedia = Media | PdfMedia;
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "FileMediaType".
+ */
+export type FileMediaType = "application/pdf";
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "PdfType".
+ */
+export type PdfType = "file";
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Billing".
@@ -35,21 +86,14 @@ export type SyncPayment =
 export interface AexContracts {}
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "ClientHost".
- */
-export interface ClientHost {
-  hostId: string;
-  token: string;
-}
-/**
- * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "ClientAccess".
  */
 export interface ClientAccess {
-  credentials: ClientHost;
   expires_at: number;
   id: string;
+  session: CreateSession;
   token: string;
+  tools: Tool[];
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
@@ -58,29 +102,36 @@ export interface ClientAccess {
 export interface ClientGrantInput {
   expires_at: number;
   origin: string;
-  /**
-   * The prepared Brain request. Credentials remain on the server.
-   */
-  session: {
-    [k: string]: unknown;
-  };
+  session: GrantSession;
+  tools?: Tool[];
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "HttpCatalog".
+ * via the `definition` "Composition".
  */
-export interface HttpCatalog {
-  bindings: {
+export interface Composition {
+  create: CreateSession;
+  session?: string | null;
+  tools: Tool[];
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "ProviderCatalog".
+ */
+export interface ProviderCatalog {
+  operations: string[];
+  profiles: {
     [k: string]: number;
   };
-  driver_url: string;
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "HttpSelection".
+ * via the `definition` "Catalog".
  */
-export interface HttpSelection {
-  binding: string;
+export interface Catalog {
+  providers: {
+    [k: string]: ProviderCatalog;
+  };
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
@@ -119,12 +170,21 @@ export interface AttachmentLimits {
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
+ * via the `definition` "PdfMedia".
+ */
+export interface PdfMedia {
+  media_type: FileMediaType;
+  type: PdfType;
+  url: string;
+}
+/**
+ * This interface was referenced by `AexContracts`'s JSON-Schema
  * via the `definition` "Attachment".
  */
 export interface Attachment {
   expires_at: number;
   id: string;
-  media: Media;
+  media: AttachmentMedia;
 }
 /**
  * This interface was referenced by `AexContracts`'s JSON-Schema
@@ -133,10 +193,8 @@ export interface Attachment {
 export interface Limits {
   accounts: number;
   active_turns_per_account: number;
-  artifact_bytes_per_account: number;
-  artifacts_per_account: number;
   claims_per_account: number;
-  hosts_per_account: number;
+  executors_per_account: number;
   keys_per_account: number;
   minimum_free_disk_bytes: number;
   request_bytes: number;
@@ -357,30 +415,4 @@ export interface Refund {
   id: string;
   state: string;
   topup: string;
-}
-/**
- * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "EnvironmentProfile".
- */
-export interface EnvironmentProfile {
-  maxLifetimeMs: number;
-  [k: string]: unknown;
-}
-/**
- * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "EnvironmentCatalog".
- */
-export interface EnvironmentCatalog {
-  driver_url: string;
-  profiles: {
-    [k: string]: EnvironmentProfile;
-  };
-}
-/**
- * This interface was referenced by `AexContracts`'s JSON-Schema
- * via the `definition` "EnvironmentSelection".
- */
-export interface EnvironmentSelection {
-  lifetimeMs: number;
-  profile: string;
 }

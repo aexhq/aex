@@ -1,27 +1,21 @@
-import assert from "node:assert/strict";
-import { Aex, hostEnv, tool } from "@aexhq/sdk";
-import { pi } from "@aexhq/agentloop-pi";
-import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import assert from 'node:assert/strict';
+import { Aex,ApiKey,Model,Tool } from '@aexhq/sdk';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
-for(const key of ["AEX_URL","AEX_API_KEY","AEX_MODEL_KEY"]) assert.ok(process.env[key],`${key} required`);
-const brain=new Aex({baseUrl:process.env.AEX_URL,apiKey:process.env.AEX_API_KEY});
-let session, toolCalls=0;
-const answer=randomUUID();
-const probe=tool({name:"hosted_probe",description:"Return the current hosting verification value",input:z.object({}),run:(_,context)=>{toolCalls++;return context.finish(answer);}});
+for(const key of ['AEX_URL','AEX_API_KEY','AEX_MODEL_KEY'])assert.ok(process.env[key],`${key} required`);
+const client=new Aex({baseUrl:process.env.AEX_URL,apiKey:process.env.AEX_API_KEY,maxCostMicroUsd:1000000});
 try {
-  session=await brain.sessions.create({ model:{provider:"vercel-ai-gateway",name:"openai/gpt-4.1-mini",apiKey:process.env.AEX_MODEL_KEY},agentloop:pi(),tools:[probe({env:hostEnv({name:"application"})})]});
-  await session.send("Call hosted_probe exactly once, then reply with its returned value. Do not invent the value.");
-  assert.equal(toolCalls,1,"the real provider must invoke the application Tool");
-  const events=[];for await(const event of session.events())events.push(event);
-  assert.ok(events.some(event=>event.type==="model_call_ended"),"real model call must commit a success event");
-  assert.ok(!events.some(event=>event.type==="model_call_failed"),"real model call failed");
-  assert.ok(events.some(event=>event.type==="tool_call_ended"),"application Tool result must commit");
-  const result = await session.send("Return the previously retrieved hosting verification value in the value field. Use the existing result; do not call the Tool again.", { output: { type: z.object({ value: z.literal(answer) }) } });
-  assert.equal(result.value, answer);
-  assert.equal(toolCalls, 1, "structured output uses the existing Tool result");
-  console.log("real provider, application Tool, and typed structured output hosted session passed");
-} finally {
-  try {if(session){await session.end();await session.delete();}}
-  finally {await brain.close();}
-}
+  for(const harness of ['pi','codex','opencode']) {
+    let calls=0;const answer=randomUUID();
+    const session=await client.sessions.create({harness,model:Model(process.env.AEX_MODEL??'vercel-ai-gateway/openai/gpt-4.1-mini',ApiKey(process.env.AEX_MODEL_KEY)),tools:[Tool({name:'probe',description:'Return the verification value',input_schema:{type:'object',properties:{},additionalProperties:false},run:()=>{calls++;return answer;}})]});
+    try {
+      const turn=await session.send('Call runtime_probe exactly once, then reply with its returned value. Do not invent it.');
+      assert.equal(calls,1,harness);assert.ok(turn.events.some(event=>event.type==='tool.result'));
+      const typed=await session.send('Return the previously retrieved value in the value field. Do not call the tool again.',{output:{type:z.object({value:z.literal(answer)})}});
+      assert.equal(typed.value,answer);assert.equal(calls,1);
+      assert.ok((await client.account.modelUsage(session.id)).reported_input_tokens>0);
+      console.log(`${harness}: real provider, application callback, typed answer and usage passed`);
+    } finally {await session.delete();}
+  }
+} finally {await client.close();}

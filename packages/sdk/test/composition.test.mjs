@@ -1,78 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { z } from "zod";
-import { Aex, brainEnv, clientBrowser, tool } from "../dist/index.js";
-
-const loop = { name: "pi", configuration: { maxTokens: 2048 } };
-const model = { provider: "openai", name: "model", apiKey: "private-model-key" };
-const read = tool({ name: "read", description: "Read", input: z.object({}), options: z.object({ count: z.number().default(3) }),
-  run: async (_, ctx) => ctx.finish(ctx.options.count) });
-
-test("application placement compiles ordinary configured Tools without a host, catalog or binding", async () => {
-  const calls = [];
-  const aex = new Aex({ apiKey: "account-key", fetch: async (url, init) => {
-    calls.push({ url, request: JSON.parse(init.body) });
-    return Response.json({ session_id: "s", status: "idle", last_sequence: 1 });
-  } });
-  const env = aex.environments.application({ name: "app", endpoint: "https://customer.example/tools", credential: "application-credential" });
-  await aex.sessions.create({ model, agentloop: loop, tools: [read({ env })] });
-  assert.equal(calls.length, 1);
-  assert.ok(calls[0].url.endsWith("/v1/sessions"));
-  assert.deepEqual(calls[0].request.agentloop, { ...loop, environments: [] });
-  assert.deepEqual(calls[0].request.environments.find(e => e.name === "app"), {
-    name: "app", lifecycle: "automatic", driver: "http", url: "https://api.aex.dev/environments/application", credential: "application-credential",
-    configuration: { type: "application", endpoint: "https://customer.example/tools", timeoutMs: 30000 },
-  });
-  assert.deepEqual(calls[0].request.tools[0].placements.app.implementation.options, { count: 3 });
-  assert.equal(calls[0].request.tools[0].placements.app.implementation.type, "application_tool");
-  assert.equal(JSON.stringify(calls).includes('"binding"'), false);
+import { Aex, Application, Model, ApiKey, createApplicationHandler } from "../dist/index.js";
+const descriptor={name:"read",description:"Read",input_schema:{type:"object",properties:{id:{type:"string"}},required:["id"],additionalProperties:false},output_schema:{type:"integer"}};
+test("application placement composes one managed provider without installing customer code or preparing a host",async()=>{
+  const calls=[];const aex=new Aex({apiKey:"account-key",fetch:async(url,init)=>{calls.push({url:String(url),init});return Response.json({id:"s",status:"idle"});}});
+  await aex.sessions.create({harness:"pi",model:Model("openai/gpt-4.1-mini",ApiKey("private-model-key")),tools:[Application({endpoint:"https://app.example/tools",credential:"private-application-key".repeat(2),tools:[descriptor]})]},{idempotencyKey:"create-once"});
+  assert.equal(calls.length,1);assert.equal(new URL(calls[0].url).pathname,"/sessions");assert.equal(new Headers(calls[0].init.headers).get("idempotency-key"),"create-once");const body=JSON.parse(calls[0].init.body);assert.equal(body.model_credential.api_key,"private-model-key");assert.equal(body.config.bindings[0].provider,"application");assert.deepEqual(body.config.bindings[0].operations,["read"]);assert.equal(body.credentials[0].binding,"application");assert.equal(body.config.bindings[0].parameters.credential,undefined);await aex.close();
 });
-
-test("backend grants prepare the composition; the browser creates through the ordinary session API", async () => {
-  const access = { id: "grant", token: "client-capability", expires_at: 2000000000, credentials: { hostId: "tab-host", token: "host-capability" } };
-  let prepared;
-  const backend = new Aex({ apiKey: "private-account-key", fetch: async (url, init) => {
-    assert.ok(url.endsWith("/v1/clients")); prepared = JSON.parse(init.body);
-    return Response.json(access);
-  } });
-  const env = clientBrowser({ name: "editor" });
-  const options = { model, agentloop: loop, tools: [read({ env })] };
-  assert.deepEqual(await backend.clients.grant({ origin: "https://customer.example", session: options }), access);
-  assert.equal(prepared.session.model.api_key, "private-model-key");
-  assert.equal(prepared.session.environments.find(e => e.name === "editor").host_id, "authorized-client");
-  const calls = [];
-  const browser = new Aex({ clientAccess: access, fetch: async (url, init) => {
-    const token = new Headers(init.headers).get("authorization");
-    calls.push({ url, token, body: init.body });
-    if (url.endsWith("/commands")) {
-      assert.equal(token, "Bearer host-capability");
-      return new Response(new ReadableStream({ start(controller) {
-        init.signal.addEventListener("abort", () => controller.close(), { once: true });
-      } }), { headers: { "content-type": "text/event-stream" } });
-    }
-    assert.equal(token, "Bearer client-capability");
-    return Response.json({ session_id: "s", status: "idle", last_sequence: 1 });
-  } });
-  await assert.rejects(browser.sessions.create(options), /omit apiKey/);
-  await browser.sessions.create({ ...options, model: { provider: "openai", name: "model" } });
-  assert.equal(calls.length, 2);
-  const created = JSON.parse(calls[1].body);
-  assert.equal(created.model.api_key, access.token);
-  assert.equal(created.environments.find(e => e.name === "editor").host_id, "tab-host");
-  assert.equal(JSON.stringify(calls).includes("private-"), false);
-  await browser.close();
-  await backend.close();
+test("backend browser grants carry private composition only to the backend; the browser reads its bound session explicitly",async()=>{
+  const create={harness:"pi",config:{model:"openai/gpt-4.1-mini",tools:[]},model_credential:{api_key:"private-model-key"}};
+  const access={id:"grant",token:"browser-key",expires_at:2000000000,session:{harness:"pi",config:create.config},tools:[]};const calls=[];
+  const backend=new Aex({apiKey:"private-account-key",fetch:async(url,init)=>{calls.push({url:String(url),init});return Response.json(access);}});
+  assert.deepEqual(await backend.clients.grant({session:create,origin:"https://customer.example",tools:[],expiresAt:access.expires_at}),access);assert.equal(JSON.parse(calls[0].init.body).session.model_credential.api_key,"private-model-key");
+  const browser=new Aex({clientAccess:access,fetch:async(url,init)=>{calls.push({url:String(url),init});return Response.json({create:access.session,session:"existing",tools:[]});}});assert.equal((await browser.clients.composition()).session,"existing");assert.equal(new Headers(calls.at(-1).init.headers).get("authorization"),"Bearer browser-key");assert.throws(()=>browser.clients.grant({session:create,origin:"https://customer.example"}),/backend API key/);await backend.close();await browser.close();
 });
-
-test("failed Environment preparation prevents session creation", async () => {
-  const calls = [];
-  const aex = new Aex({ apiKey: "key", fetch: async (url) => {
-    calls.push(new URL(url).pathname);
-    return Response.json({ code: "preparation_failed", message: "runtime unavailable", retryable: false }, { status: 409 });
-  } });
-  const lookup = tool({ name: "lookup", description: "Look up a value", input: z.object({}),
-    implementation: { type: "brain_component", entrypoint: "run", id: "a".repeat(64) } });
-  await assert.rejects(aex.sessions.create({ model, agentloop: loop, tools: [lookup({ env: brainEnv({ name: "brain" }) })] }), error => error.code === "preparation_failed");
-  assert.deepEqual(calls, ["/v1/brain-env/prepare"]);
-  await aex.close();
+test("invalid application placement and unsupported hosted transports fail before effects",async()=>{
+  assert.throws(()=>Application({endpoint:"http://169.254.169.254/tools",credential:"x".repeat(32),tools:[descriptor]}),/HTTPS/);
+  assert.throws(()=>Application({endpoint:"https://app.example/tools",credential:"short",tools:[descriptor]}),/credential/);
+  let calls=0;const aex=new Aex({apiKey:"key",fetch:async()=>{calls++;throw new Error("unexpected effect");}});await assert.rejects(aex.sessions.create({harness:"pi",config:{model:"openai/gpt-4.1-mini",tools:[]},runtime_transport:"rpc"}),/SSE/);assert.equal(calls,0);await aex.close();
+});
+test("application handlers validate inputs and output, scope callbacks, and wait for durable finish acknowledgements",async()=>{
+  const credential="x".repeat(32),callbacks=[];let runs=0;
+  const handler=createApplicationHandler({credential,gatewayOrigin:"https://api.example",tools:[{...descriptor,async run(input,context){runs++;assert.equal(context.scope.tenant_id,"tenant");await context.progress({ready:true});await context.finish(42);return 99;}}],fetch:async(url,init)=>{assert.equal(new URL(url).origin,"https://api.example");assert.equal(new Headers(init.headers).has("authorization"),false);callbacks.push(JSON.parse(init.body));return Response.json({committed:true});}});
+  const invocation={tenant_id:"tenant",session_id:"session",call_id:"call",tool:descriptor,arguments:{id:"42"},deadline_at_ms:Date.now()+20000,completion:{url:`https://api.example/v1/tool-completions/${"a".repeat(64)}`}};
+  const request=(body,token=credential)=>new Request("https://app.example/tools",{method:"POST",headers:{authorization:`Bearer ${token}`},body:JSON.stringify(body)});
+  assert.equal((await handler(request(invocation,"wrong"))).status,401);
+  assert.equal((await(await handler(request({...invocation,completion:{url:`https://evil.example/v1/tool-completions/${"a".repeat(64)}`}}))).json()).is_error,true);assert.equal(runs,0);
+  assert.equal((await(await handler(request({...invocation,arguments:{id:1}}))).json()).is_error,true);assert.equal(runs,0);
+  const response=await(await handler(request(invocation))).json();assert.equal(response.structured_content,42);assert.equal(runs,1);assert.deepEqual(callbacks.map(value=>value.type),["progress","finish"]);assert.equal(callbacks[1].result.structured_content,42);
 });

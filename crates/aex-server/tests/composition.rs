@@ -12,7 +12,14 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tower::ServiceExt;
-
+const SESSION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const EXECUTOR: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+fn session() -> Value {
+    json!({"harness":"pi","config":{"model":"openai/gpt-4.1-mini","tools":[]},"model_credential":{"api_key":"private-model-key"}})
+}
+fn tools() -> Value {
+    json!([{"name":"lookup","description":"Look up","input_schema":{"type":"object"}}])
+}
 async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsize>) {
     let dir = tempfile::tempdir().unwrap();
     let mut config: Config =
@@ -20,62 +27,16 @@ async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsiz
     config.data_dir = dir.path().into();
     config.limits.minimum_free_disk_bytes = 1;
     let calls = Arc::new(AtomicUsize::new(0));
-    let counter = calls.clone();
-    let hosts = Arc::new(AtomicUsize::new(0));
-    let upstream = Router::new()
-        .route(
-            "/v1/brain-env/prepare",
-            post(|| async { StatusCode::NO_CONTENT }),
-        )
-        .route(
-            "/v1/programs",
-            post(|body: axum::body::Bytes| async move {
-                Json(json!({"id": aex_server::identity::digest(&body), "status": "admitted"}))
-            }),
-        )
-        .route(
-            "/v1/programs/{id}",
-            get(
-                |axum::extract::Path(id): axum::extract::Path<String>| async move {
-                    Json(json!({"id": id, "status": "admitted"}))
-                },
-            ),
-        )
-        .route(
-            "/v1/hosts",
-            post(move || {
-                let id = hosts.fetch_add(1, Ordering::SeqCst);
-                async move { Json(json!({"host_id":format!("host_{id}"),"token":"h".repeat(32)})) }
-            }),
-        )
-        .route(
-            "/v1/sessions",
-            post(move |Json(value): Json<Value>| {
-                counter.fetch_add(1, Ordering::SeqCst);
-                async move {
-                    assert_eq!(value["model"]["api_key"], "private-model-key");
-                    Json(json!({"session_id":"session","status":"idle","last_sequence":1}))
-                }
-            }),
-        )
-        .route(
-            "/v1/sessions/session",
-            get(|| async {
-                Json(json!({"session_id":"session","status":"idle","last_sequence":1}))
-            }),
-        )
-        .route(
-            "/v1/callback",
-            post(|headers: HeaderMap, Json(value): Json<Value>| async move {
-                assert_eq!(headers["authorization"], "Bearer completion-capability");
-                assert_eq!(value["method"], "finish");
-                Json(42)
-            }),
-        );
+    let count = calls.clone();
+    let saved = Arc::new(tokio::sync::Mutex::new(Value::Null));
+    let read = saved.clone();
+    let upstream=Router::new().route("/executors",post(||async {Json(json!({"id":EXECUTOR,"token":"h".repeat(32)}))}))
+        .route("/sessions",post(move |headers:HeaderMap,Json(value):Json<Value>|{let saved=saved.clone();count.fetch_add(1,Ordering::SeqCst);async move {assert!(headers.contains_key("x-aex-tenant"));assert_eq!(value["model_credential"]["api_key"],"private-model-key");let result=json!({"id":SESSION,"harness":value["harness"],"config":value["config"],"status":"idle","descriptors":[],"created_at":"2026-10-20T00:00:00Z","updated_at":"2026-10-20T00:00:00Z"});*saved.lock().await=result.clone();Json(result)}}))
+        .route(&format!("/sessions/{SESSION}"),get(move ||{let read=read.clone();async move {Json(read.lock().await.clone())}}));
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     config.brain_url = format!("http://{}", socket.local_addr().unwrap());
-    let task = tokio::spawn(async move { axum::serve(socket, upstream).await.unwrap() });
-    let mut app = App::open(
+    tokio::spawn(async move { axum::serve(socket, upstream).await.unwrap() });
+    let app = App::open(
         config,
         "b".repeat(32),
         "o".repeat(32),
@@ -95,17 +56,7 @@ async fn fixture() -> (tempfile::TempDir, App, Principal, String, Arc<AtomicUsiz
         .report_usage(store::now(), Default::default())
         .await
         .unwrap();
-    app.environment_token = Some("e".repeat(32));
-    Arc::make_mut(&mut app.config).http_environments = Some(serde_json::from_value(json!({"url":app.config.brain_url,"public_url":"https://api.aex.dev/environments/http","bindings":{}})).unwrap());
-    // The runtime owns the short-lived fixture task; each test uses a separate listener and schema.
-    drop(task);
     (dir, app, Principal { account, key }, token, calls)
-}
-fn session() -> Value {
-    json!({"agentloop":{"name":"pi","configuration":{}},
-        "model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"private-model-key"},"tools":[],
-        "environments":[{"name":"brain","lifecycle":"automatic","driver":"brain"},
-            {"name":"tab","lifecycle":"automatic","driver":"host","host_id":"placeholder","configuration":{}}]})
 }
 async fn call(
     app: &App,
@@ -141,177 +92,26 @@ async fn call(
 }
 
 #[tokio::test]
-async fn program_preparation_requires_ownership_of_both_artifacts_and_preserves_browser_scope() {
-    let (_dir, app, p, token, _) = fixture().await;
-    let mut request = session();
-    request["environments"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|env| env["driver"] == "brain");
-    let source = "1".repeat(64);
-    let other_source = "2".repeat(64);
-    request["tools"] = json!([{"name":"run_program", "description":"Run the admitted program", "input_schema":{},
-        "placements":{"brain":{"implementation":{"type":"brain_program", "entrypoint":"run", "id":source, "runtime":"0".repeat(64)}}}}]);
-    assert!(
-        aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
-            .await
-            .is_err()
-    );
-    for id in [&source, &other_source] {
-        sqlx::query("INSERT INTO artifacts VALUES($1,'programs',$2,10)")
-            .bind(&p.account)
-            .bind(id)
-            .execute(&app.store.0)
-            .await
-            .unwrap();
-    }
-    sqlx::query("INSERT INTO artifacts VALUES($1,'tools',$2,10)")
-        .bind(&p.account)
-        .bind("0".repeat(64))
-        .execute(&app.store.0)
-        .await
-        .unwrap();
-    aex_server::admission::create(&app, &p, &serde_json::from_value(request.clone()).unwrap())
-        .await
-        .unwrap();
-    let mut wrong_runtime = request.clone();
-    wrong_runtime["tools"][0]["placements"]["brain"]["implementation"]["runtime"] =
-        json!("3".repeat(64));
-    assert!(
-        aex_server::admission::create(&app, &p, &serde_json::from_value(wrong_runtime).unwrap())
-            .await
-            .is_err()
-    );
-    let preparation = json!({"tools":["0".repeat(64)], "programs":[source]});
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/brain-env/prepare",
-            &token,
-            None,
-            preparation.clone()
-        )
-        .await
-        .0,
-        StatusCode::NO_CONTENT
-    );
-    let origin = "https://customer.example";
-    let (status, grant) = call(
-        &app,
-        Method::POST,
-        "/v1/clients",
-        &token,
-        None,
-        json!({"origin":origin, "expires_at":store::now()+60, "session":request}),
-    )
-    .await;
-    assert!(status.is_success(), "{grant}");
-    let access = grant["token"].as_str().unwrap();
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/brain-env/prepare",
-            access,
-            Some(origin),
-            preparation
-        )
-        .await
-        .0,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/brain-env/prepare",
-            access,
-            Some(origin),
-            json!({"programs":[other_source]})
-        )
-        .await
-        .0,
-        StatusCode::UNAUTHORIZED
-    );
-    let another = app.store.create_account(&app.config.limits).await.unwrap();
-    let (_, other_token) = app
-        .store
-        .issue_key(&another, &app.config.limits)
-        .await
-        .unwrap();
-    assert_eq!(
-        call(
-            &app,
-            Method::GET,
-            &format!("/v1/programs/{source}"),
-            &other_token,
-            None,
-            Value::Null
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/brain-env/prepare",
-            &other_token,
-            None,
-            json!({"programs":[source]})
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
-    );
-}
-
-#[tokio::test]
-async fn programs_share_account_artifact_quotas() {
-    let (_dir, mut app, _p, token, _) = fixture().await;
-    Arc::make_mut(&mut app.config).limits.artifacts_per_account = 1;
-    let (status, first) = call(
-        &app,
-        Method::POST,
+async fn retired_program_preparation_and_legacy_routes_are_rejected_before_dispatch() {
+    let (_dir, app, _p, token, calls) = fixture().await;
+    for path in [
         "/v1/programs",
-        &token,
-        None,
-        json!("source one"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{first}");
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/programs",
-            &token,
-            None,
-            json!("source one")
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/v1/programs",
-            &token,
-            None,
-            json!("source two")
-        )
-        .await
-        .0,
-        StatusCode::SERVICE_UNAVAILABLE
-    );
+        "/v1/artifacts",
+        "/v1/brain-env/prepare",
+        "/v1/hosts",
+        "/v1/sessions",
+    ] {
+        assert_eq!(
+            call(&app, Method::POST, path, &token, None, json!({}))
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
-
 #[tokio::test]
-async fn browser_access_fixes_one_composition_origin_host_and_session_without_disclosing_model_keys()
+async fn browser_access_fixes_one_composition_origin_executor_and_session_without_disclosing_model_keys()
  {
     let (_dir, app, p, token, calls) = fixture().await;
     let origin = "https://customer.example";
@@ -321,79 +121,119 @@ async fn browser_access_fixes_one_composition_origin_host_and_session_without_di
         "/v1/clients",
         &token,
         None,
-        json!({"origin":origin,"expires_at":store::now()+3600,"session":session()}),
+        json!({"origin":origin,"expires_at":store::now()+3600,"session":session(),"tools":tools()}),
     )
     .await;
     assert!(status.is_success(), "{grant}");
     assert!(!grant.to_string().contains("private-model-key"));
+    assert!(grant.get("credentials").is_none());
     let access = grant["token"].as_str().unwrap();
     let row: String =
-        sqlx::query_scalar("SELECT row_to_json(client_grants)::text FROM client_grants")
+        sqlx::query_scalar("SELECT row_to_json(browser_grants)::text FROM browser_grants")
             .fetch_one(&app.store.0)
             .await
             .unwrap();
     assert!(!row.contains("private-model-key"));
     assert!(!row.contains(access));
-    let mut request = session();
-    request["model"]["api_key"] = json!(access);
-    request["environments"][1]["host_id"] = grant["credentials"]["hostId"].clone();
     for wrong in [None, Some("https://attacker.example")] {
         assert!(
             !call(
                 &app,
                 Method::POST,
-                "/v1/sessions",
+                "/executors",
                 access,
                 wrong,
-                request.clone()
+                json!({"binding":"runtime","tools":tools()})
             )
             .await
             .0
             .is_success()
         );
     }
-    let mut altered = request.clone();
-    altered["model"]["name"] = json!("other-model");
+    let mut altered = tools();
+    altered[0]["name"] = json!("other");
     assert!(
         !call(
             &app,
             Method::POST,
-            "/v1/sessions",
+            "/executors",
             access,
             Some(origin),
-            altered
+            json!({"binding":"runtime","tools":altered})
         )
         .await
         .0
         .is_success()
     );
-    let (status, created) = call(
+    let (status, registered) = call(
         &app,
         Method::POST,
-        "/v1/sessions",
+        "/executors",
         access,
         Some(origin),
-        request.clone(),
+        json!({"binding":"runtime","tools":tools()}),
     )
     .await;
-    assert!(status.is_success(), "{created}");
+    assert!(status.is_success(), "{registered}");
+    let mut create = grant["session"].clone();
+    create["config"]["bindings"] =
+        json!([{"alias":"runtime","executor":EXECUTOR,"runtime":tools()}]);
+    let mut changed = create.clone();
+    changed["config"]["model"] = json!("other");
+    assert!(
+        !call(
+            &app,
+            Method::POST,
+            "/sessions",
+            access,
+            Some(origin),
+            changed
+        )
+        .await
+        .0
+        .is_success()
+    );
+    let (status, result) = call(
+        &app,
+        Method::POST,
+        "/sessions",
+        access,
+        Some(origin),
+        create.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{result}");
     assert!(app.pending_clients.lock().await.is_empty());
-    let (status, replayed) = call(
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/sessions",
+            access,
+            Some(origin),
+            create
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let (status, composition) = call(
         &app,
-        Method::POST,
-        "/v1/sessions",
+        Method::GET,
+        "/composition",
         access,
         Some(origin),
-        request,
+        Value::Null,
     )
     .await;
-    assert!(status.is_success(), "{replayed}");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(status.is_success());
+    assert_eq!(composition["session"], SESSION);
     assert!(
         call(
             &app,
             Method::GET,
-            "/v1/sessions/session",
+            &format!("/sessions/{SESSION}"),
             access,
             Some(origin),
             Value::Null
@@ -403,10 +243,11 @@ async fn browser_access_fixes_one_composition_origin_host_and_session_without_di
         .is_success()
     );
     for path in [
-        "/v1/sessions",
-        "/v1/sessions/other",
+        "/sessions",
+        "/sessions/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "/v1/models",
-        "/v1/environments",
+        "/tools",
+        "/v1/account",
     ] {
         assert!(
             !call(&app, Method::GET, path, access, Some(origin), Value::Null)
@@ -416,163 +257,112 @@ async fn browser_access_fixes_one_composition_origin_host_and_session_without_di
             "{path}"
         );
     }
-    assert!(
-        !call(
-            &app,
-            Method::POST,
-            "/v1/tools",
-            access,
-            Some(origin),
-            json!({})
-        )
-        .await
-        .0
-        .is_success()
-    );
-    let host = grant["credentials"]["hostId"].as_str().unwrap();
-    assert!(
-        !call(
-            &app,
-            Method::POST,
-            &format!("/v1/hosts/{host}/results"),
-            &"h".repeat(32),
-            Some(origin),
-            json!({"session_id":"another"})
-        )
-        .await
-        .0
-        .is_success()
-    );
-    let headers = HeaderMap::from_iter([("origin".parse().unwrap(), origin.parse().unwrap())]);
+    let registered = call(
+        &app,
+        Method::POST,
+        "/executors",
+        access,
+        Some(origin),
+        json!({"binding":"runtime","session":SESSION,"tools":tools()}),
+    )
+    .await;
+    assert!(registered.0.is_success(), "{}", registered.1);
     aex_server::clients::revoke(&app, &p, grant["id"].as_str().unwrap())
         .await
         .unwrap();
+    let headers = HeaderMap::from_iter([("origin".parse().unwrap(), origin.parse().unwrap())]);
     assert!(
-        aex_server::clients::access(&app, Some(access), None, &headers)
+        aex_server::clients::access(&app, &headers, access)
             .await
             .is_err()
     );
-    assert!(
-        aex_server::clients::access(&app, None, Some(host), &headers)
-            .await
-            .is_err()
-    );
+    assert!(app.store.executor(EXECUTOR, &"h".repeat(32)).await.is_err());
 }
-
 #[tokio::test]
 async fn browser_pending_credentials_are_not_recreated_after_restart() {
     let (_dir, app, _p, token, calls) = fixture().await;
-    let (status, grant) = call(&app, Method::POST, "/v1/clients", &token, None,
-        json!({"origin":"https://customer.example","expires_at":store::now()+60,"session":session()})).await;
+    let origin = "https://customer.example";
+    let (status, grant) = call(
+        &app,
+        Method::POST,
+        "/v1/clients",
+        &token,
+        None,
+        json!({"origin":origin,"expires_at":store::now()+60,"session":session()}),
+    )
+    .await;
     assert!(status.is_success(), "{grant}");
     app.pending_clients.lock().await.clear();
-    let mut request = session();
-    request["model"]["api_key"] = grant["token"].clone();
-    request["environments"][1]["host_id"] = grant["credentials"]["hostId"].clone();
+    let result = call(
+        &app,
+        Method::POST,
+        "/sessions",
+        grant["token"].as_str().unwrap(),
+        Some(origin),
+        grant["session"].clone(),
+    )
+    .await;
+    assert_eq!(result.0, StatusCode::CONFLICT, "{}", result.1);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+#[tokio::test]
+async fn bound_browser_grant_reconnects_explicitly_after_restart_and_obeys_expiry() {
+    let (dir, app, _p, token, _calls) = fixture().await;
+    let origin = "https://customer.example";
+    let (_, grant) = call(
+        &app,
+        Method::POST,
+        "/v1/clients",
+        &token,
+        None,
+        json!({"origin":origin,"expires_at":store::now()+60,"session":session()}),
+    )
+    .await;
+    let access = grant["token"].as_str().unwrap();
     assert_eq!(
         call(
             &app,
             Method::POST,
-            "/v1/sessions",
-            grant["token"].as_str().unwrap(),
-            Some("https://customer.example"),
-            request
+            "/sessions",
+            access,
+            Some(origin),
+            grant["session"].clone()
         )
         .await
         .0,
-        StatusCode::CONFLICT
+        StatusCode::CREATED
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn application_declarations_replace_operator_bindings_and_keep_secrets_out_of_product_rows() {
-    use aex_server::environments::{application, http};
-    use axum::extract::State;
-    let (_dir, app, p, _token, _) = fixture().await;
-    let mut value = session();
-    value["environments"][1] = json!({"name":"application","lifecycle":"automatic","driver":"http", "url":"https://api.aex.dev/environments/application",
-        "credential":"private-application-credential-value", "configuration":{"type":"application","endpoint":"https://customer.example/tools","timeoutMs":30000}});
-    let mut request: brain_protocol::CreateSessionRequest = serde_json::from_value(value).unwrap();
-    aex_server::admission::create(&app, &p, &request)
+    let mut reopened = app.clone();
+    reopened.store = store::Store::open(&common::database(dir.path()).await)
         .await
         .unwrap();
-    let mut tx = app.store.0.begin().await.unwrap();
-    let claim = app
-        .store
-        .claim(&p, "create", "create", "fixed", &app.config.limits)
-        .await
-        .unwrap();
-    let store::Claim::New(operation) = claim else {
-        panic!()
-    };
-    aex_server::environments::reserve_in(&app, &mut tx, &p, &operation, &mut request, None)
-        .await
-        .unwrap();
-    http::reserve_in(&app, &mut tx, &p, &operation, &mut request)
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
-    let row: String = sqlx::query_scalar("SELECT row_to_json(http_grants)::text FROM http_grants")
-        .fetch_one(&app.store.0)
-        .await
-        .unwrap();
-    assert!(!row.contains("private-application-credential-value"));
-    assert!(row.contains("customer.example"));
-    let env = &request.environments[1];
-    let id = env.configuration["authorization"].as_str().unwrap();
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "authorization",
-        format!("Bearer {}", "e".repeat(32)).parse().unwrap(),
-    );
-    let input = json!({"sessionId":"session","environment":"application", "configuration":env.configuration, "authorization":id});
-    let admitted = http::authorize(
-        State(app.clone()),
-        headers.clone(),
-        Json(serde_json::from_value(input.clone()).unwrap()),
-    )
-    .await
-    .unwrap()
-    .0;
-    assert_eq!(admitted["url"], "https://customer.example/tools");
-    assert_eq!(
-        admitted["callbackUrl"],
-        "https://api.aex.dev/v1/environments/application/callback"
-    );
-    assert!(admitted.get("token").is_none());
-    let mut substituted = input;
-    substituted["authorization"] = json!("another-grant");
-    assert!(
-        http::authorize(
-            State(app.clone()),
-            headers,
-            Json(serde_json::from_value(substituted).unwrap())
-        )
-        .await
-        .is_err()
-    );
-    let mut invalid = request.environments[1].clone();
-    invalid.configuration =
-        json!({"type":"application","endpoint":"http://private.example/tools","timeoutMs":30000});
-    assert!(application::selection(&invalid).is_err());
-    // Completions remain available while ordinary request capacity is occupied and the service drains.
-    let _held = app
-        .requests
-        .clone()
-        .acquire_many_owned(app.config.limits.requests as u32)
-        .await
-        .unwrap();
-    app.accepting.store(false, Ordering::SeqCst);
-    let (status, sequence) = call(
-        &app,
-        Method::POST,
-        "/v1/environments/application/callback",
-        "completion-capability",
-        None,
-        json!({"method":"finish","input":null}),
+    reopened.pending_clients = Arc::default();
+    let (status, composition) = call(
+        &reopened,
+        Method::GET,
+        "/composition",
+        access,
+        Some(origin),
+        Value::Null,
     )
     .await;
     assert!(status.is_success());
-    assert_eq!(sequence, 42);
+    assert_eq!(composition["session"], SESSION);
+    sqlx::query("UPDATE browser_grants SET expires_at=0")
+        .execute(&app.store.0)
+        .await
+        .unwrap();
+    assert!(
+        !call(
+            &reopened,
+            Method::GET,
+            "/composition",
+            access,
+            Some(origin),
+            Value::Null
+        )
+        .await
+        .0
+        .is_success()
+    );
 }

@@ -1,543 +1,78 @@
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
-import { once } from "node:events";
-import { createServer } from "node:http";
-import { mkdtemp, readFile, writeFile, rm, readdir, lstat, cp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { Aex, StructuredOutputError, brainEnv, component, hostEnv, clientBrowser, tool } from "@aexhq/sdk";
-import { database } from "./database.mjs";
-import { pi } from "@aexhq/agentloop-pi";
-import { codex } from "@aexhq/agentloop-codex";
-import { opencode } from "@aexhq/agentloop-opencode";
+import { once } from "node:events";
+import { toolServer } from "../../services/tools/server.mjs";
+import { Applications } from "../../services/tools/application.mjs";
+import { RemoteJournal,controller } from "../../services/tools/common.mjs";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { z } from "zod";
-import { createHttpEnvironment, serveEnvironment } from "@aexhq/env-http/server";
-import { createToolHandler } from "@aexhq/env-http/handler";
-import { authenticateApplication } from "../../environments/application.mjs";
-import { measure } from "../../tools/benchmark.mjs";
+import { fixture,sdk,until,listen } from "./fixture.mjs";
 
-const pause = (ms) => new Promise(r => setTimeout(r, ms));
-async function port() { const s = createServer(); s.listen(0,"127.0.0.1"); await once(s,"listening"); const p=s.address().port; await new Promise(r=>s.close(r)); return p; }
-async function size(path) {
-  let bytes = 0;
-  for (const name of await readdir(path)) {
-    const p = join(path, name);
-    let entry;
-    try { entry = await lstat(p); }
-    catch (error) { if (error.code === "ENOENT") continue; throw error; }
-    bytes += entry.isDirectory() ? await size(p) : entry.size;
-  }
-  return bytes;
-}
+for(const harness of ["pi","codex","opencode"])test(`installed SDK and ${harness}: tenant credentials, callbacks, inspection, receipts and deletion`,{timeout:120000},async t=>{
+  const f=await fixture(t),a=await f.account(),b=await f.account();let calls=0;
+  const tools=[sdk.Tool({name:"lookup",description:"Look up",input_schema:{type:"object",properties:{id:{type:"string"}},required:["id"],additionalProperties:false},async run(args,ctx){calls++;assert.equal(ctx.scope.tenant_id,a.account);assert.notEqual(ctx.scope.session_id,args.session_id);await ctx.progress({ready:true});return {id:args.id,private:"owned callback"};}})];
+  const session=await a.api.sessions.create({harness,model:sdk.Model("openai/gpt-4.1-mini",sdk.ApiKey(a.modelKey)),instructions:"tenant A private context",tools});
+  const other=await b.api.sessions.create({harness,model:sdk.Model("openai/gpt-4.1-mini",sdk.ApiKey(b.modelKey)),instructions:"tenant B private context"});
+  const [first,second]=await Promise.all([session.send('CALL runtime_lookup {"id":"42"}',{idempotencyKey:"same-key"}),other.send("hello from B",{idempotencyKey:"same-key"})]);assert.equal(first.output,"tool handled");assert.match(second.output,/hello from B/);assert.equal(calls,1);
+  assert.ok(f.model.keys.includes(`Bearer ${a.modelKey}`));assert.ok(f.model.keys.includes(`Bearer ${b.modelKey}`));assert.ok(!JSON.stringify(f.model.requests).includes(a.modelKey));
+  assert.equal((await fetch(`${f.url}/sessions/${session.id}`,{headers:{authorization:`Bearer ${b.token}`}})).status,404);
+  assert.equal((await fetch(`${f.url}/sessions/${session.id}`,{headers:{authorization:`Bearer ${a.token}`,"x-aex-tenant":b.account}})).status,401);
+  const count=f.model.requests.length;assert.equal((await session.send('CALL runtime_lookup {"id":"42"}',{idempotencyKey:"same-key"})).input_id,first.input_id);assert.equal(f.model.requests.length,count);assert.equal(calls,1);
+  const transcript=await session.transcript();assert.ok(transcript.some(event=>event.type==="tool.result"));assert.ok(transcript.some(event=>event.type==="model.request"));assert.ok(!JSON.stringify(transcript).includes(a.modelKey));
+  await until(()=>a.api.account.modelUsage(session.id),usage=>usage.reported_input_tokens>0,"durable usage receipts");
+  const inspecting=await a.api.sessions.create({harness,model:sdk.Model("openai/gpt-4.1-mini",sdk.ApiKey(a.modelKey)),tools:[sdk.ManagedTool("session",{operations:["inspect","history"]})]});assert.equal((await inspecting.send("CALL session_inspect {}")).output,"tool handled");assert.ok(!JSON.stringify(f.model.requests).includes(a.modelKey));await inspecting.delete();
+  await session.delete();await session.delete();assert.equal((await fetch(`${f.url}/sessions/${session.id}`,{headers:{authorization:`Bearer ${a.token}`}})).status,404);assert.equal(calls,1);assert.ok((await a.api.account.modelUsage(session.id)).reported_input_tokens>0);await other.delete();
+});
 
-test("published SDK: tenant isolation, host tool, replay, revocation, restart and backup restore", {timeout:180_000}, async t => {
-  for (const name of ["AEX_TEST_SERVER","BRAIN_TEST_SERVER","BRAIN_TEST_WORKER"]) assert.ok(process.env[name], `${name} required`);
-  const db=await database();
-  const directory=await mkdtemp(join(tmpdir(),"aex-journey-"));
-  const brainPort=await port(), aexPort=await port(), adminPort=await port();
-  const brainUrl=`http://127.0.0.1:${brainPort}`, baseUrl=`http://127.0.0.1:${aexPort}`, adminUrl=`http://127.0.0.1:${adminPort}`;
-  const internal=randomUUID(), operator=randomUUID(), environmentToken=randomUUID();
-  let modelCalls=0, toolCalls=0, modelDelay=0, brainChild, aexChild;
-  let structuredAnswers;
-  const processLogs=[];
-  const children=new Set();
-  const model=createServer(async(req,res)=>{
-    const chunks=[]; for await(const c of req) chunks.push(c);
-    const body=JSON.parse(Buffer.concat(chunks)); modelCalls++;
-    assert.equal(req.headers.authorization,"Bearer test-model-secret");
-    await meter();
-    if(modelDelay) await pause(modelDelay);
-    assert.equal(req.url, "/v1/responses");
-    let output = [], text = "answered";
-    if (structuredAnswers) {
-      assert.ok(structuredAnswers.length, "unexpected structured-output model call");
-      assert.equal(body.text?.format, undefined);
-      text = structuredAnswers.shift();
-      if (typeof text === "function") { text(); return; }
-    } else if (JSON.stringify(body.input).includes("late hosted result")) {
-      text = "observed background completion";
-    } else if (body.tools?.length && body.input.at(-1).type !== "function_call_output") {
-      output = [{ type: "function_call", call_id: `lookup-${modelCalls}`, name: body.tools.find(tool => tool.name.endsWith("lookup")).name, arguments: '{"id":"42"}' }];
-      text = undefined;
-    }
-    const frames = output.map((item, output_index) => ({ type: "response.output_item.done", output_index, item }));
-    if (text !== undefined) {
-      frames.push({ type: "response.output_text.delta", output_index: 0, delta: text });
-      frames.push({ type: "response.output_item.done", output_index: 0, item: { type: "message", content: [{ type: "output_text", text }] } });
-    }
-    frames.push({ type: "response.completed", response: { output, usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 80 }, output_tokens_details: { reasoning_tokens: 5 } } } });
-    res.writeHead(200, { "content-type": "text/event-stream" });
-    res.end(frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join(""));
-  });
-  model.listen(0,"127.0.0.1"); await once(model,"listening");
-  const configuration=JSON.parse(await readFile(new URL("../../examples/config.json",import.meta.url)));
-  Object.assign(configuration,{listen:`127.0.0.1:${aexPort}`,operator_listen:`127.0.0.1:${adminPort}`,data_dir:join(directory,"aex"),brain_url:brainUrl,
-    agentloops:["pi", "codex", "opencode", "no-output-fixture"]});
-  configuration.limits.minimum_free_disk_bytes=1;
-  configuration.billing = { pricebook: { id: "journey-tokens-v1", rates: {
-    model_tokens: { micro_usd: 1, units: 1 }, sandbox_ms: { micro_usd: 1, units: 1000 },
-    attachment_byte_secs: { micro_usd: 1, units: 1000 }, egress_bytes: { micro_usd: 1, units: 1000 },
-  } }, max_turn_secs: 120, payments: null };
-  let applicationHandler;
-  let loseApplicationReply = false, losePrivateAck = false;
-  const bridge = createHttpEnvironment({
-    fetch: async (url, init) => {
-      const reply = await fetch(url, init);
-      if (losePrivateAck) { await reply.arrayBuffer(); throw new Error("lost committed private acknowledgment"); }
-      return reply;
-    },
-    authorize: async (binding, signal, context) => {
-      const response = await fetch(adminUrl + "/environments/http/authorize", { method: "POST", signal,
-        headers: { authorization: `Bearer ${environmentToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ ...binding, authorization: context.authorization }) });
-      if (!response.ok) throw new Error(`application authorization failed: ${response.status}`);
-      return { ...await response.json(), token: context.credential };
-    },
-    request: async (url, { token, body, signal }) => {
-      assert.equal(url, "https://application.example/tools");
-      const response = await applicationHandler(new Request(url, { method: "POST", signal,
-        headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) }));
-      const value = await response.json();
-      if (loseApplicationReply) throw new Error("lost final application response");
-      return value;
-    },
-  });
-  const bridgeServer = await serveEnvironment(bridge.handle, { authenticate: headers => authenticateApplication(headers, environmentToken), callback: bridge.callback });
-  t.after(bridgeServer.close);
-  configuration.http_environments = { url: bridgeServer.url, public_url: "https://api.aex.dev/environments/http", bindings: {} };
-  await writeFile(join(directory,"config.json"),JSON.stringify(configuration));
-  async function launch(executable,args,env,url){
-    const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"],detached:true}); children.add(child);
-    let logs="";const capture=c=>{logs+=c;processLogs.push(String(c));};child.stdout.on("data",capture);child.stderr.on("data",capture);
-    for(let i=0;i<600;i++){ if(child.exitCode!==null)throw new Error(`process exited: ${logs}`);try{if((await fetch(url+"/health/live")).ok)return child;}catch{}await pause(50); }
-    throw new Error(`readiness timeout: ${logs}`);
-  }
-  async function stop(child,signal="SIGTERM"){ if(child.exitCode===null && child.signalCode===null){const done=once(child,"exit");process.kill(-child.pid,signal);await done;}children.delete(child); }
-  const agentloops = Object.fromEntries(["pi", "codex", "opencode"].map(name => [name, {
-    command: name === "opencode" ? "bun" : process.execPath,
-    args: [fileURLToPath(new URL(`../../node_modules/@aexhq/agentloop-${name}/bin/brain-agentloop-${name}.mjs`, import.meta.url))],
-    configuration: { contextWindow: 200000, ...(name === "codex" ? {} : { maxTokens: 8192 }),
-      ...(name === "pi" ? { compaction: { enabled: false } } : {}) },
-    workers: 2, max_concurrency: 16,
-  }]));
-  agentloops["no-output-fixture"] = { command: process.execPath,
-    args: [fileURLToPath(new URL("../fixtures/no-output-agentloop.mjs", import.meta.url))] };
-  async function start(){
-    brainChild=await launch(process.env.BRAIN_TEST_SERVER,[],{XDG_CACHE_HOME:join(directory,"compilation-cache"),BRAIN_AGENTLOOPS:JSON.stringify(agentloops),BRAIN_LISTEN:`127.0.0.1:${brainPort}`,BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_ENV_WORKER:process.env.BRAIN_TEST_WORKER,BRAIN_API_TOKEN:internal,BRAIN_MODEL_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`},brainUrl);
-    aexChild=await launch(process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator,AEX_SITE_TOKEN:"s".repeat(32),AEX_DATABASE_URL:db.url,AEX_ENVIRONMENT_TOKEN:environmentToken,RUST_LOG:"info"},baseUrl);
-    await meter();
-    await operate({action:"resume"});
-  }
-  async function operate(body){const r=await fetch(adminUrl+"/operate",{method:"POST",headers:{authorization:`Bearer ${operator}`,"content-type":"application/json"},body:JSON.stringify(body)});assert.ok(r.ok,`operator ${body.action}: ${r.status} ${await (!r.ok?r.text():Promise.resolve(""))}`);return r.json();}
-  async function meter(){
-    const sessions=JSON.parse(execFileSync("python3", ["-c",
-      "import json,runpy,sys;from pathlib import Path;print(json.dumps(runpy.run_path(sys.argv[1])['measure'](Path(sys.argv[2]))))",
-      fileURLToPath(new URL("../../tools/storage-report.py", import.meta.url)), join(directory,"brain")], {encoding:"utf8"}));
-    await operate({action:"report_usage",observed_at:Math.floor(Date.now()/1000),sessions});
-  }
-  async function account(){const {account}=await operate({action:"create_account"});return {account,...await operate({action:"issue_key",account})};}
-  const raw=(path,token,options={})=>fetch(baseUrl+path,{...options,headers:{authorization:`Bearer ${token}`,...options.headers}});
-  t.after(async()=>{for(const child of children)await stop(child,"SIGKILL");model.closeAllConnections();await new Promise(r=>model.close(r));await db.close();await rm(directory,{recursive:true,force:true});});
-  await start();
-  for (const [executable,args,env,expected] of [
-    [process.env.AEX_TEST_SERVER,["serve","--config",join(directory,"config.json")],{AEX_BRAIN_TOKEN:internal,AEX_OPERATOR_TOKEN:operator},/already has a writer/],
-    [process.env.BRAIN_TEST_SERVER,[],{BRAIN_DATA_DIR:join(directory,"brain"),BRAIN_API_TOKEN:internal,BRAIN_AGENTLOOPS:JSON.stringify(agentloops)},/already in use or cannot be locked/],
-  ]) {
-    const child=spawn(executable,args,{env:{...process.env,...env},stdio:["ignore","pipe","pipe"]});
-    let output="";child.stdout.on("data",c=>output+=c);child.stderr.on("data",c=>output+=c);
-    const [code]=await once(child,"exit");assert.notEqual(code,0);assert.match(output,expected);
-  }
-  const a=await account(),b=await account();
-  const client=new Aex({baseUrl,apiKey:a.token}),other=new Aex({baseUrl,apiKey:b.token});
-  t.after(async()=>{await client.close();await other.close();});
-  for (const provider of [undefined, "vercel-ai-gateway", "deepseek"]) {
-    const upstream = await fetch(`${brainUrl}/v1/models${provider ? `?provider=${provider}` : ""}`, { headers: { authorization: `Bearer ${internal}` } });
-    assert.equal(upstream.status, 200);
-    assert.deepEqual(await client.models(provider), await upstream.json(), "Aex preserves Brain's complete model catalogue and metadata");
-  }
-  for (const query of ["provider=not-a-provider", "provider=", "provider=deepseek&extra=value"]) {
-    const path = `/v1/models?${query}`;
-    const upstream = await fetch(brainUrl + path, { headers: { authorization: `Bearer ${internal}` } });
-    const hosted = await raw(path, a.token);
-    assert.equal(hosted.status, upstream.status);
-    assert.equal(await hosted.text(), await upstream.text(), "Brain owns catalogue query validation");
-  }
-  const options={model:{provider:"vercel-ai-gateway",name:"test/journey",apiKey:"test-model-secret"},agentloop:pi()};
-  await assert.rejects(client.sessions.create({ ...options, model: { ...options.model, provider: "not-a-provider" } }), /model selection is invalid/);
-  const environmentReads = [];
-  const lookup=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),run:async({id},context)=>{toolCalls++;environmentReads.push(await context.environments.list());return context.finish(`item-${id}`);}});
-  const session=await client.sessions.create({...options,tools:[lookup({ env: hostEnv({ name: "app" }), environments: [{ environment: "app", permissions: ["read"], methods: [] }] })]},{idempotencyKey:"shared-key"});
-
-  const otherSession=await other.sessions.create(options,{idempotencyKey:"shared-key"});
-  const direct=await measure(`${brainUrl}/v1/sessions/${otherSession.id}`,internal);
-  const hosted=await measure(`${baseUrl}/v1/sessions/${otherSession.id}`,b.token);
-  t.diagnostic(JSON.stringify({operation:"warm_session_read",direct,hosted,added_p95_ms:hosted.p95_ms-direct.p95_ms}));
-  assert.notEqual(session.id,otherSession.id);
-  for(const [method,suffix] of [["GET",""],["GET","/transcript"],["GET","/events"],["POST","/messages"],["POST","/cancel"],["POST","/end"],["POST","/environments"],["DELETE",""]]){
-    const r=await raw(`/v1/sessions/${session.id}${suffix}`,b.token,{method,headers:{"idempotency-key":"x","content-type":"application/json"},...(method==="POST"?{body:'{"input":{"message":"x"}}'}:{})});assert.equal(r.status,404,`${method} ${suffix}`);
-  }
-  const foreignHost = await (await raw("/v1/hosts", b.token, { method: "POST" })).json();
-  const foreignModel = await raw(`/v1/hosts/${foreignHost.host_id}/model`, foreignHost.token, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session_id: session.id, sequence: 1, request: { messages: [] } }),
-  });
-  assert.equal(foreignModel.status, 404, "host model requests cannot cross account ownership");
-  for (const call of [{ method: "environments", input: { operation: "list" } }, { method: "model", input: { messages: [] } }]) {
-    const denied = await raw(`/v1/hosts/${foreignHost.host_id}/call`, foreignHost.token, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session_id: session.id, sequence: 1, call }),
-    });
-    assert.equal(denied.status, 404, "generic host services preserve session ownership");
-  }
-  assert.equal(modelCalls, 0, "denied host model requests never reach the provider");
-  const listed=await (await raw("/v1/sessions",b.token)).json();assert.deepEqual(listed.sessions.map(s=>s.session_id),[otherSession.id]);
-  assert.equal((await raw(`/v1/sessions/${session.id}/executions/1/call`,a.token,{method:"POST"})).status,404);
-  assert.equal((await raw("/v1/tools",a.token,{method:"POST"})).status,400);
-  assert.equal((await raw("/v1/agentloops",a.token,{method:"POST",body:"unapproved",headers:{"idempotency-key":"bad"}})).status,404);
-  await session.send("look it up");assert.equal(toolCalls,1);assert.equal(modelCalls,2);
-  assert.deepEqual(environmentReads[0].map(view => view.reference.name), ["app"]);
-  assert.ok((await session.environments.list()).some(view => view.reference.name === "app" && view.state === "ready"));
-  const hostedTool=tool({name:"lookup",description:"Lookup",input:z.object({id:z.string()}),implementation:component(pathToFileURL(process.env.BRAIN_TEST_TOOL))});
-  const hostedSession=await client.sessions.create({...options,agentloop:pi(),tools:[hostedTool({env:brainEnv({name:"brain"})})]});
-  await hostedSession.send("look it up on the server");
-  const hostedEvents=[];for await(const event of hostedSession.events())hostedEvents.push(event);
-  assert.ok(hostedEvents.some(e=>e.type==="tool_call_ended"),"published Pi and uploaded Tool run in hosted Brain");
-  assert.equal(toolCalls,1,"hosted Tool does not execute the application function");
-  await hostedSession.end();await hostedSession.delete();
-
-  const login = await raw("/v1/accounts", "s".repeat(32), { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subject: "token-journey", email: "tokens@example.com" }) });
-  assert.equal(login.status, 200);
-  const accountClient = new Aex({ baseUrl, accountToken: (await login.json()).token });
-  await accountClient.billing.update({ pricebook: "journey-tokens-v1", spend_limit_micro_usd: 1000000 });
-  const paid = await accountClient.account.get();
-  await operate({ action: "adjust_credits", account: paid.id, reference: "token-journey", delta_micro_usd: 1000000, reason: "fixture credits" });
-  const paidClient = new Aex({ baseUrl, apiKey: (await accountClient.keys.create({ name: "token journey" })).token });
-  t.after(async () => { await paidClient.close(); await accountClient.close(); });
-  let backgroundExecution;
-  const backgroundTool = tool({ name: "lookup", description: "Start work", input: z.object({ id: z.string() }),
-    run: (_, context) => { backgroundExecution = context; return "started"; } });
-  const backgroundSession = await paidClient.sessions.create({ ...options, agentloop: pi(),
-    tools: [backgroundTool({ env: hostEnv({ name: "background-app" }) })] });
-  await backgroundSession.send("start work");
-  const beforeBackground = []; for await (const event of backgroundSession.events()) beforeBackground.push(event);
-  const independent = await Promise.all(["one", "two"].map(text => backgroundExecution.model({ messages: [{ role: "user", content: [{ type: "text", text }] }] })));
-  assert.equal(independent.length, 2);
-  assert.ok(!JSON.stringify((await backgroundSession.transcript()).messages).includes('"text":"one"'));
-  await backgroundExecution.finish({ large: "private structured data" }, { content: "late hosted result" });
-  for await (const event of backgroundSession.stream(beforeBackground.at(-1).sequence)) {
-    assert.notEqual(event.type, "turn_failed", JSON.stringify(event.data));
-    if (event.type === "turn_ended") break;
-  }
-  assert.equal((await backgroundSession.transcript()).messages.at(-1).content[0].text, "observed background completion");
-  await backgroundSession.end(); await backgroundSession.delete();
-  const backgroundEvents = [...beforeBackground];
-  const metered = await paidClient.account.modelUsage(backgroundSession.id);
-  assert.ok(metered.reported_input_tokens > backgroundEvents.filter(event => event.type === "model_call_ended").length * 100,
-    "background model usage is retained after the submitted turn and session deletion");
-  assert.equal(metered.reported_output_tokens, metered.reported_input_tokens / 5);
-  assert.equal(metered.charged_micro_usd, metered.reported_input_tokens + metered.reported_output_tokens, "cache and reasoning subsets are not added twice");
-  assert.equal(metered.rated_micro_usd, metered.charged_micro_usd);
-  assert.equal(metered.unmeasured_calls, 0);
-  assert.equal(metered.pending_estimate_micro_usd, 0);
-  await assert.rejects(other.account.modelUsage(backgroundSession.id), error => error.status === 404);
-
-  for (const loop of [pi, codex, opencode]) {
-    t.diagnostic(`Hosted runtime: ${loop().name}`);
-    await meter();
-    const structured = await client.sessions.create({ ...options, agentloop: loop() });
-    await meter();
-    const before = modelCalls;
-    structuredAnswers = ["not JSON", '{"age":"wrong"}', '{"age":37}'];
-    const outputOptions = { output: { type: z.object({ age: z.number() }) }, idempotencyKey: "structured-once" };
-    assert.deepEqual(await structured.send("Extract Ada's age", outputOptions), { age: 37 });
-    assert.equal(modelCalls - before, 3);
-    assert.equal(structuredAnswers.length, 0);
-    assert.deepEqual(await structured.send("Extract Ada's age", outputOptions), { age: 37 });
-    assert.equal(modelCalls - before, 3, "replaying correction turns does not rerun inference");
-    structuredAnswers = ['["Ada"]'];
-    assert.deepEqual(await structured.send("List names", { output: { type: z.array(z.string()) } }), ["Ada"]);
-    const reopened = await client.sessions.get(structured.id);
-    const history = []; for await (const event of reopened.events()) history.push(event);
-    assert.equal(history.filter(e => e.type === "turn_ended").length, 4);
-    structuredAnswers = ["{}", "{}", "{}"];
-    await assert.rejects(reopened.send("Extract a name", { output: { type: z.object({ name: z.string() }) } }), error => {
-      assert.ok(error instanceof StructuredOutputError);
-      assert.equal(error.attempts, 3);
-      return true;
-    });
-    const exhausted = []; for await (const event of reopened.events()) exhausted.push(event);
-    assert.equal(exhausted.filter(e => e.type === "turn_ended").length, 7);
-    assert.equal(exhausted.filter(e => e.type === "turn_failed").length, 0, "local validation does not rewrite completed turns");
-
-    const correcting = Promise.withResolvers();
-    const controller = new AbortController();
-    const beforeCancellation = modelCalls;
-    structuredAnswers = ["not JSON", () => correcting.resolve()];
-    const pending = reopened.send("Extract one string", { output: { type: z.string() }, signal: controller.signal }).catch(error => error);
-    await Promise.race([correcting.promise, pending.then(error => { throw error; })]);
-    controller.abort();
-    assert.ok(await pending instanceof Error);
-    assert.equal(modelCalls - beforeCancellation, 2);
-    const cancelled = []; for await (const event of reopened.events()) cancelled.push(event);
-    assert.ok(cancelled.some(e => e.type === "turn_failed"));
-    structuredAnswers = undefined;
-    await structured.end(); await structured.delete();
-
-    let returned;
-    let calls = 0;
-    const terminal = tool({ name: "lookup", description: "Read a remote result", input: z.object({ id: z.string() }),
-      output: z.string(), run: () => { calls++; return returned; } });
-    const outcomes = await client.sessions.create({ ...options, agentloop: loop(),
-      tools: [terminal({ env: hostEnv({ name: "app" }) })] });
-    for (const outcome of [
-      { status: "error", error: { code: "rate_limited", message: "Wait", retryable: true, details: { retry_after_ms: 1000 } } },
-      { status: "unknown", message: "Connection closed after dispatch" }, { status: "timeout" }, { status: "cancelled" },
-    ]) {
-      returned = outcome;
-      try { await outcomes.send("look it up once"); }
-      catch (error) {
-        const events = []; for await (const event of outcomes.events()) events.push({ sequence: event.sequence, type: event.type, origin: event.origin });
-        t.diagnostic(JSON.stringify({ runtime: loop().name, outcome: outcome.status, state: (await client.sessions.get(outcomes.id)).state, events }));
-        throw error;
-      }
-      const history = []; for await (const event of outcomes.events()) history.push(event);
-      const terminal = history.filter(event => event.type === "tool_call_ended").at(-1).data.outcome;
-      assert.deepEqual(terminal, outcome);
-      assert.equal(history.some(event => event.type === "environment_unreachable"), false);
-    }
-    assert.equal(calls, 4);
-    await outcomes.end(); await outcomes.delete();
-  }
-  await t.test("application tools finish durably after caller exit, including a lost HTTP receipt", async () => {
-    let ran = 0, acknowledged = 0;
-    const declared = tool({ name: "lookup", description: "Lookup", input: z.object({ id: z.string() }),
-      options: z.object({ prefix: z.string() }),
-      run: async ({ id }, ctx) => { ran++; await ctx.finish(`${ctx.options.prefix}-${id}`, { content: "Found the order" }); acknowledged++; },
-    });
-    applicationHandler = createToolHandler({ tools: [declared({ prefix: "item" })],
-      authorize: request => assert.equal(request.headers.get("authorization"), `Bearer ${"endpoint-secret".repeat(3)}`),
-      callbackRequest: async (url, { token, body, signal }) => {
-        assert.equal(url, "https://api.aex.dev/v1/environments/application/callback");
-        const response = await fetch(baseUrl + new URL(url).pathname, { method: "POST", signal,
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
-        assert.equal(response.status, 200); return response.json();
-      },
-    });
-    const caller = new Aex({ baseUrl: "https://api.aex.dev", apiKey: a.token,
-      fetch: (url, init) => fetch(baseUrl + new URL(url).pathname + new URL(url).search, init) });
-    const env = caller.environments.application({ name: "application", endpoint: "https://application.example/tools", credential: "endpoint-secret".repeat(3) });
-    const remote = await caller.sessions.create({ ...options, tools: [declared({ prefix: "item", env })] });
-    modelDelay = 100;
-    const sequence = await remote.submit("look it up");
-    await caller.close();
-    const reopened = await client.sessions.get(remote.id);
-    for (let i = 0; i < 200 && (await reopened.outcome(sequence)).status === "pending"; i++) await pause(25);
-    modelDelay = 0;
-    assert.equal(ran, 1); assert.equal(acknowledged, 1);
-    loseApplicationReply = true;
-    await reopened.send("look it up again");
-    loseApplicationReply = false;
-    assert.equal(ran, 2); assert.equal(acknowledged, 2);
-    losePrivateAck = true;
-    await reopened.send("look it up once more");
-    losePrivateAck = false;
-    assert.equal(ran, 3); assert.equal(acknowledged, 2);
-    const records = []; for await (const event of reopened.events()) records.push(event);
-    const finished = records.filter(e => e.type === "tool_call_ended");
-    assert.equal(finished.length, 3);
-    assert.ok(finished.every(e => e.data.outcome.status === "ok"));
-    const results = records.filter(e => e.type === "tool_result_emitted");
-    assert.equal(results.length, 3);
-    assert.ok(results.every(e => e.data.result.output === "item-42" && e.data.result.content === "Found the order"));
-    await reopened.end(); await reopened.delete();
-    assert.equal((await db.client.query("SELECT count(*) FROM http_grants WHERE session=$1", [remote.id])).rows[0].count, "0");
-  });
-
-  await t.test("browser uses one authorized composition and reattaches without provider keys", async () => {
-    let called = 0;
-    const read = tool({ name: "lookup", description: "Lookup selection", input: z.object({ id: z.string() }),
-      run: ({ id }, ctx) => { called++; return ctx.finish(`selection-${id}`); } });
-    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
-    const origin = "https://customer.example";
-    const access = await client.clients.grant({ origin, session: composition });
-    assert.equal(JSON.stringify(access).includes("test-model-secret"), false);
-    const { apiKey: _, ...publicModel } = composition.model;
-    const browserOptions = { ...composition, model: publicModel };
-    const browser = () => new Aex({ baseUrl, clientAccess: access, fetch: (url, init) => {
-      const headers = new Headers(init.headers); headers.set("origin", origin); return fetch(url, { ...init, headers });
-    } });
-    let tab = browser();
-    const created = await tab.sessions.create(browserOptions);
-    await created.send("look it up"); assert.equal(called, 1);
-    await assert.rejects(tab.sessions.list(), error => error.status === 401);
-    await tab.close();
-    tab = browser();
-    const reopened = await tab.sessions.create(browserOptions);
-    assert.equal(reopened.id, created.id);
-    await reopened.send("look it up again"); assert.equal(called, 2);
-    await reopened.end(); await reopened.delete(); await tab.close();
-    await client.clients.revoke(access.id);
-  });
-
-  await t.test("idle browser transport preserves host authority and fails revoked wake before sending", async () => {
-    const origin = "https://customer.example";
-    const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: (_, ctx) => ctx.finish("selected") });
-    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
-    const access = await client.clients.grant({ origin, session: composition });
-    const sleeping = Promise.withResolvers();
-    let messages = 0;
-    const tab = new Aex({ baseUrl, clientAccess: access, connectionIdleTimeoutMs: 25, fetch: async (url, init) => {
-      const headers = new Headers(init.headers); headers.set("origin", origin);
-      if (new URL(url).pathname.endsWith("/messages")) messages++;
-      const response = await fetch(url, { ...init, headers });
-      if (new URL(url).pathname.endsWith("/suspend") && (await response.clone().json()).suspended) sleeping.resolve();
-      return response;
-    } });
-    try {
-      const { apiKey: _, ...publicModel } = options.model;
-      const session = await tab.sessions.create({ ...composition, model: publicModel });
-      await session.send("look it up");
-      await sleeping.promise;
-      for (const [hostId, token, requestOrigin] of [
-        [foreignHost.host_id, access.credentials.token, origin],
-        [access.credentials.hostId, access.credentials.token, "https://other.example"],
-        [access.credentials.hostId, a.token, origin],
-      ]) {
-        const denied = await fetch(`${baseUrl}/v1/hosts/${hostId}/suspend`, { method: "POST",
-          headers: { authorization: `Bearer ${token}`, origin: requestOrigin, "content-type": "application/json" },
-          body: JSON.stringify({ connection: 1 }) });
-        assert.equal(denied.status, 401);
-      }
-      await client.clients.revoke(access.id);
-      await assert.rejects(session.send("revoked wake"), error => error.status === 401);
-      assert.equal(messages, 1);
-      const saved = await client.sessions.get(session.id); await saved.end(); await saved.delete();
-    } finally { await tab.close(); }
-  });
-
-  await t.test("browser expiry closes an open stream and rejects further session and host access", async () => {
-    const origin = "https://customer.example";
-    const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: (_, ctx) => ctx.finish("selected") });
-    const composition = { ...options, tools: [read({ env: clientBrowser({ name: "tab" }) })] };
-    const access = await client.clients.grant({ origin, session: composition, expiresAt: Math.floor(Date.now() / 1000) + 4 });
-    const tab = new Aex({ baseUrl, clientAccess: access, fetch: (url, init) => {
-      const headers = new Headers(init.headers); headers.set("origin", origin); return fetch(url, { ...init, headers });
-    } });
-    try {
-      const { apiKey: _, ...publicModel } = options.model;
-      const session = await tab.sessions.create({ ...composition, model: publicModel });
-      const response = await fetch(`${baseUrl}/v1/sessions/${session.id}/events`, {
-        headers: { authorization: `Bearer ${access.token}`, origin, accept: "text/event-stream" }, signal: AbortSignal.timeout(7000),
-      });
-      assert.equal(response.status, 200);
-      const reader = response.body.getReader();
-      assert.equal((await reader.read()).done, false);
-      while (!(await reader.read()).done) {}
-      assert.ok(Date.now() >= access.expires_at * 1000);
-      await assert.rejects(tab.sessions.get(session.id), error => error.status === 401);
-      const host = await fetch(`${baseUrl}/v1/hosts/${access.credentials.hostId}/commands`, {
-        headers: { authorization: `Bearer ${access.credentials.token}`, origin },
-      });
-      assert.equal(host.status, 401);
-      const saved = await client.sessions.get(session.id); await saved.end(); await saved.delete();
-    } finally { await tab.close(); }
-  });
-
-  await t.test("Chromium creates a scoped session and executes a DOM Tool over direct CORS and SSE", async () => {
-    const bundle = await readFile(new URL("../../artifacts/browser-journey.js", import.meta.url));
-    const frontend = createServer((req, res) => {
-      if (req.url === "/app.js") res.writeHead(200, { "content-type": "text/javascript" }).end(bundle);
-      else res.writeHead(200, { "content-type": "text/html" }).end('<div id="selection">selected text</div><script type="module" src="/app.js"></script>');
-    });
-    frontend.listen(0, "127.0.0.1"); await once(frontend, "listening");
-    const origin = `http://127.0.0.1:${frontend.address().port}`;
-    const browser = await chromium.launch({ headless: true });
-    try {
-      const read = tool({ name: "lookup", description: "Read selection", input: z.object({ id: z.string() }), run: () => { throw new Error("browser Tool executed on backend"); } });
-      const access = await client.clients.grant({ origin, session: { ...options,
-        agentloop: pi(), tools: [read({ env: clientBrowser({ name: "tab" }) })] } });
-      const page = await browser.newPage();
-      const errors = []; page.on("pageerror", error => errors.push(error.message));
-      await page.goto(origin); await page.waitForFunction(() => typeof window.runBrowserJourney === "function");
-      const result = await page.evaluate(input => window.runBrowserJourney(input), { baseUrl, access });
-      assert.deepEqual(errors, []);
-      assert.equal(result.connections, 2);
-      assert.match(JSON.stringify(result.transcript), /selected text-42/);
-      const session = await client.sessions.get(result.id); await session.end(); await session.delete();
-      await client.clients.revoke(access.id);
-    } finally { await browser.close(); frontend.closeAllConnections(); await new Promise(resolve => frontend.close(resolve)); }
-  });
-
-  const unsupported = await client.sessions.create({ ...options, agentloop: { name: "no-output-fixture" } });
-  const beforeUnsupported = modelCalls;
-  structuredAnswers = ['"unused"'];
-  await assert.rejects(unsupported.send("Extract", { output: { type: z.string() } }), /requires a completed turn/);
-  assert.equal(modelCalls - beforeUnsupported, 1, "missing assistant output does not trigger corrections");
-  structuredAnswers = undefined;
-  await unsupported.end(); await unsupported.delete();
-  await meter();
-
-  const events=[];for await(const event of session.events())events.push(event);assert.ok(events.some(e=>e.type==="tool_call_ended"));
-  let last=events.at(-1).sequence;const page=await (await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token)).json();assert.equal(page.events.length,0);
-  await session.send("look it up again");assert.equal(toolCalls,2,"terminal turns release admission for the next message");
-  const sweep=[];
-  for(let i=0;i<8;i++) sweep.push(await other.sessions.create({...options,agentloop:[pi,codex,opencode][i%3]()},{idempotencyKey:`sweep-${i}`}));
-  modelDelay=250;
+test("native Pi: typed corrections, turn admission, stream revocation, restart and paired restore",{timeout:180000},async t=>{
+  const f=await fixture(t),a=await f.account();const options={harness:"pi",model:sdk.Model("openai/gpt-4.1-mini",sdk.ApiKey(a.modelKey)),instructions:"preserved native conversation"};const session=await a.api.sessions.create(options);
+  f.model.answers.push('"wrong"','{"age":37}');assert.deepEqual(await session.send("Extract",{output:{type:z.object({age:z.number()})},idempotencyKey:"typed-once"}),{age:37});
+  const receipts=await until(()=>a.api.account.modelUsage(session.id),usage=>usage.reported_input_tokens>=24,"typed usage");
+  const before=f.model.requests.length;assert.deepEqual(await session.send("Extract",{output:{type:z.object({age:z.number()})},idempotencyKey:"typed-once"}),{age:37});assert.equal(f.model.requests.length,before);
+  const sweep=[];for(let index=0;index<8;index++)sweep.push(await a.api.sessions.create(options));
   for(const concurrency of [1,2,4,8]) {
-    await meter();
-    const started=performance.now();
-    const results=await Promise.all(sweep.slice(0,concurrency).map(async(s,i)=>{
-      const r=await raw(`/v1/sessions/${s.id}/messages`,b.token,{method:"POST",headers:{"content-type":"application/json","idempotency-key":`sweep-${concurrency}-${i}`},body:JSON.stringify({input:{message:"x".repeat(concurrency===8?65536:1024)}})});
-      await r.arrayBuffer();return r.status;
-    }));
-    assert.equal(results.filter(s=>s===200).length,Math.min(concurrency,configuration.limits.active_turns_per_account));
-    assert.ok(results.every(s=>s===200||s===503));
-    t.diagnostic(JSON.stringify({operation:"turn_admission_sweep",concurrency,statuses:results,elapsed_ms:performance.now()-started,brain_bytes:await size(join(directory,"brain"))}));
+    await f.meter();f.model.delay=250;
+    const responses=await Promise.all(sweep.slice(0,concurrency).map((entry,index)=>fetch(`${f.url}/sessions/${entry.id}/events`,{method:"POST",headers:{authorization:`Bearer ${a.token}`,"content-type":"application/json","x-aex-max-cost-micro-usd":"1000000"},body:JSON.stringify({type:"user.message",text:"x".repeat(1024),key:`sweep-${concurrency}-${index}`})})));
+    assert.equal(responses.filter(response=>response.status===202).length,Math.min(concurrency,2));assert.ok(responses.every(response=>[202,503].includes(response.status)),JSON.stringify(responses.map(response=>response.status)));
+    for(const [index,response] of responses.entries())if(response.status===202){const accepted=await response.json();await sweep[index].outcome(accepted.id,{after:accepted.cursor});}
+    await f.operate({action:"maintain"});
   }
-  modelDelay=0;
-  const subscribers=[];
-  for(let i=0;i<configuration.limits.streams_per_account;i++) {
-    const abort=new AbortController();
-    const r=await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"},signal:abort.signal});assert.equal(r.status,200);
-    // Node cancels an unread body when its Response is garbage-collected.
-    subscribers.push({abort,response:r});
-  }
-  assert.equal((await raw(`/v1/sessions/${otherSession.id}/events`,b.token,{headers:{accept:"text/event-stream"}})).status,503,"unread subscribers stay within the account limit");
-  for(const subscriber of subscribers){subscriber.abort.abort();await subscriber.response.body.cancel().catch(()=>{});}
-  const premature=await raw(`/v1/sessions/${sweep[0].id}`,b.token,{method:"DELETE",headers:{"idempotency-key":"premature-delete"}});
-  assert.equal(premature.status,400);
-  assert.equal((await raw(`/v1/sessions/${sweep[0].id}`,b.token)).status,200,"rejected deletion must not hide a live session");
-  for(const s of sweep){await s.end();await s.delete();}
-  last=(await (await raw(`/v1/sessions/${session.id}/events`,a.token)).json()).next_cursor;
-  await meter();
-  const controller=new AbortController();const feed=await raw(`/v1/sessions/${session.id}/events?after=${last}`,a.token,{headers:{accept:"text/event-stream"},signal:controller.signal});const reader=feed.body.getReader();await reader.read();
-  await operate({action:"revoke_key",key:a.key});
-  const closed=await Promise.race([(async()=>{while(!(await reader.read()).done){}return true;})(),pause(3000).then(()=>false)]);assert.ok(closed,"revocation closes open SSE");controller.abort();
-  assert.equal((await raw(`/v1/sessions/${session.id}`,a.token)).status,401);
-  await client.close();
-  await stop(aexChild,"SIGKILL");await stop(brainChild,"SIGKILL");
-  const productBackup=await db.snapshot();await cp(join(directory,"aex"),join(directory,"backup-aex"),{recursive:true});await cp(join(directory,"brain"),join(directory,"backup-brain"),{recursive:true,filter:source=>source!==join(directory,"brain/run")});
-  await start();assert.equal((await raw(`/v1/sessions/${session.id}`,a.token)).status,401);
-  const replacement=await operate({action:"issue_key",account:a.account});
-  const history=await (await raw(`/v1/sessions/${session.id}/events`,replacement.token)).json();assert.equal(history.next_cursor,last);
-  await otherSession.end();await otherSession.delete();
-  assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,404);
-  await stop(aexChild);await stop(brainChild);
-  await rm(join(directory,"aex"),{recursive:true});await rm(join(directory,"brain"),{recursive:true});
-  await db.restore(productBackup);await cp(join(directory,"backup-aex"),join(directory,"aex"),{recursive:true});await cp(join(directory,"backup-brain"),join(directory,"brain"),{recursive:true});
-  await start();assert.equal((await raw(`/v1/sessions/${session.id}`,a.token)).status,401,"restored key remains revoked");
-  assert.deepEqual(await paidClient.account.modelUsage(backgroundSession.id), metered, "paired restore preserves settled token receipts without another debit");
-  assert.equal((await raw(`/v1/sessions/${session.id}`,replacement.token)).status,401,"post-backup credentials do not exist in restore");
-  assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,200,"restore requires post-backup deletion reconciliation before reopening");
-  await db.client.query("UPDATE sessions SET created=0 WHERE id=$1",[otherSession.id]);
-  assert.equal((await operate({action:"maintain"})).deleted,1,"retention ends and removes expired sessions");
-  assert.equal((await raw(`/v1/sessions/${otherSession.id}`,b.token)).status,404);
-  const logs=processLogs.join("");
-  for(const secret of ["test-model-secret",internal,operator,environmentToken,"endpoint-secret".repeat(3),a.token,b.token,replacement.token]) assert.equal(logs.includes(secret),false,"service logs must not contain credentials");
-  assert.ok(logs.includes('"request_id"'),"redacted request correlation is emitted");
+  f.model.delay=0;for(const entry of sweep)await entry.delete();
+  const stream=await fetch(`${f.url}/sessions/${session.id}/events`,{headers:{authorization:`Bearer ${a.token}`,accept:"text/event-stream"}});assert.equal(stream.status,200);const reader=stream.body.getReader();await reader.read();await f.operate({action:"revoke_key",key:a.key});await Promise.race([(async()=>{while(!(await reader.read()).done){}})(),new Promise((_,reject)=>setTimeout(()=>reject(new Error("revocation did not close stream")),3000))]);assert.equal((await fetch(`${f.url}/sessions/${session.id}`,{headers:{authorization:`Bearer ${a.token}`}})).status,401);
+  const backup=await f.backup();await f.restore(backup);assert.equal((await fetch(`${f.url}/sessions/${session.id}`,{headers:{authorization:`Bearer ${a.token}`}})).status,401);const replacement=await f.operate({action:"issue_key",account:a.account});const reopened=f.client({apiKey:replacement.token,maxCostMicroUsd:1000000});const handle=await reopened.sessions.get(session.id);assert.equal((await handle.send("continue after paired restore")).session.status,"idle");assert.ok(f.model.requests.some(request=>JSON.stringify(request).includes("preserved native conversation")));
+  const restored=await reopened.account.modelUsage(session.id);assert.ok(restored.charged_micro_usd>=receipts.charged_micro_usd);await handle.delete();
+});
+
+test("Chromium: explicit user gesture attaches DOM callbacks, scoped grants reconnect and expiry closes streams",{timeout:120000},async t=>{
+  const f=await fixture(t),a=await f.account(),bundle=await readFile("artifacts/browser-journey.js");
+  const frontend=await listen((req,res)=>{if(req.url==="/app.js")res.writeHead(200,{"content-type":"text/javascript"}).end(bundle);else res.writeHead(200,{"content-type":"text/html"}).end('<button id="attach">Attach</button><div id="selection">selected text</div><script type="module" src="/app.js"></script>');});t.after(()=>frontend.close());
+  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());const page=await browser.newPage();const errors=[];page.on("pageerror",error=>errors.push(error.message));await page.goto(frontend.url);await page.waitForFunction(()=>typeof window.prepareBrowserJourney==="function");
+  const tools=[{name:"lookup",description:"Read the current selection",input_schema:{type:"object",properties:{id:{type:"string"}},required:["id"],additionalProperties:false}}];
+  const access=await a.api.clients.grant({origin:frontend.url,expiresAt:Math.floor(Date.now()/1000)+60,session:{harness:"pi",config:{model:"openai/gpt-4.1-mini",tools:[]},model_credential:{api_key:a.modelKey}},tools});assert.ok(!JSON.stringify(access).includes(a.modelKey));
+  await page.evaluate(input=>window.prepareBrowserJourney(input),{baseUrl:f.url,access});await page.click("#attach");await page.waitForFunction(()=>window.browserResult || window.browserFailure);assert.equal(await page.evaluate(()=>window.browserFailure),undefined);const result=await page.evaluate(()=>window.browserResult);assert.ok(result.transcript.some(event=>JSON.stringify(event).includes("selected text-42")),JSON.stringify(result));
+  await page.evaluate(()=>window.disconnectBrowserJourney());const composition=await page.evaluate(()=>window.browserComposition());assert.equal(composition.session,result.id);await page.click("#attach");await page.waitForFunction(()=>window.browserReattached);assert.equal(await page.evaluate(()=>window.browserFailure),undefined);
+  await f.db.client.query("UPDATE browser_grants SET expires_at=0 WHERE id=$1",[access.id]);await page.evaluate(()=>window.disconnectBrowserJourney());await page.click("#attach");await page.waitForFunction(()=>window.browserFailure);assert.equal(errors.length,0,JSON.stringify(errors));
+  const handle=await a.api.sessions.get(result.id);await handle.delete();
+});
+
+
+test("native application tools commit a finish through the stateless controller, survive restart and erase their cached payloads on deletion",{timeout:120000},async t=>{
+  const credential="application-private-credential-00000000000000",descriptor={name:"read",description:"Read",input_schema:{type:"object"},output_schema:{type:"integer"}};let runs=0,lastRequest;
+  const f=await fixture(t,async({config,runtime,tokens,url,operator})=>{
+    const control=controller(operator,tokens.tools),journal=new RemoteJournal(control);
+    const handler=sdk.createApplicationHandler({credential,gatewayOrigin:"https://api.example",tools:[{...descriptor,async run(_args,context){runs++;await context.progress({ready:true});await context.finish(42);throw new Error("caller exited after its committed finish");}}],fetch:async(callback,options)=>{
+      const target=new URL(callback);const response=await fetch(url+target.pathname,options);if(response.ok && JSON.parse(options.body).type==="finish")throw new Error("public acknowledgement was lost");return response;
+    }});
+    const apps=new Applications({journal,callbackOrigin:"https://api.example",outbound:async(endpoint,options)=>{assert.equal(endpoint,"https://application.example/tools");lastRequest=options.body;return (await handler(new Request(endpoint,{method:"POST",headers:{authorization:`Bearer ${options.token}`},body:JSON.stringify(options.body),signal:options.signal}))).json();}});
+    const server=toolServer({token:tokens.sign,control,providers:{application:apps}});server.listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
+    config.application_tool_url=`http://127.0.0.1:${server.address().port}`;config.managed_providers.application={public:true,operations:[],active_per_account:10,profiles:{}};runtime.managed_providers.application={url:config.application_tool_url,tools:[]};return {apps,journal,control};
+  });
+  const account=await f.account();const session=await account.api.sessions.create({harness:"pi",model:sdk.Model("openai/gpt-4.1-mini",sdk.ApiKey(account.modelKey)),tools:[sdk.Application({endpoint:"https://application.example/tools",credential,tools:[descriptor]})]});assert.equal((await session.send("CALL application_read {}",{idempotencyKey:"application-once"})).output,"tool handled");assert.equal(runs,1);
+  const grant=(await f.db.client.query("SELECT id FROM tool_grants WHERE session=$1 AND provider='application'",[session.id])).rows[0].id;
+  const saved=(await f.db.client.query("SELECT value FROM tool_service_jobs WHERE value::jsonb->>'grant'=$1",[grant])).rows;assert.equal(saved.length,1);assert.ok(saved[0].value.includes("42"));assert.ok(!saved[0].value.includes(credential));
+  const restarted=new Applications({journal:f.services.journal,callbackOrigin:"https://api.example",outbound:()=>{throw new Error("a committed action must not be repeated");}});
+  assert.equal((await restarted.invoke("read",{tenant:account.account,session:session.id,parameters:{authorization:grant},credential:{token:credential}},lastRequest,{expires_ms:Date.now()+30000,parameters:{timeout_ms:10000}},new AbortController().signal)).structured_content,42);
+  const before=await until(()=>account.api.account.modelUsage(session.id),usage=>usage.reported_input_tokens>=24,"application usage");const backup=await f.backup();await f.restore(backup);assert.deepEqual(await account.api.account.modelUsage(session.id),before);
+  await assert.rejects(session.delete(),error=>error.status===409);await f.services.apps.maintain(f.services.control);await session.delete();const remaining=await f.db.client.query("SELECT value FROM tool_service_jobs WHERE value::jsonb->>'grant'=$1",[grant]);assert.equal(remaining.rows.length,0);assert.equal(runs,1);
 });

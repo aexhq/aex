@@ -1,85 +1,31 @@
 # Operations and recovery
 
-Use `aex-server operate --request JSON` with `AEX_OPERATOR_TOKEN` in the process environment.
-The [generated operator schema](generated/operator.schema.json) defines commands. Never proxy
-this loopback listener through public ingress.
+Use `aex-server operate --request JSON` with `AEX_OPERATOR_TOKEN`. The [generated operator schema](generated/operator.schema.json) defines commands. Keep its literal-loopback listener private.
 
-## Identity and reconciliation
+`create_account`, `issue_key`, `revoke_key`, `suspend_account` and `resume_account` manage access. `inspect` shows unresolved product claims. `forget_executor` retires an executor registration. Revocations apply to requests and ongoing event streams.
 
-`create_account`, `issue_key`, `revoke_key`, `suspend_account` and `resume_account` manage access.
-`inspect` lists accounts and unresolved claims without credentials or transcripts. `forget_host`
-retires an Aex host registration; Brain expires unused registrations under its own lifecycle.
+Every restart begins drained. Before `resume`, verify Brain readiness, controller health and fresh storage metering. `drain` closes admission; wait for zero in-flight requests. Preserve post-backup revocation/deletion records outside the serving volume and reapply them before resuming a restored pair.
 
-`drain` closes customer access and streams. Wait for zero in-flight requests before reconciliation.
-Every restart starts drained. `resume` reopens after dependency/storage checks. Record revocations
-and deletions in protected operator records outside the serving volume. Reapply post-backup
-changes after restoring an older backup, before resume.
+## Reconcile evidence
 
-For ambiguous creation: drain, let Brain creation settle, inspect pending claims and `orphans`,
-use `delete_orphan` only for identified unowned sessions, then `resolve_create` to release the
-allocation. Never infer ownership from timing or request similarity. For an uncertain turn,
-stop/restart Brain if a request may remain in flight, then use `reconcile_turn` while drained.
-It releases capacity after terminal journal evidence or a recorded request rejection and never reruns
-work. `maintain` performs the same reconciliation for completed asynchronous turns. A merely idle
-session does not prove that a pending request was never dispatched. A journaled terminal result
-releases the submitted turn's reservation even while a background observation activation runs.
-Synchronous sends wait behind those activations in Brain; asynchronous submissions reject a busy
-session. A second active submitted turn still consumes admission capacity and is rejected.
+Creation claims and accepted turn receipts survive a gateway restart. For ambiguous creation, drain, inspect `orphans`, remove only proven unowned sessions with `delete_orphan`, and resolve the product claim with `resolve_create`. Never infer ownership from timing. `reconcile_turn` and `maintain` release capacity on durable terminal or explicit unknown evidence without replaying work. Idle status alone does not establish that a request was rejected.
 
-Prepaid configuration, Stripe callbacks, immutable pricebooks and money recovery are described in
-[Billing](billing.md). `billing.max_turn_secs` caps the charge and should match the paired Brain's
-wall-time policy. Keep prices and test/live payment mode explicit; deployments do not enroll preview
-accounts or invent rates. Only the private operator can submit usage or append credit adjustments.
+Model receipts use opaque journal cursors committed atomically with usage. Physical attempts supersede logical aggregates rather than adding them twice. Prices apply at request start. Missing usage stays unknown; reported lower bounds can be charged and pending estimates remain separate. Financial records survive content deletion. See [billing](billing.md).
 
-The [managed environment controller](environments.md) uses a distinct narrow credential and its
-own retained directory. Its configuration comes from Aex's immutable profile records. Keep Modal
-credentials in that process only; keep Stripe, S3 and database credentials in Aex. Reconcile
-uncertain resource identities against Modal before releasing their holds; never recreate them.
+A sandbox allocation intent is durable before dispatch and tagged at the provider. Reconcile unknown allocation identities before any funding release. If the start time is unknown, terminating a discovered resource is insufficient evidence for a zero charge. Record provider-supported cumulative usage through the operator's `record_metered_usage` command; terminal evidence can settle a revoked grant.
 
-## Storage
+Session deletion first closes work, reconciles turns and usage, revokes managed grants and waits for external cleanup. Then it removes transient media, attachment objects, Brain content and cached private payloads. A 409 is pending cleanup, not successful deletion. Repeat the same deletion after reconciliation.
 
-Aex and Brain access only their own directories. A trusted operator measures file lengths in
-Brain's versioned session directories and reports through the local operator API. It reads no
-session contents or credential metadata. Shared metadata/artifacts use whole-volume headroom
-and bounded record counts rather than per-tenant attribution.
-Native runtimes can remove temporary SQLite sidecars during a scan; files already removed
-contribute no retained bytes. Native runtime symlinks contribute their own stored length;
-the meter never follows their targets. Journal directories still reject symlinks.
+## Paired backup and restore
 
-Turns reserve retained-byte capacity transactionally. A fresh scan started after the last
-completed write can replace reservations with measured bytes. Active/uncertain work cannot
-have its allocation reset by a scan. Stale reports or insufficient disk space deny new work.
-`maintain` tombstones expired sessions, ends them and confirms deletion. It can interrupt old
-sessions; failed cleanup remains inaccessible and is retried on subsequent maintenance.
+PostgreSQL owns product inventory, billing, cursor receipts and the stateless application controller's private journal. Brain owns native checkpoints, encrypted credentials and archived session history. The sandbox controller owns its retained allocation journal. Preserve all three together with the matching release configuration and encryption keys.
 
-The byte reserve is an admission allowance, not a filesystem quota. In-flight growth and the
-metering interval must fit measured headroom. Before onboarding, saturation tests must validate
-these settings with the pinned Agentloop and Brain limits. Do not advertise a hard physical-disk
-quota or arbitrary hostile-code hosting.
+Drain admission, stop Brain and retained controller writers, and quiesce the stateless application controller through its private `/control/quiesce` endpoint using `AEX_TOOL_TOKEN`. Wait for active actions, completion writes and maintenance to reach zero before dumping PostgreSQL and archiving retained files. Keep the gateway available until those private writes finish. Resume the controller and owning runtime before uploading the completed encrypted pair.
 
-## Durability
+Verify restores in an isolated database and volume using the pinned runtime, comparing account/session/usage inventory and continuing a retained session. Never restore only PostgreSQL, only Brain, or a newly generated credential key. After new customer writes, rollback requires the matching paired backup.
 
-Stop admission and all writers for consistent whole-volume backup. Stop Brain before the environment
-controller, then Aex, so cleanup callbacks can finish. Dump PostgreSQL and archive runtime files
-as one backup set in a root-only directory. Preserve Brain metadata/key, artifacts,
-format marker and journals, plus the controller's SQLite directory, alongside the matching product dump. Runtime sockets
-under `run/` are transient. Record compatible source revisions and image digests with backups.
+## Brain 2 cutover
 
-Stop the previous writer before moving a retained volume. Disk loss requires a completed backup
-and may lose later writes. Live execution is not reconstructed. Reconcile post-backup access
-revocations and deletions before reopening. Logical deletion does not erase historical backups.
-Rollback requires data-format compatibility; changing an image alone is not a data rollback.
+The migration retains historical product/financial rows and explicitly marks old sessions `retained`; it provides no old execution routing or importer. Before migration, take a verified paired backup and reconcile active sessions, pending claims, nonterminal model usage and open turn/sandbox reservations. Migration 0012 refuses those unresolved states. Initialize a fresh Brain 2 data directory with a new deployment-owned credential key; keep the original pair intact for historical recovery.
 
-## Verification
-
-`tools/check.sh` runs strict Rust checks/tests, generated-contract verification, npm audit and
-meter tests. `tools/journeys.sh` runs the published SDK, real Linux workers, customer Tools,
-isolation, revocation, restart and consistent file restore. It reports a direct/gateway read
-baseline, 1/2/4/8 concurrent-turn admission and unread-subscriber exhaustion. It also verifies
-second-writer rejection, consecutive turns, retention and credential redaction.
-`tools/image-smoke.py` verifies the non-root container and writable data path.
-
-`tools/live-local.py --workspace-env /workspace/.env.prd` runs a real-provider check with explicit
-`AEX_TEST_DATABASE_URL`, `AEX_TEST_SERVER`, `BRAIN_TEST_SERVER` and `BRAIN_TEST_WORKER` paths.
-`tools/live-check.mjs` can target deployed Aex using environment-supplied test credentials.
-Missing credentials or provider failure fail this release check; mocks do not replace it.
+Deployment-specific images, service settings, commercial prices, credentials and production evidence belong to private Platform. Public implementation and CI remain independently reproducible.
