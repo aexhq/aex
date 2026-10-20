@@ -91,3 +91,15 @@ test('application deletion removes cached results before confirming cleanup',asy
   const apps=new Applications({journal:state,callbackOrigin:'https://api.example'});let confirmed=false;
   await apps.maintain(async(path,body)=>{if(path==='pending')return {grants:[{provider:'application',authorization:'g',tenant:'a',session:'s'}]};assert.equal(body.authorization,'g');assert.ok(!JSON.stringify(state.values()).includes('private output'));confirmed=true;});assert.equal(confirmed,true);
 });
+
+for(const provider of ['sandbox','browser','application'])test(`${provider} sends response headers while its result is still pending`,async t=>{
+  let finish;const finished=new Promise(resolve=>finish=resolve),token='private-control-token-000000000000';
+  const scope={tenant:'a',session:'s',provider,alias:'tool',parameters:{authorization:'grant'}};
+  const body=Buffer.from(JSON.stringify(scope)).toString('base64url'),signature=createHmac('sha256',token).update(body).digest('base64url');
+  const value={content:[{type:'text',text:'confirmed'}]};
+  const server=toolServer({token,control:async()=>({}),providers:{[provider]:{invoke:async()=>{await finished;return value;}}}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(resolve=>{finish();server.closeAllConnections();server.close(resolve);}));
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/${provider}/run`,{method:'POST',headers:{authorization:`Bearer ${body}.${signature}`,'content-type':'application/json'},body:JSON.stringify({tenant_id:'a',session_id:'s',call_id:'call',arguments:{}}),signal:AbortSignal.timeout(1000)});
+  assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'text/event-stream');
+  finish();assert.equal(await response.text(),`event: result\ndata: ${JSON.stringify(value)}\n\n`);
+});
