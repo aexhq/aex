@@ -41,11 +41,9 @@ export function toolServer({token,control,providers,capacity=16}) {
       if(request.tenant_id!==context.tenant || request.session_id!==context.session || typeof request.call_id!=='string' || !request.call_id || request.call_id.length>256 || !request.arguments || typeof request.arguments!=='object' || Array.isArray(request.arguments))return send(400,{error:'invalid_scope'});
       const {credential,...scope}=context;
       const admitted=await control('authorize',{...scope,action:true});
-      if(context.provider==='application') {
-        res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store'});
-        const value=await providers.application.invoke(route[2],context,request,admitted,controller.signal,value=>{if(!res.destroyed)res.write(`event: progress\ndata: ${JSON.stringify(value)}\n\n`);});
-        if(!res.destroyed)res.end(`event: result\ndata: ${JSON.stringify(value)}\n\n`);
-      } else send(200,await providers[context.provider].invoke(route[2],context,request,admitted,controller.signal));
+      res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store'});res.flushHeaders();
+      const value=await providers[context.provider].invoke(route[2],context,request,admitted,controller.signal,value=>{if(!res.destroyed)res.write(`event: progress\ndata: ${JSON.stringify(value)}\n\n`);});
+      if(!res.destroyed)res.end(`event: result\ndata: ${JSON.stringify(value)}\n\n`);
     } catch {const value=failure('tool request failed; remote outcome may be unknown',true);if(res.headersSent){if(!res.destroyed)res.end(`event: result\ndata: ${JSON.stringify(value)}\n\n`);}else send(200,value);}
     finally {clearTimeout(timer);active--;}
   });
