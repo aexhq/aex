@@ -3,37 +3,29 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24 <25"
   },
   "scripts": {
-    "test": "node --test tests/journeys/*.test.mjs",
+    "test": "node --test tests/journeys/hosted.test.mjs",
     "build": "npm run build --workspace @aexhq/sdk",
     "test:sdk": "npm test --workspace @aexhq/sdk",
     "test:cli": "npm run build && npm test --workspace @aexhq/cli"
   },
   "devDependencies": {
-    "@aexhq/agentloop-codex": "11.0.0",
-    "@aexhq/agentloop-pi": "11.0.0",
-    "@aexhq/brain": "0.41.0",
+    "@aexhq/brain": "2.1.0",
     "@types/node": "22.19.19",
     "esbuild": "0.25.9",
     "json-schema-to-typescript": "15.0.4",
     "pg": "8.16.3",
     "playwright": "1.63.0",
     "typescript": "5.9.3",
-    "zod": "4.4.3",
-    "@aexhq/agentloop-opencode": "1.0.0"
+    "zod": "4.4.3"
   },
   "workspaces": [
     "packages/sdk",
     "packages/cli"
   ],
   "dependencies": {
-    "@aexhq/env-http": "0.3.6",
-    "@aexhq/env-modal": "0.5.10"
-  },
-  "overrides": {
-    "@parcel/watcher": "2.6.0",
-    "@modelcontextprotocol/client": "2.3.1"
+    "modal": "0.10.1"
   }
 }

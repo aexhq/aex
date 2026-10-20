@@ -1,67 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { z } from "zod";
-import { Brain, BrainError, SessionHandle, AexSessionHandle, StructuredOutputError } from "../dist/index.js";
+import { Brain, BrainError, AexSessionHandle, StructuredOutputError } from "../dist/index.js";
 
-function fixture(answers, { pageSize = 1000, origin = { kind: "agentloop", sequence: 2 } } = {}) {
-  const posts = [], reads = [], records = [], receipts = new Map();
-  const add = (event_type, data, attribution) => records.push({ sequence: records.length + 1, recorded_at_ms: 1, event_type, data, ...(attribution ? { origin: attribution } : {}) });
-  const client = new Brain({ baseUrl: "https://brain.example", fetch: async (url, init) => {
-    if (url.endsWith("/messages")) {
-      const input = JSON.parse(init.body).input;
-      const key = new Headers(init.headers).get("idempotency-key");
-      posts.push({ input, key });
-      if (receipts.has(key)) {
-        const previous = receipts.get(key);
-        assert.deepEqual(input, previous.input);
-        return Response.json(previous.state);
-      }
-      assert.ok(answers.length, "unexpected correction send");
-      const candidate = answers.shift();
-      if (candidate instanceof Error) throw candidate;
-      const raw = typeof candidate === "function" ? await candidate(input) : candidate;
-      add("turn_started", { input });
-      add("output_emitted", { type: "assistant_message", message: "unrelated tool output" }, { kind: "tool", sequence: 2 });
-      if (raw !== undefined) add("output_emitted", { type: "assistant_message", message: raw }, origin);
-      add("turn_ended", { result: null });
-      const state = { session_id: "s", status: "idle", last_sequence: records.length };
-      receipts.set(key, { input, state });
-      return Response.json(state);
+function fixture(answers,{pageSize=1000,origin={kind:"agentloop"}}={}) {
+  const posts=[],reads=[],records=[],receipts=new Map();let current;
+  const state={id:"s",status:"idle",harness:"pi",config:{model:"openai/gpt-4.1-mini",tools:[]},descriptors:[],created_at:"2026-10-20T00:00:00Z",updated_at:"2026-10-20T00:00:00Z"};
+  const add=(type,data,input_id=current)=>{const id=`event-${records.length+1}`;const event={id,cursor:`opaque/${id}`,time:"2026-10-20T00:00:00Z",type,data,...(input_id?{input_id}:{})};records.push(event);return event;};
+  const client=new Brain("https://brain.example","token",async(url,init)=>{
+    url=String(url);
+    if(url.endsWith("/events") && init.method==="POST") {
+      init.signal?.throwIfAborted();const input=JSON.parse(init.body),key=input.key;posts.push({input,key});
+      if(receipts.has(key)){const previous=receipts.get(key);assert.deepEqual(input,previous.input);return Response.json(previous.accepted);}
+      assert.ok(answers.length,"unexpected correction send");const candidate=answers.shift();if(candidate instanceof Error)throw candidate;const raw=typeof candidate==="function"?await candidate(input):candidate;
+      const accepted=add("user.message",input,undefined);current=accepted.id;receipts.set(key,{input,accepted});add("session.status",{status:"running"});add("tool.result",{content:[{type:"text",text:"unrelated tool output"}]});
+      if(raw!==undefined)add(origin.kind==="tool"?"tool.result":"assistant.message",origin.kind==="tool"?{content:[{type:"text",text:raw}]}:{text:raw});
+      add("session.status",{status:"idle"});return Response.json(accepted);
     }
-    assert.ok(url.includes("/events?"));
-    init.signal?.throwIfAborted();
-    const after = Number(new URL(url).searchParams.get("after"));
-    reads.push(after);
-    const events = records.filter(event => event.sequence > after).slice(0, pageSize);
-    return Response.json({ events, next_cursor: events.at(-1)?.sequence ?? after });
-  } });
-  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, operation => operation()));
-  return { session, client, posts, reads, records, add };
+    if(new URL(url).pathname==="/sessions/s")return Response.json(state);
+    assert.ok(url.includes("/events?"));init.signal?.throwIfAborted();const after=new URL(url).searchParams.get("after")??"";reads.push(after);const position=after?records.findIndex(event=>event.cursor===after)+1:0;const events=records.slice(position,position+pageSize);return Response.json({events,next_cursor:events.at(-1)?.cursor??after});
+  });
+  const session=new AexSessionHandle(client,state);return {session,client,posts,reads,records,add};
 }
 
 test("structured send returns Zod output, preserves media, and scopes the prompt to this response", async () => {
   const f = fixture(['{"name":"Ada","age":"37","extra":true}']);
   const type = z.object({ name: z.string().describe("Full name"), age: z.string().transform(Number) });
   const media = [{ type: "image", url: "https://example.com/person.png" }];
-  assert.deepEqual(await f.session.send({ message: "Extract the person", media }, { output: { type } }), { name: "Ada", age: 37 });
+  assert.deepEqual(await f.session.send({ text: "Extract the person", media }, { output: { type } }), { name: "Ada", age: 37 });
   assert.deepEqual(f.posts[0].input.media, media);
-  assert.match(f.posts[0].input.message, /Extract the person[\s\S]*For this response only/);
-  assert.match(f.posts[0].input.message, /Full name/);
+  assert.match(f.posts[0].input.text, /Extract the person[\s\S]*For this response only/);
+  assert.match(f.posts[0].input.text, /Full name/);
   assert.equal(f.session.state.status, "idle");
 });
 
 for (const rejected of [[], ["not json"], ["```json\n{}\n```", '{"age":"wrong"}']]) {
   test(`succeeds after ${rejected.length} corrections with distinct bounded keys`, async () => {
     const f = fixture([...rejected, '{"age":37}']);
-    const options = { output: { type: z.object({ age: z.number() }) }, idempotencyKey: "k".repeat(256) };
+    const options = { output: { type: z.object({ age: z.number() }) }, idempotencyKey: "k".repeat(128) };
     assert.deepEqual(await f.session.send("Extract", options), { age: 37 });
     assert.equal(f.posts.length, rejected.length + 1);
     assert.equal(f.posts[0].key, options.idempotencyKey);
     assert.equal(new Set(f.posts.map(p => p.key)).size, f.posts.length);
-    assert.ok(f.posts.every(p => p.key.length <= 256));
+    assert.ok(f.posts.every(p => p.key.length <= 128));
     for (const post of f.posts.slice(1)) {
-      assert.match(post.input.message, /Validation feedback/);
-      assert.match(post.input.message, /Do not repeat actions or call tools/);
+      assert.match(post.input.text, /Validation feedback/);
+      assert.match(post.input.text, /Do not repeat actions or call tools/);
     }
   });
 }
@@ -78,7 +62,7 @@ for (const maxRetries of [undefined, 0, 1]) {
       return true;
     });
     assert.equal(f.posts.length, count);
-    assert.equal(f.records.at(-1).event_type, "turn_ended");
+    assert.equal(f.records.at(-1).type, "session.status");
   });
 }
 
@@ -99,8 +83,8 @@ test("uses exact terminal boundaries across pagination and replay of older recei
   assert.equal(await f.session.send("First", { output, idempotencyKey: "first" }), "first");
   assert.equal(await f.session.send("Later", { output }), "later");
   assert.equal(await f.session.send("First", { output, idempotencyKey: "first" }), "first");
-  assert.ok(f.reads.includes(2), "crossed event pages");
-  assert.equal(f.records.filter(r => r.event_type === "turn_started").length, 2);
+  assert.ok(f.reads.includes("opaque/event-3"), "crossed event pages");
+  assert.equal(f.records.filter(r => r.type === "user.message").length, 2);
 });
 
 test("replaying the entire correction sequence preserves per-turn idempotency", async () => {
@@ -108,14 +92,14 @@ test("replaying the entire correction sequence preserves per-turn idempotency", 
   const options = { output: { type: z.number() }, idempotencyKey: "extract-once" };
   assert.equal(await f.session.send("Extract", options), 42);
   assert.equal(await f.session.send("Extract", options), 42);
-  assert.equal(f.records.filter(r => r.event_type === "turn_started").length, 2);
+  assert.equal(f.records.filter(r => r.type === "user.message").length, 2);
   assert.equal(f.posts[1].key, f.posts[3].key);
 });
 
 test("normal sends are unchanged and sequential structured sends can use different schemas", async () => {
   const f = fixture(["ordinary", "null", "[1,2]", '{"name":"Ada"}']);
-  assert.equal((await f.session.send("Chat", { idempotencyKey: "plain" })).status, "idle");
-  assert.equal(f.posts[0].input.message, "Chat");
+  assert.equal((await f.session.send("Chat", { idempotencyKey: "plain" })).session.status, "idle");
+  assert.equal(f.posts[0].input.text, "Chat");
   assert.equal(await f.session.send("Nothing", { output: { type: z.null() } }), null);
   assert.deepEqual(await f.session.send("Numbers", { output: { type: z.array(z.number()) } }), [1, 2]);
   assert.deepEqual(await f.session.send("Default", { output: { type: z.object({ name: z.string(), age: z.number().default(37) }) } }), { name: "Ada", age: 37 });
@@ -125,7 +109,7 @@ test("async refinements correct their failures, while custom-code exceptions pro
   const f = fixture(['"wrong"', '"Ada"']);
   const type = z.string().refine(async value => value === "Ada", "Must be Ada");
   assert.equal(await f.session.send("Name", { output: { type } }), "Ada");
-  assert.match(f.posts[1].input.message, /Must be Ada/);
+  assert.match(f.posts[1].input.text, /Must be Ada/);
   const bug = new Error("validator bug");
   const broken = fixture(['"Ada"']);
   await assert.rejects(broken.session.send("Name", { output: { type: z.string().transform(() => { throw bug; }) } }), error => error === bug);
@@ -150,16 +134,10 @@ test("provider and transport failures never trigger output corrections", async (
 
 test("a committed turn failure is preserved as the cause without correction", async () => {
   const f = fixture(['"unused"']);
-  const events = f.session.events.bind(f.session);
-  const failure = { code: "model_failed", message: "provider unavailable", retryable: false };
-  f.session.events = after => ({ async *[Symbol.asyncIterator]() {
-    for await (const event of events(after)) yield event.type === "turn_ended" ? { ...event, type: "turn_failed", data: failure } : event;
-  } });
-  await assert.rejects(f.session.send("Extract", { output: { type: z.string() } }), error => {
-    assert.equal(error.message, "Structured output turn failed");
-    assert.deepEqual(error.cause, failure);
-    return true;
-  });
+  const failure={code:"model_failed",message:"provider unavailable"};
+  const original=f.client.history.bind(f.client);
+  f.client.history=async(...args)=>{const page=await original(...args);page.events=page.events.map(event=>event.type==="session.status" && event.data.status==="idle"?{...event,type:"session.error",data:failure}:event);return page;};
+  await assert.rejects(f.session.send("Extract",{output:{type:z.string()}}),error=>{assert.equal(error.message,"session execution failed");assert.deepEqual(error.cause,failure);return true;});
   assert.equal(f.posts.length, 1);
 });
 
@@ -181,7 +159,7 @@ test("structured sends reject overlap in either direction and release ownership 
   await assert.rejects(f.session.send("Overlap", { output: { type: z.string() } }), /exclusive sends/);
   release.resolve("not json");
   await assert.rejects(pending, StructuredOutputError);
-  assert.equal((await f.session.send("Now chat")).status, "idle");
+  assert.equal((await f.session.send("Now chat")).session.status, "idle");
   const done = Promise.withResolvers();
   const ordinary = fixture([() => done.promise]);
   const sending = ordinary.session.send("Chat");
@@ -193,12 +171,11 @@ test("structured sends reject overlap in either direction and release ownership 
 test("cancellation interrupts an outstanding output-history read", async () => {
   const reading = Promise.withResolvers();
   const controller = new AbortController();
-  const client = new Brain({ baseUrl: "https://brain.example", fetch: async (url, init) => {
-    if (url.endsWith("/messages")) return Response.json({ session_id: "s", status: "idle", last_sequence: 3 });
-    reading.resolve();
-    return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
-  } });
-  const session = new AexSessionHandle(new SessionHandle(client, { id: "s", status: "idle", lastSequence: 0 }, operation => operation()));
+  const client=new Brain("https://brain.example","token",async(url,init)=>{
+    if(String(url).endsWith("/events"))return Response.json({id:"input",cursor:"accepted",time:"2026-10-20T00:00:00Z",type:"user.message",data:{}});
+    reading.resolve();return new Promise((_,reject)=>init.signal.addEventListener("abort",()=>reject(init.signal.reason),{once:true}));
+  });
+  const session=new AexSessionHandle(client,{id:"s",status:"idle"});
   const pending = session.send("Extract", { output: { type: z.string() }, signal: controller.signal });
   await reading.promise;
   controller.abort();

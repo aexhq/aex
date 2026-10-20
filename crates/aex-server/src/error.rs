@@ -3,45 +3,64 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use brain_protocol::ApiError;
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ApiError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+impl ApiError {
+    fn new(code: &str, message: &str) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+}
 
 pub struct Error(pub StatusCode, pub ApiError);
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
     pub fn invalid(message: &str) -> Self {
-        Self(StatusCode::BAD_REQUEST, ApiError::invalid_request(message))
+        Self(
+            StatusCode::BAD_REQUEST,
+            ApiError::new("invalid_request", message),
+        )
     }
     pub fn denied() -> Self {
         Self(
             StatusCode::UNAUTHORIZED,
-            ApiError::unauthorized("valid active credentials required"),
+            ApiError::new("unauthorized", "valid active credentials required"),
         )
     }
     pub fn missing() -> Self {
         Self(
             StatusCode::NOT_FOUND,
-            ApiError::not_found("resource not found"),
+            ApiError::new("not_found", "resource not found"),
         )
     }
     pub fn conflict(message: &str) -> Self {
-        Self(StatusCode::CONFLICT, ApiError::conflict(message))
+        Self(StatusCode::CONFLICT, ApiError::new("conflict", message))
     }
     pub fn capacity() -> Self {
         Self(
             StatusCode::SERVICE_UNAVAILABLE,
-            ApiError::overloaded("hosted capacity unavailable"),
+            ApiError::new("overloaded", "hosted capacity unavailable"),
         )
     }
     pub fn credits(message: &str) -> Self {
-        let mut error = ApiError::conflict(message);
+        let mut error = ApiError::new("conflict", message);
         error.code = "insufficient_credits".into();
         Self(StatusCode::PAYMENT_REQUIRED, error)
     }
     pub fn ambiguous() -> Self {
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::ambiguous(
+            ApiError::new(
+                "ambiguous",
                 "outcome unresolved; operator reconciliation required; do not use a new operation key",
             ),
         )
@@ -49,13 +68,13 @@ impl Error {
     pub fn internal() -> Self {
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::internal("operation failed"),
+            ApiError::new("internal", "operation failed"),
         )
     }
 }
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        (self.0, Json(self.1)).into_response()
+        (self.0, Json(serde_json::json!({"error":self.1}))).into_response()
     }
 }
 impl From<sqlx::Error> for Error {

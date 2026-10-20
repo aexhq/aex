@@ -54,20 +54,20 @@ async fn main() -> anyhow::Result<()> {
             )?;
             for (name, schema) in [
                 (
+                    "composition",
+                    schemars::schema_for!(aex_server::clients::Composition),
+                ),
+                (
+                    "tool-catalog",
+                    schemars::schema_for!(aex_server::managed::Catalog),
+                ),
+                (
                     "client-access",
                     schemars::schema_for!(aex_server::clients::ClientAccess),
                 ),
                 (
                     "client-grant-input",
                     schemars::schema_for!(aex_server::clients::ClientGrantInput),
-                ),
-                (
-                    "http-catalog",
-                    schemars::schema_for!(aex_server::environments::http::HttpCatalog),
-                ),
-                (
-                    "http-selection",
-                    schemars::schema_for!(aex_server::environments::http::HttpSelection),
                 ),
                 (
                     "upload-grant-input",
@@ -80,14 +80,6 @@ async fn main() -> anyhow::Result<()> {
                 (
                     "attachment-limits",
                     schemars::schema_for!(aex_server::attachments::grants::AttachmentLimits),
-                ),
-                (
-                    "environment-catalog",
-                    schemars::schema_for!(aex_server::environments::Catalog),
-                ),
-                (
-                    "environment-selection",
-                    schemars::schema_for!(aex_server::environments::Selection),
                 ),
                 (
                     "sync-payment",

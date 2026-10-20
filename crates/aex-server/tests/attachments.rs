@@ -127,12 +127,14 @@ async fn fixture(path: &std::path::Path) -> (App, Arc<Objects>, String, String, 
         .issue_key(&second, &app.config.limits)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO sessions(id,account,created) VALUES('session',$1,$2)")
-        .bind(&account)
-        .bind(aex_server::store::now())
-        .execute(&app.store.0)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO sessions(id,account,created) VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',$1,$2)",
+    )
+    .bind(&account)
+    .bind(aex_server::store::now())
+    .execute(&app.store.0)
+    .await
+    .unwrap();
     (app, objects, account, token, other)
 }
 
@@ -166,7 +168,7 @@ async fn scoped_uploads_reserve_capacity_and_only_publish_verified_metadata() {
     let created = call(
         &app,
         Method::POST,
-        "/v1/sessions/session/attachment-grants",
+        "/v1/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attachment-grants",
         Some(&token),
         "grant",
         input,
@@ -179,7 +181,7 @@ async fn scoped_uploads_reserve_capacity_and_only_publish_verified_metadata() {
     let scoped = grant["token"].as_str().unwrap();
     assert!(grant.get("media").is_none());
     let path = format!("/v1/attachments/{id}/upload");
-    let metadata = format!("/v1/sessions/session/attachments/{id}");
+    let metadata = format!("/v1/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attachments/{id}");
     assert_eq!(
         call(&app, Method::GET, &metadata, Some(&token), "", b"")
             .await
@@ -203,7 +205,7 @@ async fn scoped_uploads_reserve_capacity_and_only_publish_verified_metadata() {
         call(
             &app,
             Method::POST,
-            "/v1/sessions/session/attachment-grants",
+            "/v1/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attachment-grants",
             Some(&token),
             "grant",
             changed
@@ -271,7 +273,7 @@ async fn upload_grants_expire_and_cors_does_not_grant_account_access() {
     let reply = call(
         &app,
         Method::POST,
-        "/v1/sessions/session/attachment-grants",
+        "/v1/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attachment-grants",
         Some(&token),
         "grant",
         br#"{"content_type":"application/pdf","bytes":12}"#,
@@ -288,6 +290,7 @@ async fn upload_grants_expire_and_cors_does_not_grant_account_access() {
             .oneshot(
                 Request::builder()
                     .method(Method::OPTIONS)
+                    .header("access-control-request-method", "PUT")
                     .uri(&path)
                     .header("origin", origin)
                     .body(Body::empty())
@@ -327,11 +330,15 @@ async fn attachment(response: Response) -> Attachment {
 }
 
 fn read_path(attachment: &Attachment) -> String {
-    let url = url::Url::parse(attachment.media.url()).unwrap();
+    let url = url::Url::parse(match &attachment.media {
+        attachments::AttachmentMedia::Image(media) => &media.url,
+        attachments::AttachmentMedia::File(media) => &media.url,
+    })
+    .unwrap();
     format!("{}?{}", url.path(), url.query().unwrap())
 }
 
-const UPLOAD: &str = "/v1/sessions/session/attachments";
+const UPLOAD: &str = "/v1/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/attachments";
 const PDF: &[u8] = b"%PDF-1.7\nfixture";
 
 #[tokio::test]
@@ -417,9 +424,14 @@ async fn prepaid_attachments_enforce_total_cost_and_download_allowance_then_rele
         StatusCode::PAYMENT_REQUIRED
     );
     let principal = app.store.principal(&token).await.unwrap();
-    attachments::revoke(&app, &principal, "session", &file.id)
-        .await
-        .unwrap();
+    attachments::revoke(
+        &app,
+        &principal,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        &file.id,
+    )
+    .await
+    .unwrap();
     objects.fail_delete.store(true, Ordering::SeqCst);
     assert_eq!(attachments::maintain(&app).await.unwrap().failed, 1);
     assert!(
@@ -529,7 +541,10 @@ async fn session_deletion_during_upload_prevents_publication_and_maintenance_def
     });
     objects.written.notified().await;
     assert_eq!(attachments::maintain(&app).await.unwrap().deleted, 0);
-    app.store.mark_deleting("session").await.unwrap();
+    app.store
+        .mark_deleting("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .unwrap();
     objects.resume.notify_one();
     assert_eq!(running.await.unwrap().status(), StatusCode::CONFLICT);
     let state: String = sqlx::query_scalar("SELECT state FROM attachments")
@@ -835,7 +850,10 @@ async fn account_quota_is_atomic_and_session_deletion_revokes_reads() {
             .status(),
         StatusCode::NOT_FOUND
     );
-    app.store.mark_deleting("session").await.unwrap();
+    app.store
+        .mark_deleting("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .unwrap();
     assert_eq!(attachments::maintain(&app).await.unwrap().deleted, 2);
     assert!(objects.bytes.lock().unwrap().is_empty());
 }

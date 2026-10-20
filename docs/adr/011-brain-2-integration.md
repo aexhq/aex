@@ -1,6 +1,6 @@
 # ADR 011 Aex integration with Brain 2.0
 
-Status: **Accepted for implementation**, 2026-10-19; originally proposed 2026-10-18. This is an integration design, not an implemented migration.
+Status: **Accepted; implemented in the Brain 2.1 integration**, 2026-10-20. Production cutover and publication evidence remain tracked on the [roadmap](../../ROADMAP.md). The source-baseline tables below describe the pre-migration inspection.
 
 ## Integration prerequisites selected on 2026-10-19
 

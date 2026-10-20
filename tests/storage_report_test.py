@@ -13,14 +13,13 @@ class MeterTests(unittest.TestCase):
     def test_counts_session_state_without_charging_shared_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "format").write_text("brain-data/3\n")
+            (root / "metadata.sqlite").write_bytes(b"shared metadata")
             (root / "sessions/ses_test").mkdir(parents=True)
-            (root / "sessions/ses_test/journal").write_bytes(b"state")
-            (root / "agentloops/pi/ses_test").mkdir(parents=True)
-            (root / "agentloops/pi/ses_test/native.json").write_bytes(b"native")
-            (root / "agentloops/pi/identity.json").write_bytes(b"shared runtime identity")
-            (root / "agentloops/codex/ses_other").mkdir(parents=True)
-            (root / "agentloops/codex/ses_other/native.json").write_bytes(b"other")
+            (root / "sessions/ses_test/events.jsonl").write_bytes(b"state")
+            (root / "sessions/ses_test/native").mkdir(parents=True)
+            (root / "sessions/ses_test/native/native.json").write_bytes(b"native")
+            (root / "sessions/ses_other/native").mkdir(parents=True)
+            (root / "sessions/ses_other/native/native.json").write_bytes(b"other")
             (root / "server-metadata").write_bytes(b"secret")
             self.assertEqual(meter.measure(root), {"ses_test": 11, "ses_other": 5})
 
@@ -34,9 +33,9 @@ class MeterTests(unittest.TestCase):
     def test_native_links_count_the_link_without_following_its_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "format").write_text("brain-data/3\n")
+            (root / "metadata.sqlite").write_bytes(b"shared metadata")
             (root / "sessions").mkdir()
-            native = root / "agentloops/codex/ses_test"
+            native = root / "sessions/ses_test/native"
             native.mkdir(parents=True)
             outside = root / "outside"
             outside.mkdir()

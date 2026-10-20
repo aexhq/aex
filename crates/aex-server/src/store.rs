@@ -1,7 +1,7 @@
 use crate::{
     config::Limits,
     error::{Error, Result},
-    identity::{Principal, digest, matches, random},
+    identity::{Principal, digest, random},
 };
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -57,42 +57,14 @@ impl Store {
             Err(Error::denied())
         }
     }
-    pub async fn host(&self, id: &str, token: &str) -> Result<Principal> {
-        let row = sqlx::query("SELECT account,issuing_key,verifier FROM hosts WHERE id=$1")
-            .bind(id)
-            .fetch_optional(&self.0)
-            .await?
-            .ok_or_else(Error::denied)?;
-        if !matches(token, row.get("verifier")) {
-            return Err(Error::denied());
-        }
-        let p = Principal {
-            account: row.get("account"),
-            key: row.get("issuing_key"),
-        };
-        self.active(&p).await?;
-        Ok(p)
-    }
-    pub async fn own_host(&self, p: &Principal, id: &str) -> Result<()> {
-        let key: Option<String> =
-            sqlx::query_scalar("SELECT issuing_key FROM hosts WHERE id=$1 AND account=$2")
-                .bind(id)
-                .bind(&p.account)
-                .fetch_optional(&self.0)
-                .await?;
-        self.active(&Principal {
-            account: p.account.clone(),
-            key: key.ok_or_else(Error::missing)?,
-        })
-        .await
-    }
     pub async fn owned(&self, p: &Principal, id: &str, deleting: bool) -> Result<()> {
-        let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM sessions WHERE id=$1 AND account=$2")
-                .bind(id)
-                .bind(&p.account)
-                .fetch_optional(&self.0)
-                .await?;
+        let state: Option<String> = sqlx::query_scalar(
+            "SELECT state FROM sessions WHERE id=$1 AND account=$2 AND runtime='brain'",
+        )
+        .bind(id)
+        .bind(&p.account)
+        .fetch_optional(&self.0)
+        .await?;
         match state.as_deref() {
             Some("owned") => Ok(()),
             Some("deleting" | "deleted") if deleting => Ok(()),
@@ -101,7 +73,7 @@ impl Store {
     }
     pub async fn session_ids(&self, account: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
-            "SELECT id FROM sessions WHERE account=$1 AND state='owned' ORDER BY created,id",
+            "SELECT id FROM sessions WHERE account=$1 AND state='owned' AND runtime='brain' ORDER BY created,id",
         )
         .bind(account)
         .fetch_all(&self.0)
@@ -151,12 +123,12 @@ impl Store {
             return Err(Error::capacity());
         }
         if operation == "create" {
-            let count: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM sessions WHERE account=$1 AND state!='deleted') + (SELECT count(*) FROM claims WHERE account=$2 AND operation='create' AND state='pending')")
+            let count: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM sessions WHERE account=$1 AND state!='deleted' AND runtime='brain') + (SELECT count(*) FROM claims WHERE account=$2 AND operation='create' AND state='pending')")
                 .bind(&p.account).bind(&p.account).fetch_one(&mut **tx).await?;
             if count >= i64::from(limits.sessions_per_account) {
                 return Err(Error::capacity());
             }
-            let bytes: i64 = sqlx::query_scalar("SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions WHERE account=$1 AND state!='deleted'").bind(&p.account).fetch_one(&mut **tx).await?;
+            let bytes: i64 = sqlx::query_scalar("SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions WHERE account=$1 AND state!='deleted' AND runtime='brain'").bind(&p.account).fetch_one(&mut **tx).await?;
             if (bytes as u64)
                 .saturating_add((count as u64 + 1).saturating_mul(limits.turn_reserve_bytes))
                 > limits.retained_bytes_per_account
@@ -180,14 +152,14 @@ impl Store {
         &self,
         p: &Principal,
         upstream: &str,
-        summary: &brain_protocol::SessionSummary,
+        summary: &crate::brain_contract::Session,
         initial_bytes: u64,
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
         sqlx::query(
-            "INSERT INTO sessions(id,account,created,retained_bytes,changed_at,model_observed_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            "INSERT INTO sessions(id,account,created,retained_bytes,changed_at,model_observed_at,runtime) VALUES ($1,$2,$3,$4,$5,$6,'brain')",
         )
-        .bind(summary.session_id.as_str())
+        .bind(summary.id.as_str())
         .bind(&p.account)
         .bind(now())
         .bind(initial_bytes as i64)
@@ -198,33 +170,24 @@ impl Store {
         sqlx::query(
             "UPDATE claims SET state='complete',result=$1 WHERE upstream_key=$2 AND state='pending'",
         )
-        .bind(serde_json::to_string(summary)?)
+        .bind(serde_json::to_string(&serde_json::json!({"status":201,"body":summary}))?)
         .bind(upstream)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE http_grants SET session=$1 WHERE operation=$2 AND session IS NULL")
-            .bind(summary.session_id.as_str())
+        sqlx::query("UPDATE tool_grants SET session=$1 WHERE operation=$2 AND session IS NULL")
+            .bind(&summary.id)
             .bind(upstream)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE client_grants SET session=$1 WHERE verifier=(SELECT client_key FROM claims WHERE upstream_key=$2) AND account=$3 AND session IS NULL")
-            .bind(summary.session_id.as_str()).bind(upstream).bind(&p.account).execute(&mut *tx).await?;
+        for binding in summary.config.bindings.as_deref().unwrap_or_default() {
+            if let Some(executor) = &binding.executor {
+                let owned=sqlx::query("UPDATE executors SET session=$1 WHERE id=$2 AND account=$3 AND session IS NULL").bind(&summary.id).bind(executor).bind(&p.account).execute(&mut *tx).await?;
+                if owned.rows_affected() != 1 {
+                    return Err(Error::conflict("executor was already bound or revoked"));
+                }
+            }
+        }
         tx.commit().await?;
-        Ok(())
-    }
-    pub async fn register_host(
-        &self,
-        p: &Principal,
-        host: &brain_protocol::HostRegistration,
-    ) -> Result<()> {
-        sqlx::query("INSERT INTO hosts VALUES ($1,$2,$3,$4,$5)")
-            .bind(host.host_id.as_str())
-            .bind(&p.account)
-            .bind(&p.key)
-            .bind(digest(host.token.as_bytes()))
-            .bind(now())
-            .execute(&self.0)
-            .await?;
         Ok(())
     }
     pub async fn reserve_turn(
@@ -248,7 +211,7 @@ impl Store {
     ) -> Result<bool> {
         Self::lock_account(tx, &p.account).await?;
         let existing: Option<String> = sqlx::query_scalar(
-            "SELECT active_key FROM sessions WHERE id=$1 AND account=$2 AND state='owned'",
+            "SELECT active_key FROM sessions WHERE id=$1 AND account=$2 AND state='owned' AND runtime='brain'",
         )
         .bind(id)
         .bind(&p.account)
@@ -261,7 +224,7 @@ impl Store {
                 Err(Error::capacity())
             };
         }
-        let row = sqlx::query("SELECT count(active_key) AS active,coalesce(sum(retained_bytes),0)::bigint AS bytes FROM sessions WHERE account=$1 AND state!='deleted'")
+        let row = sqlx::query("SELECT count(active_key) AS active,coalesce(sum(retained_bytes),0)::bigint AS bytes FROM sessions WHERE account=$1 AND state!='deleted' AND runtime='brain'")
             .bind(&p.account).fetch_one(&mut **tx).await?;
         if row.get::<i64, _>("active") >= i64::from(limits.active_turns_per_account)
             || (row.get::<i64, _>("bytes") as u64).saturating_add(limits.turn_reserve_bytes)
@@ -311,16 +274,32 @@ impl Store {
     }
     pub async fn finish_delete(&self, id: &str) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("DELETE FROM http_grants WHERE session=$1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE browser_grants SET active=FALSE,composition='{}',tools='[]' WHERE session=$1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(
             "UPDATE sessions SET state='deleted',active_key=NULL,retained_bytes=0 WHERE id=$1",
         )
         .bind(id)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM executors WHERE session=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        let removed=serde_json::json!({"status":410,"body":{"error":{"code":"not_found","message":"session was deleted"}}}).to_string();
+        sqlx::query("UPDATE claims SET result=$1 WHERE operation=$2 OR (operation='create' AND result::jsonb->'body'->>'id'=$3)").bind(removed).bind(format!("message:{id}")).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE brain_turns SET accepted=NULL WHERE session=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE tool_grants SET parameters='{}',profile=NULL WHERE session=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -414,14 +393,6 @@ impl Store {
                 .await?,
         )
     }
-    pub async fn host_count(&self, account: &str) -> Result<i64> {
-        Ok(
-            sqlx::query_scalar("SELECT count(*) FROM hosts WHERE account=$1")
-                .bind(account)
-                .fetch_one(&self.0)
-                .await?,
-        )
-    }
     pub async fn contains_session(&self, id: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions WHERE id=$1")
             .bind(id)
@@ -431,7 +402,7 @@ impl Store {
     }
     pub async fn expired_sessions(&self, retention_secs: u64) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
-            "SELECT id FROM sessions WHERE state='deleting' OR (state='owned' AND created < $1)",
+            "SELECT id FROM sessions WHERE runtime='brain' AND (state='deleting' OR (state='owned' AND created < $1))",
         )
         .bind(now().saturating_sub(retention_secs as i64))
         .fetch_all(&self.0)
@@ -457,16 +428,9 @@ impl Store {
             .bind(account).bind(client_key).execute(&self.0).await?;
         Ok(())
     }
-    pub async fn forget_host(&self, host: &str) -> Result<()> {
-        sqlx::query("DELETE FROM hosts WHERE id=$1")
-            .bind(host)
-            .execute(&self.0)
-            .await?;
-        Ok(())
-    }
     pub async fn inspect(&self) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
         use serde_json::json;
-        let accounts = sqlx::query("SELECT a.id,a.active,(SELECT count(*) FROM sessions s WHERE s.account=a.id AND s.state!='deleted') AS sessions,(SELECT count(active_key) FROM sessions s WHERE s.account=a.id AND s.state!='deleted') AS active_turns,(SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions s WHERE s.account=a.id AND s.state!='deleted') AS retained_bytes FROM accounts a").fetch_all(&self.0).await?.iter().map(|r| json!({"account":r.get::<String,_>("id"),"active":r.get::<i64,_>("active")==1,"sessions":r.get::<i64,_>("sessions"),"active_turns":r.get::<i64,_>("active_turns"),"retained_bytes":r.get::<i64,_>("retained_bytes")})).collect();
+        let accounts = sqlx::query("SELECT a.id,a.active,(SELECT count(*) FROM sessions s WHERE s.account=a.id AND s.state!='deleted' AND s.runtime='brain') AS sessions,(SELECT count(active_key) FROM sessions s WHERE s.account=a.id AND s.state!='deleted' AND s.runtime='brain') AS active_turns,(SELECT coalesce(sum(retained_bytes),0)::bigint FROM sessions s WHERE s.account=a.id AND s.state!='deleted' AND s.runtime='brain') AS retained_bytes FROM accounts a").fetch_all(&self.0).await?.iter().map(|r| json!({"account":r.get::<String,_>("id"),"active":r.get::<i64,_>("active")==1,"sessions":r.get::<i64,_>("sessions"),"active_turns":r.get::<i64,_>("active_turns"),"retained_bytes":r.get::<i64,_>("retained_bytes")})).collect();
         let claims = sqlx::query("SELECT account,operation,client_key,created FROM claims WHERE state='pending'").fetch_all(&self.0).await?.iter().map(|r| json!({"account":r.get::<String,_>("account"),"operation":r.get::<String,_>("operation"),"client_key":r.get::<String,_>("client_key"),"created":r.get::<i64,_>("created")})).collect();
         Ok((accounts, claims))
     }

@@ -57,11 +57,16 @@ async fn app() -> (tempfile::TempDir, App, Principal, String) {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     (directory, app, p, token)
 }
-fn summary(id: &str) -> brain_protocol::SessionSummary {
-    brain_protocol::SessionSummary {
-        session_id: brain_protocol::SessionId::new(id),
-        status: brain_protocol::SessionStatus::Idle,
-        last_sequence: 1,
+fn summary(id: &str) -> aex_server::brain_contract::Session {
+    aex_server::brain_contract::Session {
+        id: id.into(),
+        harness: "pi".into(),
+        status: "idle".into(),
+        config: aex_server::brain_contract::SessionConfig {
+            model: "openai/gpt-4.1-mini".into(),
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -87,13 +92,13 @@ async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() 
     let count = Arc::new(AtomicUsize::new(0));
     let calls = count.clone();
     let upstream = Router::new()
-        .route("/v1/sessions/session", get(|| async { Json(summary("session")) }))
-        .route("/v1/sessions/session/messages", post(move || {
+        .route("/sessions/session", get(|| async { Json(summary("session")) }))
+        .route("/sessions/session/events", post(move || {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             async move {
                 match n {
-                    0 => (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"code":"overloaded","message":"busy","retryable":true,"details":{"admission":"rejected"}}))),
-                    1 => (StatusCode::ACCEPTED, Json(serde_json::json!({"sequence":2}))),
+                    0 => (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({"error":{"code":"overloaded","message":"busy"}}))),
+                    1 => (StatusCode::ACCEPTED, Json(serde_json::json!({"id":"input","cursor":"cursor:accepted","time":"2026-10-20T00:00:00Z","type":"user.message","data":{"text":"read"}}))),
                     _ => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"code":"ambiguous","message":"lost response","retryable":false}))),
                 }
             }
@@ -108,7 +113,8 @@ async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() 
         headers.insert("idempotency-key", key.parse().unwrap());
         headers
     };
-    let body = axum::body::Bytes::from_static(br#"{"input":{"message":"read"}}"#);
+    let body =
+        axum::body::Bytes::from_static(br#"{"type":"user.message","text":"read","key":"retry"}"#);
     assert!(
         aex_server::turns::send(&app, &p, "session", &headers("retry"), body.clone())
             .await
@@ -119,7 +125,7 @@ async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() 
     let rejected = aex_server::turns::send(&app, &p, "session", &headers("retry"), body.clone())
         .await
         .unwrap();
-    assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(rejected.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT state FROM claims WHERE client_key='retry'")
             .fetch_one(&app.store.0)
@@ -130,7 +136,8 @@ async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() 
     app.store = Store::open(&common::database(dir.path()).await)
         .await
         .unwrap();
-    let changed = axum::body::Bytes::from_static(br#"{"input":{"message":"write"}}"#);
+    let changed =
+        axum::body::Bytes::from_static(br#"{"type":"user.message","text":"write","key":"retry"}"#);
     assert!(
         aex_server::turns::send(&app, &p, "session", &headers("retry"), changed)
             .await
@@ -147,15 +154,27 @@ async fn rejected_turn_keys_retry_after_restart_but_unknown_dispatches_do_not() 
     }
     assert_eq!(count.load(Ordering::SeqCst), 2);
     app.store.finish_turn("session").await.unwrap();
-    for _ in 0..2 {
-        assert_eq!(
-            aex_server::turns::send(&app, &p, "session", &headers("uncertain"), body.clone())
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::BAD_GATEWAY
-        );
-    }
+    let uncertain = axum::body::Bytes::from_static(
+        br#"{"type":"user.message","text":"read","key":"uncertain"}"#,
+    );
+    assert_eq!(
+        aex_server::turns::send(
+            &app,
+            &p,
+            "session",
+            &headers("uncertain"),
+            uncertain.clone()
+        )
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::BAD_GATEWAY
+    );
+    assert!(
+        aex_server::turns::send(&app, &p, "session", &headers("uncertain"), uncertain)
+            .await
+            .is_err()
+    );
     assert_eq!(count.load(Ordering::SeqCst), 3);
     server.abort();
 }
@@ -239,13 +258,9 @@ async fn concurrent_create_reservations_cannot_exceed_account_limit() {
 #[tokio::test]
 async fn keys_and_hosts_follow_revocation_and_suspension_after_restart() {
     let (dir, app, p, token) = app().await;
-    let host = brain_protocol::HostRegistration {
-        host_id: brain_protocol::HostId::new("host_test"),
-        token: "host-secret".into(),
-    };
-    app.store.register_host(&p, &host).await.unwrap();
-    assert!(app.store.host("host_test", "wrong").await.is_err());
-    assert!(app.store.host("host_test", "host-secret").await.is_ok());
+    sqlx::query("INSERT INTO executors(id,account,issuing_key,verifier,created) VALUES('host_test',$1,$2,$3,0)").bind(&p.account).bind(&p.key).bind(digest(b"host-secret")).execute(&app.store.0).await.unwrap();
+    assert!(app.store.executor("host_test", "wrong").await.is_err());
+    assert!(app.store.executor("host_test", "host-secret").await.is_ok());
     execute(&app, Operation::RevokeKey { key: p.key })
         .await
         .unwrap();
@@ -253,7 +268,7 @@ async fn keys_and_hosts_follow_revocation_and_suspension_after_restart() {
         .await
         .unwrap();
     assert!(reopened.principal(&token).await.is_err());
-    assert!(reopened.host("host_test", "host-secret").await.is_err());
+    assert!(reopened.executor("host_test", "host-secret").await.is_err());
     let values: Vec<String> = sqlx::query_scalar("SELECT verifier FROM api_keys")
         .fetch_all(&reopened.0)
         .await
@@ -273,7 +288,7 @@ async fn every_session_route_denies_another_account_before_contacting_brain() {
         panic!()
     };
     app.store
-        .complete_create(&p, &key, &summary("ses_owned"), 10)
+        .complete_create(&p, &key, &summary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 10)
         .await
         .unwrap();
     let account = execute(&app, Operation::CreateAccount).await.unwrap()["account"]
@@ -288,19 +303,19 @@ async fn every_session_route_denies_another_account_before_contacting_brain() {
         .to_string();
     for (method, suffix) in [
         ("GET", ""),
-        ("GET", "/transcript"),
         ("GET", "/events"),
-        ("POST", "/messages"),
-        ("POST", "/cancel"),
-        ("POST", "/end"),
-        ("POST", "/environments"),
+        ("POST", "/events"),
+        ("POST", "/resume"),
+        ("POST", "/close"),
         ("DELETE", ""),
     ] {
         let response = aex_server::http::router(app.clone())
             .oneshot(
                 Request::builder()
                     .method(method)
-                    .uri(format!("/v1/sessions/ses_owned{suffix}"))
+                    .uri(format!(
+                        "/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa{suffix}"
+                    ))
                     .header("authorization", format!("Bearer {other}"))
                     .body(Body::empty())
                     .unwrap(),
@@ -311,7 +326,7 @@ async fn every_session_route_denies_another_account_before_contacting_brain() {
     }
     for path in [
         "/operate",
-        "/v1/sessions/ses_owned/executions/1/call",
+        "/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/executions/1/call",
         "/v1/sessions/%2E%2E/hosts",
     ] {
         let response = aex_server::http::router(app.clone())
@@ -341,14 +356,35 @@ async fn deleting_retains_ownership_and_denies_new_work_until_confirmed() {
         panic!()
     };
     app.store
-        .complete_create(&p, &key, &summary("ses_owned"), 10)
+        .complete_create(&p, &key, &summary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 10)
         .await
         .unwrap();
-    app.store.mark_deleting("ses_owned").await.unwrap();
-    assert!(app.store.owned(&p, "ses_owned", false).await.is_err());
-    assert!(app.store.owned(&p, "ses_owned", true).await.is_ok());
-    app.store.finish_delete("ses_owned").await.unwrap();
-    assert!(!app.store.mark_deleting("ses_owned").await.unwrap());
+    app.store
+        .mark_deleting("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .unwrap();
+    assert!(
+        app.store
+            .owned(&p, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false)
+            .await
+            .is_err()
+    );
+    assert!(
+        app.store
+            .owned(&p, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true)
+            .await
+            .is_ok()
+    );
+    app.store
+        .finish_delete("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .unwrap();
+    assert!(
+        !app.store
+            .mark_deleting("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -372,22 +408,37 @@ async fn stale_meter_and_disk_pressure_fail_admission_without_resetting_reservat
         panic!()
     };
     app.store
-        .complete_create(&p, &key, &summary("ses_owned"), 10)
+        .complete_create(&p, &key, &summary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 10)
         .await
         .unwrap();
     app.store
-        .reserve_turn(&p, "ses_owned", "turn", &app.config.limits)
+        .reserve_turn(
+            &p,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "turn",
+            &app.config.limits,
+        )
         .await
         .unwrap();
     assert!(
         app.store
-            .reserve_turn(&p, "ses_owned", "turn", &app.config.limits)
+            .reserve_turn(
+                &p,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "turn",
+                &app.config.limits
+            )
             .await
             .is_err()
     );
     assert!(
         app.store
-            .reserve_turn(&p, "ses_owned", "different", &app.config.limits)
+            .reserve_turn(
+                &p,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "different",
+                &app.config.limits
+            )
             .await
             .is_err()
     );
@@ -432,79 +483,65 @@ fn configuration_and_routes_fail_closed() {
 #[tokio::test]
 async fn hosted_policy_delegates_models_and_rejects_customer_code_endpoints_and_ambient_grants() {
     let (_dir, app, p, _) = app().await;
-    let base = serde_json::json!({"agentloop":{"name":"pi","configuration":{}},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
+    let base = serde_json::json!({"harness":"pi","config":{"model":"openai/gpt-4.1-mini","tools":[]},"model_credential":{"api_key":"model-secret"}});
     for name in ["pi", "codex", "opencode"] {
         let mut value = base.clone();
-        value["agentloop"] =
-            serde_json::json!({"name": name, "configuration": {"contextWindow": 200000}});
-        let request = serde_json::from_value(value).unwrap();
+        value["harness"] = serde_json::json!(name);
         assert!(
-            aex_server::admission::create(&app, &p, &request)
+            aex_server::admission::create(&app, &p, &serde_json::from_value(value).unwrap())
                 .await
                 .is_ok()
         );
     }
-    for field in ["command", "args", "implementation", "environment"] {
-        let mut value = base.clone();
-        value["agentloop"][field] = serde_json::json!("customer-selected");
-        assert!(serde_json::from_value::<brain_protocol::CreateSessionRequest>(value).is_err());
-    }
-    for provider in ["openai", "deepseek", "customer-provider"] {
-        let mut request = base.clone();
-        request["model"]["provider"] = serde_json::json!(provider);
-        let request = serde_json::from_value(request).unwrap();
-        assert!(
-            aex_server::admission::create(&app, &p, &request)
-                .await
-                .is_ok(),
-            "Brain validates {provider}"
-        );
-    }
-    for (pointer, value) in [
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain","lifecycle":"automatic","template":{"max_instances":2,"configuration_schema":true}}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain","lifecycle":"automatic","methods":{"inspect":{"effect":"replace","description":"Inspect","input_schema":true}}}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","driver":"brain"}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"network":["http://169.254.169.254"]}}]),
-        ),
-        ("/agentloop/name", serde_json::json!("unregistered")),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"filesystem":{"workspace":"write"}}}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"brain","configuration":{"secrets":["AEX_OPERATOR_TOKEN"]}}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"http","url":"http://169.254.169.254"}]),
-        ),
-        (
-            "/environments",
-            serde_json::json!([{"name":"brain","lifecycle":"automatic", "driver":"host","host_id":"host_another_account"}]),
-        ),
+    for field in [
+        "command",
+        "args",
+        "implementation",
+        "environment",
+        "endpoint",
+        "environments",
     ] {
-        let mut value_request = base.clone();
-        *value_request.pointer_mut(pointer).unwrap() = value;
-        let request = serde_json::from_value(value_request).unwrap();
+        let mut value = base.clone();
+        value["config"][field] = serde_json::json!("customer-selected");
         assert!(
-            aex_server::admission::create(&app, &p, &request)
-                .await
-                .is_err(),
-            "{pointer}"
+            serde_json::from_value::<aex_server::brain_contract::CreateSession>(value).is_err()
         );
     }
+    for model in ["deepseek/unknown", "customer-provider/model"] {
+        let mut value = base.clone();
+        value["config"]["model"] = serde_json::json!(model);
+        assert!(
+            aex_server::admission::create(&app, &p, &serde_json::from_value(value).unwrap())
+                .await
+                .is_err()
+        );
+    }
+    for binding in [
+        serde_json::json!({"alias":"x","provider":"unknown","operations":["read"],"parameters":{"endpoint":"http://169.254.169.254"}}),
+        serde_json::json!({"alias":"x","executor":"another-account","runtime":[{"name":"read","description":"Read","input_schema":{}}]}),
+    ] {
+        let mut value = base.clone();
+        value["config"]["bindings"] = serde_json::json!([binding]);
+        assert!(
+            aex_server::admission::create(&app, &p, &serde_json::from_value(value).unwrap())
+                .await
+                .is_err()
+        );
+    }
+    let mut value = base.clone();
+    value["config"]["tools"] = serde_json::json!(["ambient-tool"]);
+    assert!(
+        aex_server::admission::create(&app, &p, &serde_json::from_value(value).unwrap())
+            .await
+            .is_err()
+    );
+    let mut value = base;
+    value["model_credential"] = serde_json::json!({"reference":"AEX_OPERATOR_TOKEN"});
+    assert!(
+        aex_server::admission::create(&app, &p, &serde_json::from_value(value).unwrap())
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -519,31 +556,42 @@ async fn a_storage_scan_cannot_release_an_active_or_newer_turn_reservation() {
         panic!()
     };
     app.store
-        .complete_create(&p, &key, &summary("ses_owned"), 10)
+        .complete_create(&p, &key, &summary("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 10)
         .await
         .unwrap();
     app.store
-        .reserve_turn(&p, "ses_owned", "turn", &app.config.limits)
+        .reserve_turn(
+            &p,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "turn",
+            &app.config.limits,
+        )
         .await
         .unwrap();
-    let reserved: i64 =
-        sqlx::query_scalar("SELECT retained_bytes FROM sessions WHERE id='ses_owned'")
-            .fetch_one(&app.store.0)
-            .await
-            .unwrap();
+    let reserved: i64 = sqlx::query_scalar(
+        "SELECT retained_bytes FROM sessions WHERE id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+    )
+    .fetch_one(&app.store.0)
+    .await
+    .unwrap();
     execute(
         &app,
         Operation::ReportUsage {
             observed_at: aex_server::store::now(),
-            sessions: std::collections::BTreeMap::from([("ses_owned".into(), 0)]),
+            sessions: std::collections::BTreeMap::from([(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                0,
+            )]),
         },
     )
     .await
     .unwrap();
-    let after: i64 = sqlx::query_scalar("SELECT retained_bytes FROM sessions WHERE id='ses_owned'")
-        .fetch_one(&app.store.0)
-        .await
-        .unwrap();
+    let after: i64 = sqlx::query_scalar(
+        "SELECT retained_bytes FROM sessions WHERE id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+    )
+    .fetch_one(&app.store.0)
+    .await
+    .unwrap();
     assert_eq!(after, reserved);
     assert!(after >= app.config.limits.turn_reserve_bytes as i64);
 }

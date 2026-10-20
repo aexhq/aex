@@ -1,153 +1,30 @@
-# Run tools in a managed environment
+# Managed tools
 
-For short functions in an existing application API, use [HTTP tools](http-tools.md).
+Managed tools let an agent use an account-authorized service while your application disconnects. Call `await aex.tools()` for the deployed catalog. The deployment chooses operations, account grants, quotas and immutable resource profiles.
 
-Use a managed environment when your tools need Python, dependencies or a temporary workspace
-on Aex. They can keep running after the request that submitted the work has ended.
-
-First complete the [quickstart](quickstart.md), then call `await aex.environments.list()`.
-Choose a profile and command that your account's catalog actually lists. Profiles are granted
-to accounts; this API does not upload your own code or accept arbitrary commands and images.
-
-Managed compute requires accepted prices, prepaid credits and a per-operation cost ceiling.
-Install `@aexhq/env-modal@0.5.10` and `@aexhq/agentloop-codex@11.0.0` for the example below.
-Replace `python-v1` and `calculate` with your catalog's profile and command, including its input schema.
-
-```ts
-import { Aex, tool } from "@aexhq/sdk";
-import { codex } from "@aexhq/agentloop-codex";
-import { modal } from "@aexhq/env-modal";
-import { z } from "zod";
-
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY!, maxCostMicroUsd: 100_000 });
-try {
-  const catalog = await aex.environments.list();
-  const workspace = modal({ name: "analysis", url: catalog.driver_url, profile: "python-v1", lifetimeMs: 300_000 });
-  const calculate = tool({ name: "calculate", description: "Calculate a result",
-    input: z.object({ value: z.number() }),
-    implementation: { type: "modal_command", name: "calculate", configuration: { context: "application-owned" } },
-  });
-  const session = await aex.sessions.create({
-    agentloop: codex(),
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.OPENAI_API_KEY! },
-    tools: [calculate({ env: workspace })],
-  }, { idempotencyKey: "create-analysis-once" });
-  const sequence = await session.submit("Calculate a result for 42.", { idempotencyKey: "turn-once" });
-  console.log({ session: session.id, after: sequence });
-} finally { await aex.close(); }
+```js
+import { ManagedTool } from "@aexhq/sdk";
+const tools = [
+  ManagedTool("session", { operations: ["inspect", "history"] }),
+  ManagedTool("sandbox", {
+    operations: ["create", "exec", "inspect", "terminate"],
+    parameters: { profile: "YOUR_AUTHORIZED_PROFILE", lifetime_ms: 60000 },
+  }),
+];
 ```
 
-Use an ID returned in **your account's catalog** and a command it publishes. The example profile
-is illustrative. Profiles are explicitly granted to accounts. Aex replaces the catalog driver
-with its private controller and a sealed credential; clients never receive that credential.
-Tool configuration is application data bound at creation. It cannot change the profile's grants.
+Pass `tools` to `aex.sessions.create(...)`. The application chooses the profile and maximum lifetime; the model cannot change them. Aex reserves prepaid capacity before creating the session. The sandbox provider runs a fixed 1 CPU / 1 GiB allocation with the profile's image and network policy. Commands have bounded duration and output.
 
-Use `session.send()` when the caller can wait for the answer. Use `submit()` for a short-lived
-request, then reconnect with `aex.sessions.get(sessionId)` and read `session.transcript()` or
-`session.stream(after)`. The sequence identifies the submitted turn. Keep the last event sequence for incremental updates.
+The managed `browser` provider offers `browse` actions through an isolated remote Chromium context. Its network origins are installed by the operator. This is separate from [tools in an attached user tab](client-browser.md).
 
-The Modal extension owns its factory, provider options and provisioning. Aex adds account
-authorization and billing around the Environment protocol. There is no Aex deploy command
-or application scaffold to learn; prepare code through the chosen provider's existing tools.
+The `session` provider inspects only the session to which it is bound. The model cannot supply another account or session ID. History uses opaque cursors and bounded pages. Installed `mcp` servers have fixed endpoints; endpoint selection is not model input.
 
-Commands receive `{input, configuration, invocation: {sessionId, environment, sequence}}` on stdin
-and return one JSON value on stdout. `configuration` is `null` unless supplied in the implementation.
-A run-scoped application callback can persist business results; keep database administrator,
-model, Modal, Stripe and AWS credentials outside the sandbox. The command must validate its input
-and scoped configuration. Brain's privileged invocation callback is not passed to the process.
+[Application tools](http-tools.md) connect your own HTTPS service. Client functions declared with `Tool({run})` stay in the declaring process and require its callback connection.
 
-## Lifetime and credits
+## Cleanup and uncertain outcomes
 
-### Lifecycle and diagnostics
+Sandbox allocation and command dispatch are recorded before the external action. A lost acknowledgement never triggers another allocation or command. An uncertain allocation is reconciled by its provider tag. Removing a discovered resource does not establish its unknown start time; funding remains held until provider evidence is recorded.
 
-Brain prepares and closes Environments automatically by default. Set
-`environment: { lifecycle: { bindings: { workspace: "manual" } } }` when your application or a Tool should
-explicitly call `setup`. A call to an unprepared Environment returns its recorded state.
-Aex provides Agentloop runtimes at server startup.
+Session deletion revokes bindings and waits for confirmed sandbox termination, remote-browser closure and application-result removal. Retry a 409 after cleanup. Terminal sandbox receipts settle cumulative observed duration once. Missing usage remains explicitly unknown.
 
-Lifecycle policy does not expose a Tool to the model. Include `env()` from `@aexhq/env` only
-when needed, with explicit Environment grants such as `read` and `call` for `inspect`. It uses
-the same `ctx.environments` interface as any Tool; Agentloops and Environments can use that
-interface under their own grants. The session owner can also use `session.environments`.
-`get` reads journal state, while `call(reference, "inspect", {})` invokes a method supplied
-by the chosen Environment. Brain has no universal inspect or restart method.
-
-Hosted profiles and HTTP bindings each authorize one declared resource. Aex therefore rejects
-dynamic templates and replacement methods for those bindings. Caller-operated Host Environments
-can authorize Brain templates within their own resource budget. Supporting additional hosted
-instances requires product admission and billing for each instance; a Brain grant alone does
-not authorize spending. See [ADR-007](adr/007-environment-control.md).
-
-### Resource charges
-
-First-version profiles use one physical core and 1 GiB of memory, with at most 300 seconds of
-lifetime from session admission. The request's cost ceiling covers all selected environments.
-Aex commits the session claim and its credit holds atomically before contacting Brain. Insufficient
-funds, missing price acceptance, unavailable profiles or exhausted capacity deny creation first.
-Preview accounts must explicitly enroll and receive credits before using managed compute.
-
-Allocation is lazy until first use. Waiting for the model after allocation counts as sandbox time;
-unallocated time is free. Provider timeouts are rounded down to whole seconds. Cancellation,
-detach, teardown and expiry stop the entire resource, including other active commands. Its
-workspace is temporary and a stopped or lost resource is never silently replaced.
-
-A Modal configuration can set `terminateAfterTurn: true`. The extension registers cleanup
-with Brain during setup. The answer is saved before cleanup, and the Environment call and
-its result remain observable as events. The Brain session and transcript survive cleanup;
-explicit `session.end()` and deletion keep their existing meanings.
-
-The controller reports cumulative resource milliseconds and confirmed termination. Aex rates
-them using the reservation's immutable pricebook, caps the charge at the admitted lifetime, and
-releases the remainder only after terminal evidence. Repeated or delayed reports do not double
-charge. Revoked keys and suspended accounts cannot dispatch more commands; settlement remains
-available. An expired grant that never bound to a controller releases at zero cost. Bound but
-unresolved resources keep their hold until confirmed stopped.
-
-## Operator deployment
-
-The generated config schema defines `environments`: private `url`, catalog `public_url`,
-`configuration`, `active_per_account`, and a map of granted profiles. Each profile contains
-explicit `accounts` and a `specification`. Aex validates its `maxLifetimeMs` for reservations
-and passes the remaining fields through to the hosting integration. Modal's configuration
-contains `appName`; its specifications contain the image, fixed commands, CPU/memory, region,
-working directory, outbound domains, output limit and optional `terminateAfterTurn`.
-The extension validates those provider settings and commands. The Modal hosting integration
-checks the resource size against the published billing rate. Publish a new profile ID when its
-specification changes; an empty outbound list blocks sandbox network access.
-
-Set a distinct `AEX_ENVIRONMENT_TOKEN` on Aex and the controller. The controller alone also receives
-`MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and `AEX_ENVIRONMENT_DATA_DIR` on retained disk. It runs
-`node /opt/aex/environments/modal.mjs` from the Aex image, sharing a private network namespace with
-Aex and Brain so operator and driver routes remain on literal loopback. It has its own user,
-process/filesystem isolation and credential set. Production exposes only the Aex API.
-
-The narrow controller credential authorizes only `/environments/config`, `/environments/authorize`
-and `/environments/usage` on Aex's private operator listener. Profile definitions are read from Aex's
-immutable records. Reconciliation observes original resources and delivers pending usage every
-ten seconds; it never retries a possibly dispatched effect.
-
-Retain the controller's SQLite directory in the paired backup. If a create reply was lost and
-name lookup cannot establish the original resource, locate its ID in Modal. With the controller
-stopped, run `modal.mjs recover SESSION ENVIRONMENT SANDBOX_ID` against that same directory and
-configuration. It verifies original ownership tags, terminates that resource and settles usage.
-Never invent a replacement ID, drop an unresolved hold or edit financial history.
-
-## Prepare hosted code
-
-The Aex SDK prepares Tools placed in `brainEnv` before creating a session or
-issuing browser access. Preparation checks account ownership of every runtime and program,
-shares the existing artifact count and byte quotas, and cannot change operator defaults.
-A browser grant can prepare only the exact artifacts in its authorized composition.
-
-To move loading out of request handling, call `const prepared = await aex.prepare(myTool)` during
-application startup and reuse that Tool across sessions. This returns a normal placement with
-immutable implementation IDs. Imports remain passive; failures reject before session creation.
-`aex.prepareEnvironment({ tools, programs })` prepares already admitted IDs directly.
-
-Agentloops are installed and registered at server startup. `pi()`, `codex()` and `opencode()`
-select an offered runtime and pass its session settings. They do not use Environment preparation
-or accept executable paths. See [Brain's Agentloop reference](https://aex.dev/brain/docs/reference/agentloop-contract).
-
-Tool preparation stays shared across session end/deletion. A replacement
-worker restores immutable code before running; it does not replay an interrupted turn or
-recreate a lost workspace. See [Brain's Environment reference](https://aex.dev/brain/docs/reference/environment-runtime).
+There is no Environment preparation protocol, uploaded executable package or legacy-session importer. Historical resources and financial records remain available to operators through the retained pre-cutover pair.

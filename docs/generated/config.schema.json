@@ -3,12 +3,11 @@
   "title": "Config",
   "type": "object",
   "properties": {
-    "agentloops": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true
+    "application_tool_url": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "attachments": {
       "anyOf": [
@@ -36,31 +35,37 @@
     "data_dir": {
       "type": "string"
     },
-    "environments": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Config4"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "http_environments": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Config5"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "harnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
     },
     "limits": {
       "$ref": "#/$defs/Limits"
     },
     "listen": {
       "type": "string"
+    },
+    "managed_providers": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Policy"
+      }
+    },
+    "media_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
     },
     "operator_listen": {
       "type": "string"
@@ -72,35 +77,12 @@
     "operator_listen",
     "data_dir",
     "brain_url",
-    "agentloops",
+    "harnesses",
+    "models",
+    "managed_providers",
     "limits"
   ],
   "$defs": {
-    "Binding": {
-      "type": "object",
-      "properties": {
-        "timeoutMs": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "tools": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ToolDefinition"
-          }
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "url",
-        "timeoutMs",
-        "tools"
-      ]
-    },
     "Config": {
       "type": "object",
       "properties": {
@@ -218,74 +200,6 @@
         "topup_amounts_cents"
       ]
     },
-    "Config4": {
-      "type": "object",
-      "properties": {
-        "active_per_account": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "configuration": true,
-        "profiles": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/PublishedProfile"
-          }
-        },
-        "public_url": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "url",
-        "public_url",
-        "configuration",
-        "active_per_account",
-        "profiles"
-      ]
-    },
-    "Config5": {
-      "type": "object",
-      "properties": {
-        "bindings": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/PublishedBinding"
-          }
-        },
-        "public_url": {
-          "type": "string"
-        },
-        "url": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "url",
-        "public_url",
-        "bindings"
-      ]
-    },
-    "EnvironmentProfile": {
-      "type": "object",
-      "properties": {
-        "maxLifetimeMs": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": true,
-      "required": [
-        "maxLifetimeMs"
-      ]
-    },
     "Limits": {
       "type": "object",
       "properties": {
@@ -299,22 +213,12 @@
           "format": "uint32",
           "minimum": 0
         },
-        "artifact_bytes_per_account": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "artifacts_per_account": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
         "claims_per_account": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
         },
-        "hosts_per_account": {
+        "executors_per_account": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
@@ -390,7 +294,7 @@
         "accounts",
         "keys_per_account",
         "sessions_per_account",
-        "hosts_per_account",
+        "executors_per_account",
         "claims_per_account",
         "active_turns_per_account",
         "streams_per_account",
@@ -403,9 +307,7 @@
         "turn_reserve_bytes",
         "minimum_free_disk_bytes",
         "retention_secs",
-        "usage_max_age_secs",
-        "artifacts_per_account",
-        "artifact_bytes_per_account"
+        "usage_max_age_secs"
       ]
     },
     "Mode": {
@@ -413,6 +315,47 @@
       "enum": [
         "test",
         "live"
+      ]
+    },
+    "Policy": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "active_per_account": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Profile"
+          },
+          "default": {}
+        },
+        "public": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operations",
+        "active_per_account"
       ]
     },
     "Pricebook": {
@@ -449,7 +392,7 @@
         "rates"
       ]
     },
-    "PublishedBinding": {
+    "Profile": {
       "type": "object",
       "properties": {
         "accounts": {
@@ -459,37 +402,17 @@
           },
           "uniqueItems": true
         },
-        "credential_env": {
-          "type": "string"
+        "max_lifetime_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
         },
-        "specification": {
-          "$ref": "#/$defs/Binding"
-        }
+        "specification": true
       },
       "additionalProperties": false,
       "required": [
         "accounts",
-        "credential_env",
-        "specification"
-      ]
-    },
-    "PublishedProfile": {
-      "type": "object",
-      "properties": {
-        "accounts": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
-        },
-        "specification": {
-          "$ref": "#/$defs/EnvironmentProfile"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "accounts",
+        "max_lifetime_ms",
         "specification"
       ]
     },
@@ -510,31 +433,6 @@
       "required": [
         "micro_usd",
         "units"
-      ]
-    },
-    "ToolDefinition": {
-      "description": "What the model may be told about a Tool.",
-      "type": "object",
-      "properties": {
-        "description": {
-          "type": "string"
-        },
-        "input_schema": {
-          "type": "object"
-        },
-        "name": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-        },
-        "output_schema": {
-          "type": "object"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "description",
-        "input_schema"
       ]
     }
   }

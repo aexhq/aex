@@ -1,11 +1,11 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.51.0",
+  "version": "1.0.0",
   "description": "Aex account and API key management from the terminal",
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   },
   "bin": {
     "aex": "src/index.mjs"
@@ -24,7 +24,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/sdk": "0.89.0"
+    "@aexhq/sdk": "1.0.0"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

@@ -1,25 +1,7 @@
-import { Aex, hostEnv, tool } from "@aexhq/sdk";
-import { pi } from "@aexhq/agentloop-pi";
-import { z } from "zod";
-
-for (const name of ["AEX_API_KEY", "MODEL_API_KEY"]) {
-  if (!process.env[name]) throw new Error(`${name} required`);
-}
-const aex = new Aex({ ...(process.env.AEX_URL ? { baseUrl: process.env.AEX_URL } : {}), apiKey: process.env.AEX_API_KEY });
-const lookup = tool({ name: "lookup", description: "Look up an application value", input: z.object({ id: z.string() }), run: ({ id }, context) => context.finish({ id, value: "example" }) });
+import { Aex, ApiKey, Model } from "@aexhq/sdk";
+const aex = new Aex({ ...(process.env.AEX_URL ? { baseUrl: process.env.AEX_URL } : {}), apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
 try {
-  const session = await aex.sessions.create({
-    model: { provider: "openai", name: "gpt-4.1-mini", apiKey: process.env.MODEL_API_KEY },
-    agentloop: pi(),
-    tools: [lookup({ env: hostEnv({ name: "app" }) })],
-  });
-  try {
-    await session.send("Look up item 42");
-    for await (const event of session.events()) console.log(event);
-  } finally {
-    await session.end();
-    await session.delete();
-  }
-} finally {
-  await aex.close();
-}
+  const session = await aex.sessions.create({ harness: "pi", model: Model("openai/gpt-4.1-mini", ApiKey(process.env.MODEL_API_KEY)) });
+  try { console.log((await session.send("Hello")).output); }
+  finally { await session.delete(); }
+} finally { await aex.close(); }

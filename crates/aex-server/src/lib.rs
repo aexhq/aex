@@ -1,16 +1,16 @@
 pub mod account;
 pub mod admission;
-pub mod artifacts;
 pub mod attachments;
 pub mod billing;
 pub mod brain;
+pub mod brain_contract;
 pub mod clients;
 pub mod config;
-pub mod environments;
 pub mod error;
 pub mod hosts;
 pub mod http;
 pub mod identity;
+pub mod managed;
 pub mod model_usage;
 pub mod operator;
 pub mod payments;
@@ -30,6 +30,7 @@ pub struct App {
     pub attachment_storage: Option<Arc<dyn attachments::storage::Storage>>,
     pub payments: Option<Arc<payments::Stripe>>,
     pub environment_token: Option<String>,
+    pub media_token: Option<String>,
     pub attachment_uploads: Arc<tokio::sync::RwLock<()>>,
     pub brain: brain::Brain,
     pub changed: watch::Sender<u64>,
@@ -40,7 +41,6 @@ pub struct App {
     pub account_requests: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub streams: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     pub host_registration: Arc<Mutex<()>>,
-    pub artifact_admission: Arc<Mutex<()>>,
     pub operator_verifier: String,
     pub site_verifier: String,
 }
@@ -65,26 +65,33 @@ impl App {
         );
         std::fs::create_dir_all(&config.data_dir)?;
         let store = store::Store::open(&database_url).await?;
-        let environment_token =
-            if config.environments.is_some() || config.http_environments.is_some() {
-                let token = std::env::var("AEX_ENVIRONMENT_TOKEN")?;
-                anyhow::ensure!(
-                    token.len() >= 32
-                        && token != brain_token
-                        && token != operator_token
-                        && token != site_token,
-                    "Environment credential must be distinct and contain at least 32 characters"
-                );
-                if let Some(environments) = &config.environments {
-                    environments::initialize(&store, environments).await?;
-                }
-                if let Some(http) = &config.http_environments {
-                    environments::http::initialize(&store, http).await?;
-                }
-                Some(token)
-            } else {
-                None
-            };
+        let environment_token = if config.managed_providers.is_empty() {
+            None
+        } else {
+            let token = std::env::var("AEX_ENVIRONMENT_TOKEN")?;
+            anyhow::ensure!(
+                token.len() >= 32
+                    && token != brain_token
+                    && token != operator_token
+                    && token != site_token,
+                "tool service authority must be distinct"
+            );
+            Some(token)
+        };
+        let media_token = if config.media_url.is_some() {
+            let token = std::env::var("AEX_MEDIA_TOKEN")?;
+            anyhow::ensure!(
+                token.len() >= 32
+                    && token != brain_token
+                    && token != operator_token
+                    && token != site_token
+                    && environment_token.as_ref() != Some(&token),
+                "media service authority must be distinct"
+            );
+            Some(token)
+        } else {
+            None
+        };
         if let Some(billing) = &config.billing {
             billing::initialize(&store, billing).await?;
         }
@@ -120,12 +127,12 @@ impl App {
             attachment_storage,
             payments,
             environment_token,
+            media_token,
             attachment_uploads: Arc::default(),
             brain,
             changed: watch::channel(0).0,
             streams: Arc::default(),
             host_registration: Arc::default(),
-            artifact_admission: Arc::default(),
             operator_verifier: identity::digest(operator_token.as_bytes()),
             site_verifier: identity::digest(site_token.as_bytes()),
         })

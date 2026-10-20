@@ -35,12 +35,13 @@ pub enum Operation {
         account: String,
         client_key: String,
     },
-    ForgetHost {
-        host: String,
+    ForgetExecutor {
+        executor: String,
     },
     Drain,
     Resume,
     DeleteOrphan {
+        account: String,
         session: String,
     },
     ReconcileTurn {
@@ -64,21 +65,15 @@ pub enum Operation {
 }
 
 pub fn router(app: App) -> Router {
+    let limit = app.config.limits.response_bytes;
     Router::new()
         .route("/operate", post(operate))
-        .route(
-            "/environments/config",
-            get(crate::environments::configuration),
-        )
-        .route(
-            "/environments/authorize",
-            post(crate::environments::authorize),
-        )
-        .route(
-            "/environments/http/authorize",
-            post(crate::environments::http::authorize),
-        )
-        .route("/environments/usage", post(crate::environments::report))
+        .route("/tools/authorize", post(crate::managed::authorize))
+        .route("/tools/usage", post(crate::managed::report))
+        .route("/tools/pending", get(crate::managed::pending))
+        .route("/tools/cleaned", post(crate::managed::cleaned))
+        .route("/tools/journal", post(crate::managed::journal::handle))
+        .layer(axum::extract::DefaultBodyLimit::max(limit))
         .with_state(app)
 }
 
@@ -97,6 +92,9 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
     let result = match operation {
         Operation::RecordMeteredUsage { report } => {
             crate::billing::meter(&app.store, &report).await?;
+            if report.terminal {
+                sqlx::query("UPDATE tool_grants SET settled=TRUE WHERE id=$1 AND provider='sandbox' AND revoked").bind(&report.reservation).execute(&app.store.0).await?;
+            }
             json!({"recorded":true})
         }
         Operation::AdjustCredits {
@@ -111,30 +109,39 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
         }
         Operation::Orphans => {
             require_drained(app)?;
-            let response = app
-                .brain
-                .request(
-                    Method::GET,
-                    "/v1/sessions",
-                    &HeaderMap::new(),
-                    Bytes::new(),
-                    None,
-                    None,
-                )
+            let accounts: Vec<String> = sqlx::query_scalar("SELECT id FROM accounts")
+                .fetch_all(&app.store.0)
                 .await?;
-            if !response.status().is_success() {
-                return Err(Error::ambiguous());
-            }
-            let inventory: brain_protocol::SessionList =
-                serde_json::from_slice(&app.brain.bytes(response).await?)?;
             let mut orphans = Vec::new();
-            for session in inventory.sessions {
-                if !app
-                    .store
-                    .contains_session(session.session_id.as_str())
-                    .await?
-                {
-                    orphans.push(session.session_id);
+            for account in accounts {
+                let mut after = String::new();
+                loop {
+                    let response = app
+                        .brain
+                        .request(
+                            Method::GET,
+                            &format!("/sessions?limit=1000&after={after}"),
+                            &HeaderMap::new(),
+                            Bytes::new(),
+                            &account,
+                            None,
+                        )
+                        .await?;
+                    if !response.status().is_success() {
+                        return Err(Error::ambiguous());
+                    }
+                    let inventory: crate::brain_contract::SessionList =
+                        serde_json::from_slice(&app.brain.bytes(response).await?)?;
+                    let count = inventory.sessions.len();
+                    for session in inventory.sessions {
+                        after = session.id.clone();
+                        if !app.store.contains_session(&session.id).await? {
+                            orphans.push(json!({"account":account,"session":session.id}));
+                        }
+                    }
+                    if count < 1000 {
+                        break;
+                    }
                 }
             }
             json!({"sessions":orphans})
@@ -154,7 +161,7 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
         }
         Operation::Maintain => {
             let turns = crate::turns::maintain(app).await?;
-            crate::environments::maintain(app).await?;
+            crate::managed::maintain(app).await?;
             let mut deleted = 0;
             for id in app
                 .store
@@ -201,8 +208,11 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
             app.store.resolve_create(&account, &client_key).await?;
             json!({"resolved":true})
         }
-        Operation::ForgetHost { host } => {
-            app.store.forget_host(&host).await?;
+        Operation::ForgetExecutor { executor } => {
+            sqlx::query("DELETE FROM executors WHERE id=$1")
+                .bind(executor)
+                .execute(&app.store.0)
+                .await?;
             json!({"forgotten":true})
         }
         Operation::Drain => {
@@ -219,37 +229,20 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             json!({"accepting":true})
         }
-        Operation::DeleteOrphan { session } => {
+        Operation::DeleteOrphan { account, session } => {
             require_drained(app)?;
-            super::http::route(&Method::DELETE, &format!("/v1/sessions/{session}"))?;
+            super::http::route(&Method::DELETE, &format!("/sessions/{session}"))?;
             if app.store.contains_session(&session).await? {
                 return Err(Error::conflict("resource has an ownership record"));
             }
-            let ended = app
-                .brain
-                .request(
-                    Method::POST,
-                    &format!("/v1/sessions/{session}/end"),
-                    &HeaderMap::new(),
-                    Bytes::new(),
-                    Some(&identity::digest(
-                        format!("orphan-end:{session}").as_bytes(),
-                    )),
-                    None,
-                )
-                .await?;
-            if !ended.status().is_success() && ended.status() != axum::http::StatusCode::NOT_FOUND {
-                return Err(Error::ambiguous());
-            }
-            app.brain.bytes(ended).await?;
             let response = app
                 .brain
                 .request(
                     Method::DELETE,
-                    &format!("/v1/sessions/{session}"),
+                    &format!("/sessions/{session}"),
                     &HeaderMap::new(),
                     Bytes::new(),
-                    Some(&identity::digest(format!("orphan:{session}").as_bytes())),
+                    &account,
                     None,
                 )
                 .await?;
@@ -261,14 +254,10 @@ pub async fn execute(app: &App, operation: Operation) -> Result<Value> {
         }
         Operation::ReconcileTurn { session } => {
             require_drained(app)?;
-            super::http::route(&Method::GET, &format!("/v1/sessions/{session}"))?;
-            let summary = app.brain.summary(&session).await?;
-            if matches!(
-                summary.status,
-                brain_protocol::SessionStatus::Running
-                    | brain_protocol::SessionStatus::Creating
-                    | brain_protocol::SessionStatus::Ending
-            ) {
+            super::http::route(&Method::GET, &format!("/sessions/{session}"))?;
+            let account = app.store.session_account(&session).await?;
+            let summary = app.brain.summary(&account, &session).await?;
+            if summary.status == "running" {
                 return Err(Error::conflict("session is still active"));
             }
             if !crate::turns::reconcile(app, &session).await? {

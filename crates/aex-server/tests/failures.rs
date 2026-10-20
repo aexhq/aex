@@ -17,7 +17,7 @@ async fn lost_upstream_create_response_does_not_create_a_second_resource() {
     let created = Arc::new(AtomicUsize::new(0));
     let calls = created.clone();
     let upstream = Router::new().route(
-        "/v1/sessions",
+        "/sessions",
         post(move || {
             let calls = calls.clone();
             async move {
@@ -67,13 +67,13 @@ async fn lost_upstream_create_response_does_not_create_a_second_resource() {
     .await
     .unwrap();
     app.accepting.store(true, Ordering::SeqCst);
-    let body = serde_json::json!({"agentloop":{"name":"pi","configuration":{}},"model":{"provider":"openai","name":"gpt-4.1-mini","api_key":"model-secret"},"tools":[],"environments":[{"name":"brain","lifecycle":"automatic", "driver":"brain"}]});
+    let body = serde_json::json!({"harness":"pi","config":{"model":"openai/gpt-4.1-mini","tools":[]},"model_credential":{"api_key":"model-secret"}});
     for _ in 0..2 {
         let response = aex_server::http::router(app.clone())
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v1/sessions")
+                    .uri("/sessions")
                     .header("authorization", format!("Bearer {token}"))
                     .header("idempotency-key", "create-once")
                     .header("content-type", "application/json")

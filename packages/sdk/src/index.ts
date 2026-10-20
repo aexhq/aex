@@ -1,96 +1,107 @@
-export * from "@aexhq/brain";
+export { Brain, BrainError, ApiKey, CredentialReference, Model, Tool, ManagedTool, connectTab } from "@aexhq/brain";
+export type { SessionInput, SessionOptions, RuntimeTool, RuntimeContext, Session, Event, Input, CreateSession, ToolBinding, ToolScope, ModelCredential } from "@aexhq/brain";
 export type * from "./generated.js";
+export { Application } from "./application.js";
+export { createApplicationHandler } from "./application-handler.js";
+export type { ApplicationContext, ApplicationTool } from "./application-handler.js";
 export { AexSessionHandle } from "./session.js";
+export type { SendOptions, Turn, UserInput } from "./session.js";
 export { StructuredOutputError } from "./structured-output.js";
 export type { StructuredSendOptions } from "./structured-output.js";
-import { application } from "@aexhq/env-http";
-import { composeApplication } from "./application.js";
-import { Brain, inspectTool, inspectEnvironment, type PlacedTool, type BrainOptions, type CreateSessionOptions, type OperationOptions, type ModelSelection } from "@aexhq/brain";
-import { AexSessionHandle } from "./session.js";
-import type { ClientAccess, EnvironmentCatalog, TokenUsage } from "./generated.js";
-import type { Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
+import { Brain, BrainError, connectTab, type SessionInput, type CreateSession, type RuntimeTool } from "@aexhq/brain";
+import { AexSessionHandle, type SendOptions } from "./session.js";
+import type { ClientAccess, TokenUsage, Attachment, Account, Usage, ApiKey, IssuedKey, KeyInput, LoginGrantInput, LoginGrant, LoginExchange, AccountSession, Wallet, BillingSettings, LedgerPage, Topup, TopupInput, Refund, RefundInput, SyncPayment } from "./generated.js";
 
-export type AexConnection = Omit<BrainOptions, "token" | "baseUrl"> & { baseUrl?: string };
+export type AexConnection = { baseUrl?: string; fetch?: typeof fetch; timeoutMs?: number };
 export type AexOptions = AexConnection & { maxCostMicroUsd?: number } & (
   { apiKey: string; accountToken?: never; clientAccess?: never } |
   { accountToken: string; apiKey?: never; clientAccess?: never } |
   { clientAccess: ClientAccess; apiKey?: never; accountToken?: never });
-export type AexSessionOptions = Omit<CreateSessionOptions, "model"> & { model: ModelSelection | Omit<ModelSelection, "apiKey"> };
-
+export type AexSessionOptions = SessionInput;
 function nonnegativeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a nonnegative safe integer`);
 }
-
-class HostedBrain extends Brain {
-  private readonly maxCostMicroUsd?: number;
-  constructor({ maxCostMicroUsd, ...options }: BrainOptions & { maxCostMicroUsd?: number }) {
-    super(options);
-    if (maxCostMicroUsd !== undefined) nonnegativeInteger(maxCostMicroUsd, "maxCostMicroUsd");
-    this.maxCostMicroUsd = maxCostMicroUsd;
-  }
-
-  /** Resource and legacy turn reservations use this ceiling; token hosting follows the account limit. */
-  override request<T>(method: string, path: string, body?: unknown, idempotencyKey?: string, contentType = "application/json", signal?: AbortSignal, extraHeaders?: HeadersInit): Promise<T> {
-    const headers = new Headers(extraHeaders);
-    if (this.maxCostMicroUsd !== undefined && !headers.has("x-aex-max-cost-micro-usd")) headers.set("x-aex-max-cost-micro-usd", String(this.maxCostMicroUsd));
-    return super.request(method, path, body, idempotencyKey, contentType, signal, headers);
-  }
-}
-
 export class Aex {
-  private readonly client: Brain;
+  readonly baseUrl: string;
+  private readonly token: string;
+  private readonly fetcher: typeof fetch;
+  private readonly abort = new AbortController();
+  private readonly brains = new Set<Brain>();
+  private readonly timeoutMs: number;
+  private readonly maxCostMicroUsd?: number;
   private readonly clientAccess?: ClientAccess;
-
-  constructor({ apiKey, accountToken, clientAccess, maxCostMicroUsd, ...options }: AexOptions) {
+  private readonly client: Brain;
+  private closing?: Promise<void>;
+  constructor({ apiKey, accountToken, clientAccess, baseUrl = "https://api.aex.dev", fetch: fetcher = (...args) => globalThis.fetch(...args), timeoutMs = 30000, maxCostMicroUsd }: AexOptions) {
     if ([apiKey, accountToken, clientAccess].filter(Boolean).length !== 1) throw new TypeError("one apiKey, accountToken or clientAccess is required");
-    this.clientAccess = clientAccess;
-    this.client = new HostedBrain({ baseUrl: "https://api.aex.dev", ...options, token: apiKey ?? accountToken ?? clientAccess?.token,
-      ...(clientAccess && { credentials: clientAccess.credentials }), maxCostMicroUsd });
+    const url = new URL(baseUrl);
+    if (url.origin !== baseUrl || !["http:", "https:"].includes(url.protocol)) throw new TypeError("baseUrl must be an HTTP origin");
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError("timeoutMs must be positive");
+    if (maxCostMicroUsd !== undefined) nonnegativeInteger(maxCostMicroUsd, "maxCostMicroUsd");
+    this.baseUrl = baseUrl; this.token = apiKey ?? accountToken ?? clientAccess!.token;
+    this.fetcher = fetcher; this.timeoutMs = timeoutMs; this.maxCostMicroUsd = maxCostMicroUsd; this.clientAccess = clientAccess;
+    this.client = this.brain();
   }
-
-  private composition(options: AexSessionOptions): CreateSessionOptions {
-    if (this.clientAccess && "apiKey" in options.model) throw new TypeError("client access uses server-side model credentials; omit apiKey");
-    const model = this.clientAccess ? { ...options.model, apiKey: this.clientAccess.token } : options.model;
-    if (!("apiKey" in model) || typeof model.apiKey !== "string") throw new TypeError("server-side sessions require a model apiKey");
-    return composeApplication({ ...options, model: { ...model, apiKey: model.apiKey } }, this.baseUrl);
+  private brain(operationKey?: string): Brain {
+    const transport: typeof fetch = (input, init = {}) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const cleanup = init.method === "POST" && /^\/executors\/[a-f0-9]{32}\/close$/.test(url.pathname);
+      if (!cleanup) this.abort.signal.throwIfAborted();
+      if (url.origin !== this.baseUrl) throw new TypeError("hosted requests must use the configured origin");
+      const headers = new Headers(init.headers);
+      if (init.method === "POST" && url.pathname === "/sessions") headers.set("idempotency-key", operationKey ?? crypto.randomUUID());
+      if (this.maxCostMicroUsd !== undefined) headers.set("x-aex-max-cost-micro-usd", String(this.maxCostMicroUsd));
+      const signal = AbortSignal.any([...(cleanup ? [] : [this.abort.signal]), ...(init.signal ? [init.signal] : [])]);
+      return this.fetcher(input, { ...init, headers, signal, redirect: "error" });
+    };
+    const client = new Brain(this.baseUrl, this.token, transport);
+    this.brains.add(client);
+    return client;
   }
-
-  private async preparedComposition(options: AexSessionOptions): Promise<CreateSessionOptions> {
-    const composition = this.composition(options);
-    const tools = [];
-    for (const tool of composition.tools ?? []) {
-      tools.push(inspectEnvironment(inspectTool(tool).environment).driver.driver === "brain"
-        ? await this.client.prepare(tool) : tool);
-    }
-    return { ...composition, tools };
-  }
-
-  get baseUrl(): string { return this.client.baseUrl; }
-
   readonly sessions = Object.freeze({
-    create: async (options: AexSessionOptions, operation?: OperationOptions): Promise<AexSessionHandle> =>
-      new AexSessionHandle(await this.client.sessions.create(await this.preparedComposition(options), operation)),
-    get: async (...args: Parameters<Brain["sessions"]["get"]>): Promise<AexSessionHandle> => new AexSessionHandle(await this.client.sessions.get(...args)),
-    list: (): ReturnType<Brain["sessions"]["list"]> => this.client.sessions.list(),
+    create: async (input: AexSessionOptions, options: SendOptions = {}): Promise<AexSessionHandle> => {
+      if ("runtime_transport" in input && input.runtime_transport !== undefined && input.runtime_transport !== "sse") throw new TypeError("hosted runtime callbacks use SSE/HTTP");
+      const client = this.brain(options.idempotencyKey);
+      try { return new AexSessionHandle(client, await client.create(input, options.signal)); }
+      catch (error) { this.brains.delete(client); await client.dispose(); throw error; }
+    },
+    get: async (id: string, options: { signal?: AbortSignal } = {}): Promise<AexSessionHandle> => new AexSessionHandle(this.client, await this.client.get(id, options.signal)),
+    list: (after = "", limit = 100): ReturnType<Brain["list"]> => this.client.list(after, limit),
   });
-
-  request<T>(...args: Parameters<Brain["request"]>): Promise<T> { return this.client.request<T>(...args); }
-  withToken(...args: Parameters<Brain["withToken"]>): ReturnType<Brain["withToken"]> { return this.client.withToken(...args); }
-  close(): ReturnType<Brain["close"]> { return this.client.close(); }
-  models(...args: Parameters<Brain["models"]>): ReturnType<Brain["models"]> { return this.client.models(...args); }
-  stream(...args: Parameters<Brain["stream"]>): ReturnType<Brain["stream"]> { return this.client.stream(...args); }
-  streamPath(...args: Parameters<Brain["streamPath"]>): ReturnType<Brain["streamPath"]> { return this.client.streamPath(...args); }
-  prepare<T extends PlacedTool>(extension: T): Promise<T> { return this.client.prepare(extension); }
-  prepareEnvironment(...args: Parameters<Brain["prepareEnvironment"]>): ReturnType<Brain["prepareEnvironment"]> { return this.client.prepareEnvironment(...args); }
-  admitProgram(...args: Parameters<Brain["admitProgram"]>): ReturnType<Brain["admitProgram"]> { return this.client.admitProgram(...args); }
-  admitTool(...args: Parameters<Brain["admitTool"]>): ReturnType<Brain["admitTool"]> { return this.client.admitTool(...args); }
-  register(): ReturnType<Brain["register"]> { return this.client.register(); }
-  credentials(): ReturnType<Brain["credentials"]> { return this.client.credentials(); }
-
-  static exchangeLogin(input: LoginExchange, options: AexConnection = {}): Promise<AccountSession> {
-    return new Brain({ baseUrl: "https://api.aex.dev", ...options }).request("POST", "/v1/auth/exchange", input);
+  attachTab(input: { create: SessionInput } | { session: string; tools: RuntimeTool[] }): Promise<{ session: AexSessionHandle; detach(): Promise<void> }> {
+    return connectTab(this.client, input).then(attached => ({ ...attached, session: new AexSessionHandle(this.client, attached.session) }));
   }
-
+  models(): Promise<unknown> { return this.request("GET", "/v1/models"); }
+  tools(): Promise<import("./generated.js").Catalog> { return this.request("GET", "/tools"); }
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.abort.abort(new DOMException("Aex client closed", "AbortError"));
+    const clients = [...this.brains]; this.brains.clear();
+    return this.closing = Promise.allSettled(clients.map(client => client.dispose())).then(outcomes => {
+      const errors = outcomes.filter((value): value is PromiseRejectedResult => value.status === "rejected");
+      if (errors.length) throw new AggregateError(errors.map(value => value.reason), "executor cleanup failed");
+    });
+  }
+  async request<T>(method: string, path: string, body?: unknown, idempotencyKey?: string, contentType = "application/json", signal?: AbortSignal, extraHeaders?: HeadersInit): Promise<T> {
+    this.abort.signal.throwIfAborted();
+    const url = new URL(path, this.baseUrl);
+    if (url.origin !== this.baseUrl) throw new TypeError("hosted requests must use the configured origin");
+    const headers = new Headers(extraHeaders);
+    if (path !== "/v1/auth/exchange") headers.set("authorization", `Bearer ${this.token}`);
+    headers.set("content-type", contentType);
+    if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
+    if (this.maxCostMicroUsd !== undefined && !headers.has("x-aex-max-cost-micro-usd")) headers.set("x-aex-max-cost-micro-usd", String(this.maxCostMicroUsd));
+    const response = await this.fetcher(url, { method, headers, ...(body === undefined ? {} : { body: body instanceof Uint8Array ? new Uint8Array(body) : JSON.stringify(body) }), signal: AbortSignal.any([this.abort.signal, signal ?? AbortSignal.timeout(this.timeoutMs)]), redirect: "error" });
+    if (!response.ok) {
+      const envelope = await response.json() as { error?: { code: string; message: string }; request_id?: string };
+      throw new BrainError(response.status, envelope.error?.code ?? "http_error", envelope.error?.message ?? response.statusText, envelope.request_id);
+    }
+    return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  }
+  static async exchangeLogin(input: LoginExchange, options: AexConnection = {}): Promise<AccountSession> {
+    const client = new Aex({ ...options, accountToken: "login-exchange" });
+    try { return await client.request("POST", "/v1/auth/exchange", input); } finally { await client.close(); }
+  }
   readonly attachments = {
     limits: (): Promise<import("./generated.js").AttachmentLimits> => this.request("GET", "/v1/attachments/limits"),
     grant: (sessionId: string, input: import("./generated.js").UploadGrantInput, options: { idempotencyKey: string; downloadBudgetBytes?: number; maxCostMicroUsd?: number }): Promise<import("./generated.js").UploadGrant> => {
@@ -135,25 +146,13 @@ export class Aex {
   };
 
   readonly clients = {
-    grant: async ({ session, origin, expiresAt = Math.floor(Date.now() / 1000) + 3600 }: {
-      session: CreateSessionOptions; origin: string; expiresAt?: number;
-    }): Promise<ClientAccess> => {
+    composition: (): Promise<import("./generated.js").Composition> => this.request("GET", "/composition"),
+    grant: ({ session, tools = [], origin, expiresAt = Math.floor(Date.now()/1000)+3600 }: { session: CreateSession | string; tools?: import("@aexhq/brain").Tool[]; origin: string; expiresAt?: number }): Promise<ClientAccess> => {
       if (this.clientAccess) throw new TypeError("client grants require a backend API key");
-      const prepared = await this.client.sessions.prepare(await this.preparedComposition(session), "authorized-client");
-      return this.request("POST", "/v1/clients", { origin, expires_at: expiresAt, session: prepared });
+      return this.request("POST", "/v1/clients", { origin, expires_at: expiresAt, session, tools });
     },
     revoke: (id: string): Promise<void> => this.request("DELETE", `/v1/clients/${encodeURIComponent(id)}`),
   };
-
-  readonly environments = {
-    application: (options: Omit<Parameters<typeof application>[0], "url" | "credential"> & { credential?: string }) => application({
-      ...options, credential: options.credential ?? this.clientAccess?.token ?? "",
-      url: new URL("/environments/application", this.baseUrl).href,
-    }),
-    http: (): Promise<import("./generated.js").HttpCatalog> => this.request("GET", "/v1/environments/http"),
-    list: (): Promise<EnvironmentCatalog> => this.request("GET", "/v1/environments"),
-  };
-
   /** Key management requires an account session; workload API keys cannot create credentials. */
   readonly keys = {
     list: (): Promise<ApiKey[]> => this.request("GET", "/v1/keys"),

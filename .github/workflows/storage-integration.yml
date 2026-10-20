@@ -1,4 +1,4 @@
-name: attachment storage integration
+name: managed services integration
 on:
   workflow_dispatch:
     inputs:
@@ -43,3 +43,72 @@ jobs:
           AEX_TEST_S3_REGION: ${{ vars.AEX_TEST_S3_REGION }}
           AEX_TEST_S3_ENDPOINT: ${{ vars.AEX_TEST_S3_ENDPOINT }}
         run: cargo test --locked -p aex-server --features storage-integration-tests --test s3
+  modal:
+    environment: storage-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_tag || github.ref }}
+      - name: Require an immutable source release
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag || github.ref_name }}
+        run: test "$SOURCE_TAG" = "release/sha-$(git rev-parse HEAD)"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - name: Qualify real sandbox allocation, execution and settlement
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_APP: aex-brain-integration
+        run: node --test tools/modal-integration.mjs
+  media:
+    environment: storage-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_PASSWORD: aex-local-test
+          POSTGRES_DB: aex
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_tag || github.ref }}
+      - name: Require an immutable source release
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag || github.ref_name }}
+        run: test "$SOURCE_TAG" = "release/sha-$(git rev-parse HEAD)"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Install the release SDK in an independent consumer
+        run: |
+          mkdir -p artifacts/sdk-consumer
+          archive=$(npm pack --workspace @aexhq/sdk --pack-destination "$RUNNER_TEMP" --silent | tail -n 1)
+          npm install --prefix artifacts/sdk-consumer --ignore-scripts "$RUNNER_TEMP/$archive"
+      - run: docker build -t aex-rewrite:test .
+      - name: Qualify managed remote browser under its service UID
+        run: docker run --rm --user 10006 --entrypoint node -v "$PWD:/work" -w /work aex-rewrite:test --test tools/browser-integration.mjs
+      - name: Qualify real R2 and isolated PDF conversion through every native harness
+        env:
+          AEX_S3_ACCESS_KEY_ID: ${{ secrets.AEX_S3_ACCESS_KEY_ID }}
+          AEX_S3_SECRET_ACCESS_KEY: ${{ secrets.AEX_S3_SECRET_ACCESS_KEY }}
+          AEX_TEST_S3_BUCKET: ${{ vars.AEX_TEST_S3_BUCKET }}
+          AEX_TEST_S3_REGION: ${{ vars.AEX_TEST_S3_REGION }}
+          AEX_TEST_S3_ENDPOINT: ${{ vars.AEX_TEST_S3_ENDPOINT }}
+          AEX_TEST_DATABASE_URL: postgres://postgres:aex-local-test@127.0.0.1:5432/aex
+        run: |
+          docker run --rm --network host --user 0 --entrypoint node -v "$PWD:/work" -w /work \
+            -e AEX_S3_ACCESS_KEY_ID -e AEX_S3_SECRET_ACCESS_KEY -e AEX_TEST_S3_BUCKET -e AEX_TEST_S3_REGION -e AEX_TEST_S3_ENDPOINT -e AEX_TEST_DATABASE_URL \
+            -e AEX_TEST_SERVER=/usr/local/bin/aex-server -e AEX_TEST_RUNTIME=/usr/local/bin/aex-runtime \
+            -e AEX_TEST_RUNNERS=/opt/aex/runners -e AEX_TEST_SDK_ENTRY=/work/artifacts/sdk-consumer/node_modules/@aexhq/sdk/dist/index.js \
+            aex-rewrite:test tools/media-integration.mjs

@@ -1,5 +1,6 @@
 """Exercise the built non-root image while keeping its operator listener private."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -36,21 +37,21 @@ with tempfile.TemporaryDirectory() as directory:
             raise RuntimeError('image did not become operable')
         assert docker('inspect','--format','{{.Config.User}}',name)=='10002:10002'
         assert docker('inspect','--format','{{json .HostConfig.PortBindings}}',name) in ('{}','null')
-        # Both architectures must load the shipped controller dependencies and write its own store.
-        docker('run','--rm','--user','10003:10003','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
-               '--tmpfs','/var/lib/aex-environment:rw,nosuid,noexec,uid=10003,gid=10003,mode=0700',
+        pinned=re.search(r"require github.com/aexhq/brain (\S+)",(root/'runtime/go.mod').read_text()).group(1)
+        assert docker('run','--rm','--entrypoint','aex-runtime','aex-rewrite:test','-version')==pinned
+        for uid,directory in [('10003','/var/lib/aex-tools-sandbox'),('10004','/var/lib/aex-tools-application')]:
+            docker('run','--rm','--user',f'{uid}:{uid}','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
+                   '--tmpfs',f'{directory}:rw,nosuid,noexec,uid={uid},gid={uid},mode=0700','--workdir','/opt/aex','--entrypoint','node','aex-rewrite:test','--input-type=module','-e',
+                   'import {Journal} from "./services/tools/common.mjs"; import {Sandboxes} from "./services/tools/sandbox.mjs"; '
+                   'import {modalProvider} from "./services/tools/modal.mjs"; import {toolServer} from "./services/tools/server.mjs"; '
+                   f'const journal=new Journal("{directory}"); journal.set("proof",{{id:"proof"}}); if(journal.get("proof").id!=="proof")throw new Error("journal failed"); journal.close(); '
+                   'const server=toolServer({token:"t".repeat(32),control:()=>{throw new Error("denied")},providers:{}}); '
+                   'server.listen(0,"127.0.0.1"); await new Promise(resolve=>server.once("listening",resolve)); '
+                   'try {if((await fetch(`http://127.0.0.1:${server.address().port}/application/read`)).status!==401)throw new Error("unauthenticated tool bridge");}finally{await new Promise(resolve=>server.close(resolve));}')
+        docker('run','--rm','--user','10006:10006','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
                '--workdir','/opt/aex','--entrypoint','node','aex-rewrite:test','--input-type=module','-e',
-               'import {createModalEnvironment} from "@aexhq/env-modal/server"; import {DatabaseSync} from "node:sqlite"; '
-               'import {access} from "node:fs/promises"; await access("environments/modal.mjs"); '
-               'const db = new DatabaseSync("/var/lib/aex-environment/smoke.sqlite"); db.exec("CREATE TABLE proof (id INTEGER)"); db.close();')
-        docker('run','--rm','--user','10004:10004','--read-only','--network','none','--cap-drop=ALL','--security-opt=no-new-privileges',
-               '--workdir','/opt/aex','--entrypoint','node','aex-rewrite:test','--input-type=module','-e',
-               'import {createHttpEnvironment,serveEnvironment} from "@aexhq/env-http/server"; '
-               'import {access} from "node:fs/promises"; await access("environments/http.mjs"); '
-               'const environment=createHttpEnvironment({authorize:()=>{throw new Error("denied")}}); '
-               'const server=await serveEnvironment(environment.handle,{token:"e".repeat(32)}); '
-               'try { if ((await fetch(server.url)).status!==401) throw new Error("unauthenticated HTTP bridge"); } finally { await server.close(); }')
-        print('non-root runtime/controller images, separate writable paths and private operator smoke passed')
+               'import {descriptor} from "./brain-services/browser/src/browser.mjs"; if(descriptor.name!=="browser")throw new Error("browser dependency missing");')
+        print('immutable Go runtime, non-root gateway, browser and separate retained tool journals passed')
     finally:
         subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
         subprocess.run(['docker','volume','rm',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)

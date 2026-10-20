@@ -122,16 +122,16 @@
       "properties": {
         "action": {
           "type": "string",
-          "const": "forget_host"
+          "const": "forget_executor"
         },
-        "host": {
+        "executor": {
           "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
         "action",
-        "host"
+        "executor"
       ]
     },
     {
@@ -163,6 +163,9 @@
     {
       "type": "object",
       "properties": {
+        "account": {
+          "type": "string"
+        },
         "action": {
           "type": "string",
           "const": "delete_orphan"
@@ -174,6 +177,7 @@
       "additionalProperties": false,
       "required": [
         "action",
+        "account",
         "session"
       ]
     },

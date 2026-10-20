@@ -1,12 +1,12 @@
 mod common;
 
+use aex_server::brain_contract::{Event, ModelRequest, ModelUsage};
 use aex_server::{
     App,
     billing::{self, BillingSettings},
     config::Config,
     model_usage,
 };
-use brain_protocol::Event;
 use serde_json::json;
 use sqlx::Row;
 
@@ -46,7 +46,7 @@ async fn app(limit: i64) -> (tempfile::TempDir, App, String) {
 }
 
 async fn session(app: &App, account: &str, id: &str) {
-    sqlx::query("INSERT INTO sessions(id,account,created,model_observed_at) VALUES($1,$2,0,$3)")
+    sqlx::query("INSERT INTO sessions(id,account,created,model_observed_at,runtime) VALUES($1,$2,0,$3,'brain')")
         .bind(id)
         .bind(account)
         .bind(model_usage::now_ms())
@@ -57,12 +57,58 @@ async fn session(app: &App, account: &str, id: &str) {
 
 fn event(sequence: u64, kind: &str, data: serde_json::Value) -> Event {
     Event {
-        sequence,
-        recorded_at_ms: model_usage::now_ms() as u64,
-        event_type: kind.into(),
+        id: format!("{sequence:032x}"),
+        cursor: Some(format!("cursor:{sequence}")),
+        time: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+        r#type: kind.into(),
         data,
-        origin: None,
+        input_id: None,
     }
+}
+fn usage(input: Option<i64>, output: Option<i64>) -> ModelUsage {
+    ModelUsage {
+        availability: if input.is_some() && output.is_some() {
+            "reported"
+        } else {
+            "partial"
+        }
+        .into(),
+        input_tokens: input,
+        output_tokens: output,
+        input_cache: "included".into(),
+        output_reasoning: "included".into(),
+        semantics: "provider".into(),
+        ..Default::default()
+    }
+}
+fn request(sequence: u64, id: &str, state: &str, usage: ModelUsage) -> Event {
+    event(
+        sequence,
+        "model.request",
+        serde_json::to_value(ModelRequest {
+            request_id: id.into(),
+            state: state.into(),
+            usage,
+            harness: "pi".into(),
+            provider: "openai".into(),
+            model: "gpt-4.1-mini".into(),
+            purpose: "inference".into(),
+            boundary: "logical".into(),
+            attempts: "unobservable".into(),
+            ..Default::default()
+        })
+        .unwrap(),
+    )
+}
+async fn record(app: &App, id: &str, event: &Event) -> bool {
+    let after: String = sqlx::query_scalar("SELECT brain_cursor FROM sessions WHERE id=$1")
+        .bind(id)
+        .fetch_one(&app.store.0)
+        .await
+        .unwrap();
+    model_usage::record(app, id, &after, event).await.unwrap()
 }
 
 #[tokio::test]
@@ -180,40 +226,34 @@ async fn switching_execution_meters_waits_for_legacy_holds_and_usage_is_account_
 
 #[tokio::test]
 async fn background_observation_stops_work_and_settles_actual_usage_without_a_submitted_turn() {
-    use axum::{
-        Router,
-        response::{Sse, sse::Event as SseEvent},
-        routing::{get, post},
-    };
+    use axum::{Json, Router, extract::Query, routing::get};
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init();
     use std::sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     let (_dir, mut app, account) = app(4).await;
     session(&app, &account, "ses_stream").await;
-    let cancelled = Arc::new(tokio::sync::Notify::new());
-    let cancel_count = Arc::new(AtomicUsize::new(0));
-    let receiver = cancelled.clone();
-    let sender = cancelled.clone();
-    let count = cancel_count.clone();
-    let upstream = Router::new().route("/v1/sessions/ses_stream/events",get(move || {
-        let receiver = receiver.clone();
-        async move {
-            Sse::new(async_stream::stream! {
-                let start = event(1,"model_call_started",json!({}));
-                yield Ok::<_,std::convert::Infallible>(SseEvent::default().id("1").event("model_call_started").json_data(start).unwrap());
-                yield Ok(SseEvent::default().event("model_request").json_data(json!({"model_call_sequence":1,"input_bytes":6000,"media_inputs":0})).unwrap());
-                receiver.notified().await;
-                let ended = event(2,"model_call_failed",json!({"sequence":1,"response":{"usage":{"total_input_tokens":30,"output_tokens":0},"usage_complete":false}}));
-                yield Ok(SseEvent::default().id("2").event("model_call_failed").json_data(ended).unwrap());
-                yield Ok(SseEvent::default().id("3").event("session_ended").json_data(event(3,"session_ended",json!({}))).unwrap());
-            })
-        }
-    })).route("/v1/sessions/ses_stream/cancel",post(move || {
-        count.fetch_add(1,Ordering::SeqCst);
-        sender.notify_one();
-        async { axum::Json(json!({})) }
-    }));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let count = Arc::new(AtomicUsize::new(0));
+    let read = cancelled.clone();
+    let metadata = cancelled.clone();
+    let write = cancelled.clone();
+    let calls = count.clone();
+    let started = request(1, "background", "started", usage(None, None));
+    let terminal = request(2, "background", "failed", usage(Some(30), Some(0)));
+    let closed = event(3, "session.status", json!({"status":"closed"}));
+    let upstream=Router::new().route("/sessions/ses_stream/events",get(move |Query(query):Query<std::collections::BTreeMap<String,String>>| {
+        let mut events=vec![started.clone()];if read.load(Ordering::SeqCst){let mut terminal=terminal.clone();terminal.data["unmeasured"]=json!(["retry count unavailable"]);events.extend([terminal,closed.clone()]);}
+        let after=query.get("after").cloned().unwrap_or_default();
+        let position=if after.is_empty(){0}else{events.iter().position(|event|event.cursor.as_ref()==Some(&after)).unwrap()+1};
+        let next=events.last().and_then(|event|event.cursor.clone()).unwrap_or(after);
+        async move {Json(json!({"events":events.into_iter().skip(position).collect::<Vec<_>>(),"next_cursor":next}))}
+    }).post(move |Json(input):Json<serde_json::Value>| {assert_eq!(input["type"],"user.interrupt");calls.fetch_add(1,Ordering::SeqCst);write.store(true,Ordering::SeqCst);async {Json(json!({}))}}))
+    .route("/sessions/ses_stream",get(move || {let closed=metadata.load(Ordering::SeqCst);async move {Json(json!({"id":"ses_stream","status":if closed{"closed"}else{"running"},"harness":"pi","config":{"model":"openai/gpt-4.1-mini","tools":[]},"descriptors":[],"created_at":"2026-10-20T00:00:00Z","updated_at":"2026-10-20T00:00:00Z"}))}}));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut config = (*app.config).clone();
     config.brain_url = format!("http://{}", listener.local_addr().unwrap());
@@ -240,7 +280,7 @@ async fn background_observation_stops_work_and_settles_actual_usage_without_a_su
     observer.await.unwrap();
     server.abort();
     let usage = model_usage::totals(&app.store, &account).await.unwrap();
-    assert_eq!(cancel_count.load(Ordering::SeqCst), 1);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
     assert_eq!(usage.reported_input_tokens, 30);
     assert_eq!(usage.rated_micro_usd, 10);
     assert_eq!(usage.charged_micro_usd, 4);
@@ -253,28 +293,28 @@ async fn concurrent_receipts_replay_once_and_absorb_excess_without_double_counti
     let (_dir, app, account) = app(4).await;
     for id in ["ses_one", "ses_two", "ses_three"] {
         session(&app, &account, id).await;
-        model_usage::record(&app, id, &event(1, "model_call_started", json!({})))
-            .await
-            .unwrap();
+        record(
+            &app,
+            id,
+            &request(1, "request", "started", usage(None, None)),
+        )
+        .await;
     }
-    let receipt = event(
-        2,
-        "model_call_ended",
-        json!({"sequence":1,"result":{"usage":{
-            "total_input_tokens":4,"input_tokens":4,"cache_read_input_tokens":3,"output_tokens":2,"reasoning_tokens":1
-        }}}),
-    );
+    let mut reported = usage(Some(4), Some(2));
+    reported.cache_read_tokens = Some(3);
+    reported.reasoning_tokens = Some(1);
+    let receipt = request(2, "request", "completed", reported);
     let (a, b, c) = tokio::join!(
-        model_usage::record(&app, "ses_one", &receipt),
-        model_usage::record(&app, "ses_two", &receipt),
-        model_usage::record(&app, "ses_three", &receipt)
+        model_usage::record(&app, "ses_one", "cursor:1", &receipt),
+        model_usage::record(&app, "ses_two", "cursor:1", &receipt),
+        model_usage::record(&app, "ses_three", "cursor:1", &receipt)
     );
-    a.unwrap();
-    b.unwrap();
-    c.unwrap();
-    model_usage::record(&app, "ses_one", &receipt)
-        .await
-        .unwrap();
+    assert!(a.unwrap() && b.unwrap() && c.unwrap());
+    assert!(
+        !model_usage::record(&app, "ses_one", "cursor:1", &receipt)
+            .await
+            .unwrap()
+    );
     let totals = model_usage::totals(&app.store, &account).await.unwrap();
     assert_eq!(totals.reported_input_tokens, 12);
     assert_eq!(totals.reported_output_tokens, 6);
@@ -296,69 +336,69 @@ async fn concurrent_receipts_replay_once_and_absorb_excess_without_double_counti
 async fn cumulative_rating_covers_background_calls_and_retains_unknown_usage() {
     let (_dir, app, account) = app(100).await;
     session(&app, &account, "ses_background").await;
-    model_usage::record(&app, "ses_background", &event(1, "turn_ended", json!({})))
-        .await
-        .unwrap();
+    record(
+        &app,
+        "ses_background",
+        &event(1, "session.status", json!({"status":"idle"})),
+    )
+    .await;
     for start in [2, 4, 6] {
-        model_usage::record(
+        let id = format!("request-{start}");
+        record(
             &app,
             "ses_background",
-            &event(start, "model_call_started", json!({})),
+            &request(start, &id, "started", usage(None, None)),
         )
-        .await
-        .unwrap();
-        model_usage::record(&app,"ses_background",&event(start+1,"model_call_ended",json!({"sequence":start,"result":{"usage":{"total_input_tokens":1,"output_tokens":0}}}))).await.unwrap();
+        .await;
+        record(
+            &app,
+            "ses_background",
+            &request(start + 1, &id, "completed", usage(Some(1), Some(0))),
+        )
+        .await;
     }
-    model_usage::record(
+    record(
         &app,
         "ses_background",
-        &event(8, "model_call_started", json!({})),
+        &request(8, "partial", "started", usage(None, None)),
     )
-    .await
-    .unwrap();
-    model_usage::record(
+    .await;
+    record(
         &app,
         "ses_background",
-        &event(
-            9,
-            "model_call_failed",
-            json!({"sequence":8,"response":{"usage":{"output_tokens":2},"usage_complete":false}}),
-        ),
+        &request(9, "partial", "failed", usage(None, Some(2))),
     )
-    .await
-    .unwrap();
-    let mut start = event(10, "model_call_started", json!({"tool_sequence":2}));
-    start.origin = Some(serde_json::from_value(json!({"kind":"tool","sequence":2})).unwrap());
-    model_usage::record(&app, "ses_background", &start)
-        .await
-        .unwrap();
-    model_usage::record(&app, "ses_background", &event(11, "turn_failed", json!({})))
-        .await
-        .unwrap();
-    let mut end = event(
-        12,
-        "model_call_ended",
-        json!({"sequence":10,"result":{"usage":{"total_input_tokens":7,"output_tokens":3}}}),
-    );
-    end.origin = start.origin;
-    model_usage::record(&app, "ses_background", &end)
-        .await
-        .unwrap();
+    .await;
+    let mut compaction = request(10, "compaction", "started", usage(None, None));
+    compaction.data["purpose"] = json!("compaction");
+    record(&app, "ses_background", &compaction).await;
+    record(
+        &app,
+        "ses_background",
+        &event(11, "session.status", json!({"status":"interrupted"})),
+    )
+    .await;
+    let mut end = request(12, "compaction", "completed", usage(Some(7), Some(3)));
+    end.data["purpose"] = json!("compaction");
+    record(&app, "ses_background", &end).await;
     let totals = model_usage::totals(&app.store, &account).await.unwrap();
     assert_eq!(totals.reported_input_tokens, 10);
     assert_eq!(totals.reported_output_tokens, 5);
     assert_eq!(totals.unmeasured_calls, 1);
     assert_eq!(totals.charged_micro_usd, 5);
-    let rows = sqlx::query("SELECT input_tokens,terminal FROM model_usage WHERE session='ses_background' ORDER BY sequence").fetch_all(&app.store.0).await.unwrap();
+    let rows=sqlx::query("SELECT input_tokens,terminal FROM brain_model_usage WHERE session='ses_background' ORDER BY request_id").fetch_all(&app.store.0).await.unwrap();
     assert_eq!(rows.len(), 5);
-    assert!(rows[3].get::<Option<i64>, _>("input_tokens").is_none());
+    assert!(
+        rows.iter()
+            .any(|row| row.get::<Option<i64>, _>("input_tokens").is_none())
+    );
 }
 
 #[tokio::test]
 async fn delayed_observation_uses_the_price_at_call_start_and_retains_receipts_after_deletion() {
     let (_dir, app, account) = app(100).await;
     session(&app, &account, "ses_prices").await;
-    let start = event(1, "model_call_started", json!({}));
+    let start = request(1, "priced", "started", usage(None, None));
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     let mut config = (*app.config).clone();
     let billing = config.billing.as_mut().unwrap();
@@ -382,23 +422,19 @@ async fn delayed_observation_uses_the_price_at_call_start_and_retains_receipts_a
     )
     .await
     .unwrap();
-    model_usage::record(&app, "ses_prices", &start)
-        .await
-        .unwrap();
-    model_usage::record(
+    record(&app, "ses_prices", &start).await;
+    record(
         &app,
         "ses_prices",
-        &event(
-            2,
-            "model_call_ended",
-            json!({"sequence":1,"result":{"usage":{"total_input_tokens":3,"output_tokens":0}}}),
-        ),
+        &request(2, "priced", "completed", usage(Some(3), Some(0))),
     )
-    .await
-    .unwrap();
-    model_usage::record(&app, "ses_prices", &event(3, "session_ended", json!({})))
-        .await
-        .unwrap();
+    .await;
+    record(
+        &app,
+        "ses_prices",
+        &event(3, "session.status", json!({"status":"closed"})),
+    )
+    .await;
     app.store.finish_delete("ses_prices").await.unwrap();
     model_usage::reconcile(&app, "ses_prices").await.unwrap();
     assert_eq!(
@@ -408,4 +444,35 @@ async fn delayed_observation_uses_the_price_at_call_start_and_retains_receipts_a
             .charged_micro_usd,
         1
     );
+}
+
+#[tokio::test]
+async fn physical_retries_replace_logical_totals_and_concurrent_cursor_replay_never_charges_twice()
+{
+    let (_dir, app, account) = app(100).await;
+    session(&app, &account, "retries").await;
+    let logical = request(1, "r", "started", usage(None, None));
+    record(&app, "retries", &logical).await;
+    for (seq, attempt, tokens) in [(2, "first", 3), (3, "retry", 6)] {
+        let mut receipt = request(seq, "r", "completed", usage(Some(tokens), Some(0)));
+        receipt.data["boundary"] = json!("physical");
+        receipt.data["attempt_id"] = json!(attempt);
+        receipt.data["attempts"] = json!("observed");
+        record(&app, "retries", &receipt).await;
+    }
+    record(
+        &app,
+        "retries",
+        &request(4, "r", "completed", usage(Some(6), Some(0))),
+    )
+    .await;
+    let totals = model_usage::totals(&app.store, &account).await.unwrap();
+    assert_eq!(totals.reported_input_tokens, 9);
+    assert_eq!(totals.rated_micro_usd, 3);
+    let closed = event(5, "session.status", json!({"status":"closed"}));
+    let (a, b) = tokio::join!(
+        model_usage::record(&app, "retries", "cursor:4", &closed),
+        model_usage::record(&app, "retries", "cursor:4", &closed)
+    );
+    assert_ne!(a.unwrap(), b.unwrap());
 }
