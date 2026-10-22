@@ -2,7 +2,7 @@ module github.com/aexhq/aex/runtime
 
 go 1.26.0
 
-require github.com/aexhq/brain v0.0.0-20261022004257-c0e89d7bded3
+require github.com/aexhq/brain v0.0.0-20261022034832-1a631e5b85a9
 
 require (
 	cel.dev/expr v0.25.2 // indirect
