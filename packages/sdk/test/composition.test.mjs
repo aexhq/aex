@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Aex, Application, Model, ApiKey, createApplicationHandler } from "../dist/index.js";
+import { Pi, Aex, Application, Model, ApiKey, createApplicationHandler } from "../dist/index.js";
 const descriptor={name:"read",description:"Read",input_schema:{type:"object",properties:{id:{type:"string"}},required:["id"],additionalProperties:false},output_schema:{type:"integer"}};
 test("application placement composes one managed provider without installing customer code or preparing a host",async()=>{
   const calls=[];const aex=new Aex({apiKey:"account-key",fetch:async(url,init)=>{calls.push({url:String(url),init});return Response.json({id:"s",status:"idle"});}});
-  await aex.sessions.create({harness:"pi",model:Model("openai/gpt-4.1-mini",ApiKey("private-model-key")),tools:[Application({endpoint:"https://app.example/tools",credential:"private-application-key".repeat(2),tools:[descriptor]})]},{idempotencyKey:"create-once"});
+  await aex.sessions.create({harness: Pi(),model:Model("openai/gpt-4.1-mini",ApiKey("private-model-key")),tools:[Application({endpoint:"https://app.example/tools",credential:"private-application-key".repeat(2),tools:[descriptor]})]},{idempotencyKey:"create-once"});
   assert.equal(calls.length,1);assert.equal(new URL(calls[0].url).pathname,"/sessions");assert.equal(new Headers(calls[0].init.headers).get("idempotency-key"),"create-once");const body=JSON.parse(calls[0].init.body);assert.equal(body.model_credential.api_key,"private-model-key");assert.equal(body.config.bindings[0].provider,"application");assert.deepEqual(body.config.bindings[0].operations,["read"]);assert.equal(body.credentials[0].binding,"application");assert.equal(body.config.bindings[0].parameters.credential,undefined);await aex.close();
 });
 test("backend browser grants carry private composition only to the backend; the browser reads its bound session explicitly",async()=>{

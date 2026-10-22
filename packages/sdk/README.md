@@ -3,16 +3,16 @@
 Run hosted agents with your own model key and application tools. Requires Node.js 24. Browser usage uses scoped access and an explicit user gesture.
 
 ```sh
-npm install @aexhq/sdk@1.0.0
+npm install @aexhq/sdk@1.1.0
 ```
 
-The [quickstart](../../docs/quickstart.md) includes a complete example. This SDK composes Brain 2.1.0's client and neutral contracts; Aex adds account policy, attachments, billing, browser grants and validated typed answers.
+The [quickstart](../../docs/quickstart.md) includes a complete example. This SDK composes Brain 2.3.0's client and neutral contracts; Aex adds account policy, attachments, billing, browser grants and validated typed answers.
 
 ```js
-import { Aex, ApiKey, Model } from "@aexhq/sdk";
+import { Pi, Aex, ApiKey, Model } from "@aexhq/sdk";
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
 try {
-  const session = await aex.sessions.create({ harness: "pi", model: Model("openai/gpt-4.1-mini", ApiKey(process.env.OPENAI_API_KEY)) });
+  const session = await aex.sessions.create({ harness: Pi(), model: Model("openai/gpt-4.1-mini", ApiKey(process.env.OPENAI_API_KEY)) });
   console.log((await session.send("Hello")).output);
 } finally { await aex.close(); }
 ```

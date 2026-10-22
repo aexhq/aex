@@ -37,7 +37,7 @@ test('real R2 attachments and isolated Poppler reach all native model adapters a
   });
   const a=await f.account(),b=await f.account();
   for(const harness of ['pi','codex','opencode']) {
-    const session=await a.api.sessions.create({harness,model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(a.modelKey))});
+    const session=await a.api.sessions.create({harness: ({ pi: sdk.Pi, codex: sdk.Codex, opencode: sdk.OpenCode })[harness](),model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(a.modelKey))});
     pending.add(session);
     const image=await a.api.attachments.upload(session.id,png,{contentType:'image/png',idempotencyKey:randomUUID(),downloadBudgetBytes:1048576});
     const document=await a.api.attachments.upload(session.id,pdf(),{contentType:'application/pdf',idempotencyKey:randomUUID(),downloadBudgetBytes:1048576});
@@ -46,7 +46,7 @@ test('real R2 attachments and isolated Poppler reach all native model adapters a
     const recorded=JSON.stringify(f.model.requests.slice(before));assert.ok(recorded.includes('data:image/png;base64,'),harness);
     const images=f.model.requests.slice(before).flatMap(value=>value.input).flatMap(value=>value.content??[]).filter(value=>value.type==='input_image');assert.equal(images.length,2,harness);
     assert.equal((await fetch(image.media.url)).status,200);
-    const other=await b.api.sessions.create({harness,model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(b.modelKey))});await assert.rejects(other.send({text:'stolen',media:[document.media]}),error=>error.status===404);await other.delete();
+    const other=await b.api.sessions.create({harness: ({ pi: sdk.Pi, codex: sdk.Codex, opencode: sdk.OpenCode })[harness](),model:sdk.Model('openai/gpt-4.1-mini',sdk.ApiKey(b.modelKey))});await assert.rejects(other.send({text:'stolen',media:[document.media]}),error=>error.status===404);await other.delete();
     await session.delete();pending.delete(session);assert.equal((await fetch(image.media.url)).status,404);assert.equal((await fetch(document.media.url)).status,404);
     const files=await f.db.client.query('SELECT state FROM attachments WHERE session=$1',[session.id]);assert.ok(files.rows.every(row=>row.state==='deleted'));
   }

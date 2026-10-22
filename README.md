@@ -24,16 +24,16 @@ Use native Pi, Codex or OpenCode. Tools can run in a connected application, an e
 Use Node.js 24, create an API key in the [dashboard](https://aex.dev/dashboard), and set `AEX_API_KEY` and `OPENAI_API_KEY` on your backend.
 
 ```sh
-npm install @aexhq/sdk@1.0.0
+npm install @aexhq/sdk@1.1.0
 ```
 
 ```js
-import { Aex, ApiKey, Model, Tool } from "@aexhq/sdk";
+import { Pi, Aex, ApiKey, Model, Tool } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
 try {
   const session = await aex.sessions.create({
-    harness: "pi",
+    harness: Pi(),
     model: Model("openai/gpt-4.1-mini", ApiKey(process.env.OPENAI_API_KEY)),
     tools: [Tool({
       name: "lookup_order",

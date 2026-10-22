@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Aex, AexSessionHandle, Brain, Tool, ManagedTool, Model, ApiKey } from "../dist/index.js";
+import { Pi, Aex, AexSessionHandle, Brain, Tool, ManagedTool, Model, ApiKey } from "../dist/index.js";
 import * as upstream from "@aexhq/brain";
 import { z } from "zod";
 
@@ -102,7 +102,7 @@ for(const method of ["create","get"])test(`Aex ${method} handles own typed corre
     if(url.includes("/events?")){const after=new URL(url).searchParams.get("after");const position=after?records.findIndex(event=>event.cursor===after)+1:0;const events=records.slice(position);return Response.json({events,next_cursor:events.at(-1)?.cursor??after});}
     return Response.json(state);
   }});
-  const session=method==="get"?await client.sessions.get("s"):await client.sessions.create({harness:"pi",model:Model("openai/gpt-4.1-mini",ApiKey("model-key"))});
+  const session=method==="get"?await client.sessions.get("s"):await client.sessions.create({harness: Pi(),model:Model("openai/gpt-4.1-mini",ApiKey("model-key"))});
   assert.ok(session instanceof AexSessionHandle);assert.deepEqual(await session.send("Extract age",{output:{type:z.object({age:z.number()})}}),{age:37});assert.match(messages[0],/Extract age[\s\S]*For this response only/);assert.match(messages[1],/Validation feedback/);assert.equal((await session.outcome("1")).output,"not JSON");assert.equal((await session.send("Chat")).session.status,"idle");assert.equal(messages[2],"Chat");await client.close();
 });
 

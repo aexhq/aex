@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aex accounts and hosted sessions using the Brain SDK",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
     "tag": "next"
   },
   "dependencies": {
-    "@aexhq/brain": "2.1.0",
+    "@aexhq/brain": "2.3.0",
     "zod": "4.4.3"
   },
   "scripts": {

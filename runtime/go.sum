@@ -28,8 +28,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0.57.0/go.mod h1:dzcEjy1WJ0Q4u9twNR3LcLhNoYMRCrMCMafpxa0TjPQ=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0 h1:RoO5+d7uCmDqovLrHCr2/BuViUXvdcrNxyNM1pN9dDQ=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0/go.mod h1:YqwkQPrWSC7+byyc1VlKbWLBF5JsW5IoL6xUkemYSXk=
-github.com/aexhq/brain v0.0.0-20261020075400-8f9bb6c73343 h1:NKm8XeRjg+xNfsa8VIlu07RDyvz4NqYB7RkXceaEK3k=
-github.com/aexhq/brain v0.0.0-20261020075400-8f9bb6c73343/go.mod h1:fdJ9SHuQAGqR3SA9IBwCCWO0szTDMEDVgfEusNOwV6c=
+github.com/aexhq/brain v0.0.0-20261022034832-1a631e5b85a9 h1:SadcdeT5ZrFl5YMdZA8ZjRYVw/3ZkeAovMnDqP0WTJY=
+github.com/aexhq/brain v0.0.0-20261022034832-1a631e5b85a9/go.mod h1:fdJ9SHuQAGqR3SA9IBwCCWO0szTDMEDVgfEusNOwV6c=
 github.com/aws/aws-sdk-go-v2 v1.47.3 h1:HRoT/MkNi3bjO5xF4dCzLzvVmkvRGHj3/cLINDnJejk=
 github.com/aws/aws-sdk-go-v2 v1.47.3/go.mod h1:xSl+OSI5ZUw6bSMupWc218zE5Pl+65MCCu3ySWFY99A=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.22 h1:oiEmPz/YMMeh/JvAE8xSxNCIsvWE6lpFe4ZPlyFykQI=

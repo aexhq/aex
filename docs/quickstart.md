@@ -12,7 +12,7 @@ Accept the prices offered to your account and fund any required prepaid resource
 mkdir aex-example
 cd aex-example
 npm init -y
-npm install @aexhq/sdk@1.0.0
+npm install @aexhq/sdk@1.1.0
 ```
 
 ## Create and send
@@ -20,12 +20,12 @@ npm install @aexhq/sdk@1.0.0
 Save this as `order.mjs`:
 
 ```js
-import { Aex, ApiKey, Model, Tool } from "@aexhq/sdk";
+import { Pi, Aex, ApiKey, Model, Tool } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY, maxCostMicroUsd: 1000000 });
 try {
   const session = await aex.sessions.create({
-    harness: "pi",
+    harness: Pi(),
     model: Model("openai/gpt-4.1-mini", ApiKey(process.env.OPENAI_API_KEY)),
     tools: [Tool({
       name: "lookup_order",

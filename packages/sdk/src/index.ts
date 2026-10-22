@@ -1,4 +1,5 @@
-export { Brain, BrainError, ApiKey, CredentialReference, Model, Tool, ManagedTool, connectTab } from "@aexhq/brain";
+export { Brain, BrainError, Pi, Codex, OpenCode, ApiKey, CredentialReference, Model, Tool, ManagedTool, connectTab } from "@aexhq/brain";
+export type { Harness, HarnessOptions, PiOptions } from "@aexhq/brain";
 export type { SessionInput, SessionOptions, RuntimeTool, RuntimeContext, Session, Event, Input, CreateSession, ToolBinding, ToolScope, ModelCredential } from "@aexhq/brain";
 export type * from "./generated.js";
 export { Application } from "./application.js";
