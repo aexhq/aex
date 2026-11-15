@@ -1,7 +1,7 @@
 /target/
 **/node_modules/
 /artifacts/
-/packages/sdk/dist/
+/clients/sdk/dist/
 /data/
 *.db
 *.db-shm

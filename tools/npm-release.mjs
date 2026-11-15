@@ -26,7 +26,7 @@ const run = (args) =>
   }).trim();
 
 const packageDocument = async (workspace) =>
-  JSON.parse(await readFile(path.join(root, "packages", workspace, "package.json"), "utf8"));
+  JSON.parse(await readFile(path.join(root, "clients", workspace, "package.json"), "utf8"));
 
 const parseManifest = async (filename) => {
   const manifest = JSON.parse(await readFile(filename, "utf8"));

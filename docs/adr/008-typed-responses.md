@@ -54,4 +54,4 @@ There is no wire, stored-session or compiled-extension migration.
 - [Aex PR 168](https://github.com/aexhq/aex/pull/168) inherited it.
 - Owner direction on 2026-09-25: typed responses belong to platforms such as Aex;
   Brain remains the low-level operations server.
-- [SDK usage and migration](../../packages/sdk/README.md#structured-output).
+- [SDK usage and migration](../../clients/sdk/README.md#structured-output).

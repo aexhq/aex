@@ -22,8 +22,8 @@
     "zod": "4.4.3"
   },
   "workspaces": [
-    "packages/sdk",
-    "packages/cli"
+    "clients/sdk",
+    "clients/cli"
   ],
   "dependencies": {
     "modal": "0.10.1"

@@ -36,14 +36,14 @@ jobs:
               - '!**/README*.md'
               - '!docs/**/*.md'
               - '!assets/aex-mark-{black,white}.webp'
-              - '!{crates,packages/sdk,packages/cli,docs/generated,examples,tests}/**'
+              - '!{crates,clients/sdk,clients/cli,docs/generated,examples,tests}/**'
               - '!{Cargo.toml,Cargo.lock,rust-toolchain.toml,rustfmt.toml,package.json,package-lock.json,Dockerfile,.dockerignore}'
               - '!tools/{check.sh,sdk-contracts.mjs,storage-report.py,journeys.sh,image-smoke.py}'
             rust:
               - '{crates/**,Cargo.toml,Cargo.lock,rust-toolchain.toml,rustfmt.toml,examples/config.json}'
               - '!**/README*.md'
             npm:
-              - '{packages/sdk/**,packages/cli/**,package.json,package-lock.json}'
+              - '{clients/sdk/**,clients/cli/**,package.json,package-lock.json}'
               - '!**/README*.md'
             dependencies:
               - '**/Cargo.{toml,lock}'

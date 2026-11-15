@@ -17,8 +17,8 @@ RUN CGO_ENABLED=0 go build -trimpath -o /aex-runtime . \
 FROM node:24.17.0-bookworm-slim AS dependencies
 WORKDIR /opt/aex
 COPY package.json package-lock.json ./
-COPY packages/sdk/package.json packages/sdk/package.json
-COPY packages/cli/package.json packages/cli/package.json
+COPY clients/sdk/package.json clients/sdk/package.json
+COPY clients/cli/package.json clients/cli/package.json
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=runtime /brain/runners ./runners
 RUN npm --prefix runners/pi ci --ignore-scripts && npm --prefix runners/pi run build && npm --prefix runners/pi prune --omit=dev --ignore-scripts \
