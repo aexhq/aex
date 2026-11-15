@@ -6,7 +6,7 @@ your provider bills model calls separately. Your application's own user pricing 
 ## Check your prices and usage
 
 Open **Account / Billing / Usage** in the [dashboard](https://aex.dev/dashboard), or run
-`aex billing` and `aex usage` in the [CLI](../packages/cli/README.md). The dashboard shows
+`aex billing` and `aex usage` in the [CLI](../clients/cli/README.md). The dashboard shows
 your offered prices, accepted prices, available credits and spending limit.
 
 Existing preview accounts remain in preview until you accept an offered pricebook. To enable

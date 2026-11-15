@@ -52,7 +52,7 @@ try {
 
 The lookup runs in your application; the harness runs on Aex. Closing the client disconnects callbacks and keeps the session. Save its ID to continue later, explicitly rebind tools after reconnecting, or delete it to remove retained content after cleanup.
 
-[Quickstart](docs/quickstart.md) · [SDK](packages/sdk/README.md) · [CLI](packages/cli/README.md) · [API](docs/api.md)
+[Quickstart](docs/quickstart.md) · [SDK](clients/sdk/README.md) · [CLI](clients/cli/README.md) · [API](docs/api.md)
 
 ## Build your application
 

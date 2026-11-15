@@ -18,7 +18,7 @@ run('go',['build','-trimpath','-o',join(artifacts,process.platform==='win32'?'ae
 run('cargo',['build','--locked','-p','aex-server']);run('npm',['run','build']);
 const packages=join(artifacts,'sdk-packages');await mkdir(packages,{recursive:true});
 run('npm',['pack','--workspace','@aexhq/sdk','--pack-destination',packages]);
-const version=JSON.parse(await readFile('packages/sdk/package.json','utf8')).version;
+const version=JSON.parse(await readFile('clients/sdk/package.json','utf8')).version;
 const consumer=join(artifacts,'sdk-consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({private:true,type:'module'}));
 run('npm',['install','--ignore-scripts','--no-audit','--save-exact',join(packages,`aexhq-sdk-${version}.tgz`)],consumer);
 run('node',['tools/browser-journey-bundle.mjs']);

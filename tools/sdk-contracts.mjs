@@ -17,4 +17,4 @@ let serialized=JSON.stringify({type:"object",properties:{},$defs:definitions});
 for (const name of shared) serialized=serialized.replaceAll(`{"$ref":"#/$defs/${name}"}`,JSON.stringify({tsType:name}));
 const schema=JSON.parse(serialized.replaceAll("#/$defs/", "#/definitions/").replace('"$defs":','"definitions":'));
 const output=await compile(schema,"AexContracts",{unreachableDefinitions:true,bannerComment:`/* Generated from aex-server schemas. */\nimport type { ${shared.join(", ")} } from "@aexhq/brain";`,additionalProperties:false});
-await writeFile(new URL("packages/sdk/src/generated.ts", root), output);
+await writeFile(new URL("clients/sdk/src/generated.ts", root), output);

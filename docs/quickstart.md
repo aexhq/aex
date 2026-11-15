@@ -53,7 +53,7 @@ Run `node order.mjs`. The lookup runs in your application and the selected harne
 | Capability | Location | Guide |
 | --- | --- | --- |
 | Pi, Codex or OpenCode | Installed Aex native harness | [Brain harnesses](https://aex.dev/brain/docs) |
-| `Tool({ run })` | Connected application process | [SDK](../packages/sdk/README.md) |
+| `Tool({ run })` | Connected application process | [SDK](../clients/sdk/README.md) |
 | Application endpoint | Your HTTPS service | [Application tools](http-tools.md) |
 | DOM callbacks | Explicitly attached browser tab | [Browser tools](client-browser.md) |
 | Sandbox, remote browser, inspection or MCP | Account-authorized service | [Managed tools](environments.md) |

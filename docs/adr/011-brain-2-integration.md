@@ -87,7 +87,7 @@ The authoritative new shapes are [core types][b-types], [routes][b-routes], and 
 [TypeScript client][b-sdk]. The main old coupling is in
 [gateway routing](../../crates/aex-server/src/http.rs),
 [turn accounting](../../crates/aex-server/src/turns.rs), and
-[SDK composition](../../packages/sdk/src/index.ts).
+[SDK composition](../../clients/sdk/src/index.ts).
 
 ## Runtime and product boundaries
 
@@ -460,7 +460,7 @@ Start with the following files rather than creating a parallel product implement
 | Gateway contract and authorization | [brain.rs](../../crates/aex-server/src/brain.rs), [http.rs](../../crates/aex-server/src/http.rs), [admission.rs](../../crates/aex-server/src/admission.rs), [error.rs](../../crates/aex-server/src/error.rs); remove the old `brain-protocol` dependency from [Cargo.toml](../../crates/aex-server/Cargo.toml) after consumers move |
 | Ownership and lifecycle | [sessions.rs](../../crates/aex-server/src/sessions.rs), [store.rs](../../crates/aex-server/src/store.rs), [turns.rs](../../crates/aex-server/src/turns.rs), [hosts.rs](../../crates/aex-server/src/hosts.rs), [clients.rs](../../crates/aex-server/src/clients.rs), new additive [migrations](../../crates/aex-server/migrations) |
 | Resources and usage | [environments.rs](../../crates/aex-server/src/environments.rs), [application endpoints](../../crates/aex-server/src/environments/application.rs), [artifacts.rs](../../crates/aex-server/src/artifacts.rs), [attachments.rs](../../crates/aex-server/src/attachments.rs), [usage observer](../../crates/aex-server/src/model_usage/observer.rs) |
-| Public client | [index.ts](../../packages/sdk/src/index.ts), [session.ts](../../packages/sdk/src/session.ts), [application.ts](../../packages/sdk/src/application.ts), [structured-output.ts](../../packages/sdk/src/structured-output.ts), [CLI](../../packages/cli), package manifests and lockfile |
+| Public client | [index.ts](../../clients/sdk/src/index.ts), [session.ts](../../clients/sdk/src/session.ts), [application.ts](../../clients/sdk/src/application.ts), [structured-output.ts](../../clients/sdk/src/structured-output.ts), [CLI](../../clients/cli), package manifests and lockfile |
 | Build and journeys | [Dockerfile](../../Dockerfile), [journey launcher](../../tools/journeys.sh), [image pin](../../tests/brain-image.json), [hosted journeys](../../tests/journeys/hosted.test.mjs), [CI](../../.github/workflows/ci.yml) |
 
 Generate the consumed Rust DTOs from Brain's pinned `api/openapi.json`; do not hand-maintain
